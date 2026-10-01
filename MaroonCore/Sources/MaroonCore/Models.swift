@@ -1,0 +1,294 @@
+import Foundation
+
+public enum Community: String, Codable, CaseIterable, Identifiable {
+  case campus = "Texas A&M"
+  case nsfw = "NSFW"
+  public var id: String { rawValue }
+}
+public struct Post: Identifiable, Codable, Equatable {
+  public var id: String
+  public var author: String
+  public var anonymous: Bool
+  public var community: Community
+  public var text: String
+  public var score: Int
+  public var vote: Int
+  public var comments: [Comment]
+  public var created: Date
+  public var saved: Bool
+  public var acceptsDM: Bool
+  public init(
+    id: String = UUID().uuidString, author: String, anonymous: Bool = true,
+    community: Community = .campus, text: String, score: Int = 0, comments: [Comment] = [],
+    created: Date = .now, acceptsDM: Bool = false
+  ) {
+    self.id = id
+    self.author = author
+    self.anonymous = anonymous
+    self.community = community
+    self.text = text
+    self.score = score
+    self.vote = 0
+    self.comments = comments
+    self.created = created
+    self.saved = false
+    self.acceptsDM = acceptsDM
+  }
+  public mutating func setVote(_ newValue: Int) {
+    let next = newValue == vote ? 0 : max(-1, min(1, newValue))
+    score += next - vote
+    vote = next
+  }
+  public var displayName: String { anonymous ? "Anonymous" : "@\(author)" }
+}
+public struct Comment: Identifiable, Codable, Equatable {
+  public var id = UUID().uuidString
+  public var author: String
+  public var text: String
+  public var anonymous: Bool
+  public var created = Date.now
+  public init(author: String, text: String, anonymous: Bool = true) {
+    self.author = author
+    self.text = text
+    self.anonymous = anonymous
+  }
+}
+public struct Course: Identifiable, Codable, Equatable, Sendable {
+  public var id: String { "\(code)-\(term)" }
+  public var code: String
+  public var title: String
+  public var term: String
+  public var icon: String
+  public init(
+    _ code: String, _ title: String, term: String = "Fall 2026", icon: String = "book.closed"
+  ) {
+    self.code = code
+    self.title = title
+    self.term = term
+    self.icon = icon
+  }
+  public static let catalog = [
+    Course("CHEM 107", "General Chemistry for Engineering", icon: "flask"),
+    Course("MATH 151", "Engineering Mathematics I", icon: "function"),
+    Course("ENGL 104", "Composition and Rhetoric", icon: "text.book.closed"),
+    Course(
+      "CSCE 120", "Program Design and Concepts", icon: "chevron.left.forwardslash.chevron.right"),
+    Course("PHYS 206", "Newtonian Mechanics", icon: "atom"),
+    Course("BIOL 111", "Introductory Biology I", icon: "leaf"),
+  ]
+}
+public struct MediaAttachment: Identifiable, Codable, Equatable {
+  public enum Kind: String, Codable { case image, gif }
+  public var id = UUID().uuidString
+  public var kind: Kind
+  public var data: Data
+  public init(kind: Kind, data: Data) {
+    self.kind = kind
+    self.data = data
+  }
+}
+public enum MessageValidation: Error, LocalizedError {
+  case empty, tooManyAttachments, tooLarge
+  public var errorDescription: String? {
+    switch self {
+    case .empty: return "Write a message or add an image or GIF."
+    case .tooManyAttachments: return "One image or GIF per message."
+    case .tooLarge: return "Choose media smaller than 5 MB."
+    }
+  }
+  public static func validate(text: String, media: [MediaAttachment]) throws {
+    guard media.count <= 1 else { throw tooManyAttachments }
+    guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !media.isEmpty else {
+      throw empty
+    }
+    guard media.allSatisfy({ $0.data.count <= 5_000_000 }) else { throw tooLarge }
+  }
+}
+public struct Message: Identifiable, Codable, Equatable {
+  public var id = UUID().uuidString
+  public var author: String
+  public var text: String
+  public var media: MediaAttachment?
+  public var game: String?
+  public var created = Date.now
+  public init(author: String, text: String, media: MediaAttachment? = nil, game: String? = nil) {
+    self.author = author
+    self.text = text
+    self.media = media
+    self.game = game
+  }
+}
+public struct Conversation: Identifiable, Codable, Equatable {
+  public var id: String
+  public var title: String
+  public var subtitle: String
+  public var messages: [Message]
+  public var request: Bool
+  public var anonymous: Bool
+  public init(
+    id: String = UUID().uuidString, title: String, subtitle: String = "", messages: [Message] = [],
+    request: Bool = false, anonymous: Bool = false
+  ) {
+    self.id = id
+    self.title = title
+    self.subtitle = subtitle
+    self.messages = messages
+    self.request = request
+    self.anonymous = anonymous
+  }
+}
+public enum ActivityKind: String, Codable, CaseIterable, Identifiable {
+  case hangout = "Hangouts"
+  case study = "Study"
+  case recreation = "Rec"
+  case gaming = "Gaming"
+  case organization = "Organizations"
+  public var id: String { rawValue }
+  public var icon: String {
+    switch self {
+    case .hangout: return "cup.and.saucer"
+    case .study: return "book"
+    case .recreation: return "basketball"
+    case .gaming: return "gamecontroller"
+    case .organization: return "person.3"
+    }
+  }
+}
+public struct Activity: Identifiable, Codable, Equatable {
+  public var id = UUID().uuidString
+  public var title: String
+  public var kind: ActivityKind
+  public var host: String
+  public var place: String
+  public var starts: Date
+  public var capacity: Int
+  public var participants: [String]
+  public var details: String
+  public var course: String?
+  public var cancelled = false
+  public init(
+    title: String, kind: ActivityKind, host: String, place: String, starts: Date, capacity: Int,
+    details: String, course: String? = nil
+  ) {
+    self.title = title
+    self.kind = kind
+    self.host = host
+    self.place = place
+    self.starts = starts
+    self.capacity = capacity
+    self.participants = [host]
+    self.details = details
+    self.course = course
+  }
+  public mutating func join(_ username: String) throws {
+    guard !cancelled && starts > Date.now else { throw ActivityError.unavailable }
+    guard !participants.contains(username) else { return }
+    guard participants.count < capacity else { throw ActivityError.full }
+    participants.append(username)
+  }
+}
+public enum ActivityError: Error, LocalizedError {
+  case full, unavailable
+  public var errorDescription: String? {
+    self == .full ? "This activity is full." : "This activity is no longer available."
+  }
+}
+public struct CampusEvent: Identifiable, Codable, Equatable {
+  public var id: String
+  public var title: String
+  public var category: String
+  public var starts: Date
+  public var ends: Date?
+  public var allDay: Bool
+  public var location: String
+  public var details: String
+  public var url: String
+  public var imageURL: String?
+  public var source: String
+  public var fetchedAt: Date
+  public var cancelled: Bool
+  public init(
+    id: String, title: String, category: String, starts: Date, ends: Date? = nil,
+    allDay: Bool = false, location: String = "", details: String = "", url: String,
+    imageURL: String? = nil, source: String, fetchedAt: Date = .now, cancelled: Bool = false
+  ) {
+    self.id = id
+    self.title = title
+    self.category = category
+    self.starts = starts
+    self.ends = ends
+    self.allDay = allDay
+    self.location = location
+    self.details = details
+    self.url = url
+    self.imageURL = imageURL
+    self.source = source
+    self.fetchedAt = fetchedAt
+    self.cancelled = cancelled
+  }
+  public var chatOpenDate: Date { starts.addingTimeInterval(-1800) }
+  public func canOpenSportsChat(at now: Date) -> Bool {
+    !cancelled && !allDay && category == "Sports" && now >= chatOpenDate
+      && now < (ends ?? starts.addingTimeInterval(6 * 3600))
+  }
+}
+public struct BusRoute: Identifiable, Codable, Equatable {
+  public var id: String
+  public var name: String
+  public var color: String
+  public var stops: [BusStop]
+  public init(id: String, name: String, color: String = "500000", stops: [BusStop] = []) {
+    self.id = id
+    self.name = name
+    self.color = color
+    self.stops = stops
+  }
+}
+public struct BusStop: Identifiable, Codable, Equatable {
+  public var id: String
+  public var name: String
+  public var latitude: Double
+  public var longitude: Double
+  public init(id: String, name: String, latitude: Double, longitude: Double) {
+    self.id = id
+    self.name = name
+    self.latitude = latitude
+    self.longitude = longitude
+  }
+}
+public struct DiningLocation: Identifiable, Codable, Equatable {
+  public var id: String
+  public var name: String
+  public var hours: String
+  public var menus: [String]
+  public var date: String
+  public var sourceURL: String
+  public init(
+    id: String, name: String, hours: String, menus: [String], date: String, sourceURL: String
+  ) {
+    self.id = id
+    self.name = name
+    self.hours = hours
+    self.menus = menus
+    self.date = date
+    self.sourceURL = sourceURL
+  }
+}
+public struct DataStatus: Codable, Equatable {
+  public var source: String
+  public var fetchedAt: Date?
+  public var error: String?
+  public init(source: String, fetchedAt: Date? = nil, error: String? = nil) {
+    self.source = source
+    self.fetchedAt = fetchedAt
+    self.error = error
+  }
+}
+public enum Eligibility {
+  public static func allows(_ email: String, domains: Set<String> = ["tamu.edu"]) -> Bool {
+    let value = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    let parts = value.split(separator: "@", omittingEmptySubsequences: false)
+    return parts.count == 2 && !parts[0].isEmpty && !value.contains(where: { $0.isWhitespace })
+      && domains.contains(String(parts[1]))
+  }
+}

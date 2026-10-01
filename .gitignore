@@ -1,0 +1,15 @@
+.DS_Store
+build/
+DerivedData/
+.build/
+.swiftpm/
+xcuserdata/
+*.xcuserstate
+.env
+.env.*
+!*.example
+Configuration/Secrets.xcconfig
+supabase/.temp/
+supabase/.branches/
+snapshots/
+node_modules/

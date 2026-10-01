@@ -64,4 +64,4 @@ Supabase was selected for relational memberships, moderation and shared caching.
 
 Start without always-on presence, subscribe only to an open room, paginate history, resize media, retain only necessary data, and use shared feed snapshots. Voice/video relay traffic requires a separate budget. Review [Supabase pricing](https://supabase.com/pricing) and [Firebase pricing](https://firebase.google.com/pricing) before launch; pricing was checked October 1, 2026.
 
-See [architecture](ARCHITECTURE.md), [research](RESEARCH.md), [open decisions](OPEN-DECISIONS.md), [screen specification](SCREENS-AND-FLOWS.md), and [photo attribution](THIRD_PARTY_NOTICES.md). Earlier design boards remain local working artifacts; mascot development is paused.
+See [architecture](ARCHITECTURE.md), [research](RESEARCH.md), [open decisions](OPEN-DECISIONS.md), [screen specification](SCREENS-AND-FLOWS.md), and [photo attribution](THIRD_PARTY_NOTICES.md). Earlier design boards are in `design/` as historical concepts; mascot development is paused.

@@ -1,0 +1,54 @@
+name: MaroonSocial
+options:
+  bundleIdPrefix: app.maroonsocial
+  deploymentTarget:
+    iOS: '18.0'
+  xcodeVersion: '26.0'
+packages:
+  MaroonCore:
+    path: MaroonCore
+settings:
+  base:
+    SWIFT_VERSION: '5.0'
+    TARGETED_DEVICE_FAMILY: '1'
+    DEVELOPMENT_TEAM: ''
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    MARKETING_VERSION: '0.1.0'
+    CURRENT_PROJECT_VERSION: '1'
+targets:
+  MaroonSocial:
+    type: application
+    platform: iOS
+    sources:
+      - path: MaroonSocial
+    dependencies:
+      - package: MaroonCore
+    info:
+      path: MaroonSocial/Info.plist
+      properties:
+        CFBundleDisplayName: Maroon Social
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        NSLocationWhenInUseUsageDescription: Campus Tag uses your location only during a match you join.
+        NSCameraUsageDescription: Add a photo or join a video conversation when you choose.
+        NSMicrophoneUsageDescription: Join voice conversations when you choose.
+        NSPhotoLibraryUsageDescription: Choose one image or GIF to send in a message.
+        NSCalendarsWriteOnlyAccessUsageDescription: Save campus events you choose to your calendar.
+        UIApplicationSupportsIndirectInputEvents: YES
+  MaroonSocialUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [MaroonSocialUITests]
+    dependencies:
+      - target: MaroonSocial
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  MaroonSocial:
+    build:
+      targets:
+        MaroonSocial: all
+    test:
+      targets: [MaroonSocialUITests]

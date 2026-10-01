@@ -1,0 +1,540 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0C40E3B4C58B8753C4B88040 /* MaroonCore in Frameworks */ = {isa = PBXBuildFile; productRef = 020A5D20698A8FD9F6D74319 /* MaroonCore */; };
+		19A73CEB35077742B8B614E6 /* CampusService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88944FE84FC618FBDD0AC406 /* CampusService.swift */; };
+		3542711320034796C8063F51 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A27EBD864695A2A26FAA0416 /* Assets.xcassets */; };
+		4A94E9B2E7C6CA1BA26B2CB4 /* campus-data.json in Resources */ = {isa = PBXBuildFile; fileRef = F2BB6466FE718966E96DFAE1 /* campus-data.json */; };
+		4ECB0CCA5DC92C5DF6E93774 /* ClassesInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98E8AE877D414D9E66BC6542 /* ClassesInbox.swift */; };
+		4F2CBF12AC621F4AFA7F978D /* GameView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DC6E5C82D645D203A53F811 /* GameView.swift */; };
+		4FD36EB554E50B97A946007D /* campus.jpg in Resources */ = {isa = PBXBuildFile; fileRef = EB4ACAB47C32660141DCBCA8 /* campus.jpg */; };
+		5C4CCF959427686759FAB428 /* ExploreView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E99690E8D217372CC8A267B /* ExploreView.swift */; };
+		6185E0099804146DB065D51B /* Backend.json in Resources */ = {isa = PBXBuildFile; fileRef = 2B945338C6F379FBA03BD7B6 /* Backend.json */; };
+		7BDB1ACDFE033145CEF0B442 /* TagView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66E4837DD050F73616051416 /* TagView.swift */; };
+		A3042E9C020306BB6026E4D3 /* AppStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54F506ADB32C93EBB9F2D2F5 /* AppStore.swift */; };
+		B32832968570603CB67DAB81 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42EA1C02C89C4BBA531A749D /* Theme.swift */; };
+		C6CC68BA6C503C5CF6973781 /* MaroonSocialApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D9722F76EC30CA5E01E4C17 /* MaroonSocialApp.swift */; };
+		D0D833E6467B1579B7A877A8 /* CommunityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5D7EB5084E4F419B517CA6E /* CommunityView.swift */; };
+		EA358B8ACCE93093DF722C78 /* MaroonSocialUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3928E5BD9DC6EF9DC5FA32C /* MaroonSocialUITests.swift */; };
+		F6893B80D2FC963E8D50FB7E /* CampusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F63AFEB63DE9451EAD1B4207 /* CampusView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		D4480621B624F5AC56E5C5DB /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = CC1C1A604051F860ABC40884 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = CC5C7152C50BCB06FE228DF7;
+			remoteInfo = MaroonSocial;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		2B945338C6F379FBA03BD7B6 /* Backend.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = Backend.json; sourceTree = "<group>"; };
+		3DC6E5C82D645D203A53F811 /* GameView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameView.swift; sourceTree = "<group>"; };
+		3F912A7136DAC11A3F019A37 /* MaroonCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = MaroonCore; path = MaroonCore; sourceTree = SOURCE_ROOT; };
+		42EA1C02C89C4BBA531A749D /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
+		4FE3135AFCAFD0FDF5C5F358 /* MaroonSocial.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = MaroonSocial.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		54F506ADB32C93EBB9F2D2F5 /* AppStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStore.swift; sourceTree = "<group>"; };
+		62C51939380FE304DF7DD2F2 /* MaroonSocialUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = MaroonSocialUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		66E4837DD050F73616051416 /* TagView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TagView.swift; sourceTree = "<group>"; };
+		6D9722F76EC30CA5E01E4C17 /* MaroonSocialApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MaroonSocialApp.swift; sourceTree = "<group>"; };
+		88944FE84FC618FBDD0AC406 /* CampusService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CampusService.swift; sourceTree = "<group>"; };
+		98E8AE877D414D9E66BC6542 /* ClassesInbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClassesInbox.swift; sourceTree = "<group>"; };
+		9E99690E8D217372CC8A267B /* ExploreView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExploreView.swift; sourceTree = "<group>"; };
+		A27EBD864695A2A26FAA0416 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		AD58FEE68A1B7FFD573C60A5 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		D5D7EB5084E4F419B517CA6E /* CommunityView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommunityView.swift; sourceTree = "<group>"; };
+		EB4ACAB47C32660141DCBCA8 /* campus.jpg */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; path = campus.jpg; sourceTree = "<group>"; };
+		F2BB6466FE718966E96DFAE1 /* campus-data.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "campus-data.json"; sourceTree = "<group>"; };
+		F3928E5BD9DC6EF9DC5FA32C /* MaroonSocialUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MaroonSocialUITests.swift; sourceTree = "<group>"; };
+		F63AFEB63DE9451EAD1B4207 /* CampusView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CampusView.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		E8D3B857C2A6B8014B732D2A /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0C40E3B4C58B8753C4B88040 /* MaroonCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		0AF9A66425D0151AD7087301 /* MaroonSocial */ = {
+			isa = PBXGroup;
+			children = (
+				AD58FEE68A1B7FFD573C60A5 /* Info.plist */,
+				7595ABEEF3D70D224FF71B48 /* App */,
+				86B3D8AD9D9030E49A44641A /* Features */,
+				9B4E91C3E12D74549F9F3EC8 /* Resources */,
+				21CB09E97F125AA99BDF07BF /* Services */,
+			);
+			path = MaroonSocial;
+			sourceTree = "<group>";
+		};
+		1CF981A65983BC0890F3C2A9 /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				3F912A7136DAC11A3F019A37 /* MaroonCore */,
+			);
+			name = Packages;
+			sourceTree = "<group>";
+		};
+		21CB09E97F125AA99BDF07BF /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				88944FE84FC618FBDD0AC406 /* CampusService.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		2627A584561F2CE62DB7C518 /* MaroonSocialUITests */ = {
+			isa = PBXGroup;
+			children = (
+				F3928E5BD9DC6EF9DC5FA32C /* MaroonSocialUITests.swift */,
+			);
+			path = MaroonSocialUITests;
+			sourceTree = "<group>";
+		};
+		2EDEC5D68F92900F9CE5902E /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				4FE3135AFCAFD0FDF5C5F358 /* MaroonSocial.app */,
+				62C51939380FE304DF7DD2F2 /* MaroonSocialUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		7595ABEEF3D70D224FF71B48 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				54F506ADB32C93EBB9F2D2F5 /* AppStore.swift */,
+				6D9722F76EC30CA5E01E4C17 /* MaroonSocialApp.swift */,
+				42EA1C02C89C4BBA531A749D /* Theme.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		86B3D8AD9D9030E49A44641A /* Features */ = {
+			isa = PBXGroup;
+			children = (
+				F63AFEB63DE9451EAD1B4207 /* CampusView.swift */,
+				98E8AE877D414D9E66BC6542 /* ClassesInbox.swift */,
+				D5D7EB5084E4F419B517CA6E /* CommunityView.swift */,
+				9E99690E8D217372CC8A267B /* ExploreView.swift */,
+				3DC6E5C82D645D203A53F811 /* GameView.swift */,
+				66E4837DD050F73616051416 /* TagView.swift */,
+			);
+			path = Features;
+			sourceTree = "<group>";
+		};
+		9B4E91C3E12D74549F9F3EC8 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				A27EBD864695A2A26FAA0416 /* Assets.xcassets */,
+				2B945338C6F379FBA03BD7B6 /* Backend.json */,
+				F2BB6466FE718966E96DFAE1 /* campus-data.json */,
+				EB4ACAB47C32660141DCBCA8 /* campus.jpg */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		C9CF31DD8DA155AF4B4708E4 = {
+			isa = PBXGroup;
+			children = (
+				0AF9A66425D0151AD7087301 /* MaroonSocial */,
+				2627A584561F2CE62DB7C518 /* MaroonSocialUITests */,
+				1CF981A65983BC0890F3C2A9 /* Packages */,
+				2EDEC5D68F92900F9CE5902E /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		CC5C7152C50BCB06FE228DF7 /* MaroonSocial */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = BBF33BBD16A3330C66A15C5B /* Build configuration list for PBXNativeTarget "MaroonSocial" */;
+			buildPhases = (
+				48FD33558183EE50AF95DB2D /* Sources */,
+				7FB21BDA6B71E4820905BBD5 /* Resources */,
+				E8D3B857C2A6B8014B732D2A /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = MaroonSocial;
+			packageProductDependencies = (
+				020A5D20698A8FD9F6D74319 /* MaroonCore */,
+			);
+			productName = MaroonSocial;
+			productReference = 4FE3135AFCAFD0FDF5C5F358 /* MaroonSocial.app */;
+			productType = "com.apple.product-type.application";
+		};
+		FBB4DE3BA05CD7D4D1D7BA81 /* MaroonSocialUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 6401AC86EF62060259FD2199 /* Build configuration list for PBXNativeTarget "MaroonSocialUITests" */;
+			buildPhases = (
+				E488F38452DDE05DD77BDBA0 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				8552282511ED62FE612AD6BF /* PBXTargetDependency */,
+			);
+			name = MaroonSocialUITests;
+			packageProductDependencies = (
+			);
+			productName = MaroonSocialUITests;
+			productReference = 62C51939380FE304DF7DD2F2 /* MaroonSocialUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		CC1C1A604051F860ABC40884 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 2600;
+				TargetAttributes = {
+					CC5C7152C50BCB06FE228DF7 = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
+					};
+					FBB4DE3BA05CD7D4D1D7BA81 = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
+						TestTargetID = CC5C7152C50BCB06FE228DF7;
+					};
+				};
+			};
+			buildConfigurationList = 62C67FF13DC70FD24C8D6C32 /* Build configuration list for PBXProject "MaroonSocial" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = C9CF31DD8DA155AF4B4708E4;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				1F95986B10D9D2FC3FCDFF03 /* XCLocalSwiftPackageReference "MaroonCore" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 2EDEC5D68F92900F9CE5902E /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				CC5C7152C50BCB06FE228DF7 /* MaroonSocial */,
+				FBB4DE3BA05CD7D4D1D7BA81 /* MaroonSocialUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		7FB21BDA6B71E4820905BBD5 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3542711320034796C8063F51 /* Assets.xcassets in Resources */,
+				6185E0099804146DB065D51B /* Backend.json in Resources */,
+				4A94E9B2E7C6CA1BA26B2CB4 /* campus-data.json in Resources */,
+				4FD36EB554E50B97A946007D /* campus.jpg in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		48FD33558183EE50AF95DB2D /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A3042E9C020306BB6026E4D3 /* AppStore.swift in Sources */,
+				19A73CEB35077742B8B614E6 /* CampusService.swift in Sources */,
+				F6893B80D2FC963E8D50FB7E /* CampusView.swift in Sources */,
+				4ECB0CCA5DC92C5DF6E93774 /* ClassesInbox.swift in Sources */,
+				D0D833E6467B1579B7A877A8 /* CommunityView.swift in Sources */,
+				5C4CCF959427686759FAB428 /* ExploreView.swift in Sources */,
+				4F2CBF12AC621F4AFA7F978D /* GameView.swift in Sources */,
+				C6CC68BA6C503C5CF6973781 /* MaroonSocialApp.swift in Sources */,
+				7BDB1ACDFE033145CEF0B442 /* TagView.swift in Sources */,
+				B32832968570603CB67DAB81 /* Theme.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E488F38452DDE05DD77BDBA0 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				EA358B8ACCE93093DF722C78 /* MaroonSocialUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		8552282511ED62FE612AD6BF /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = CC5C7152C50BCB06FE228DF7 /* MaroonSocial */;
+			targetProxy = D4480621B624F5AC56E5C5DB /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		08E1E3141DD344B02DB4BD70 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				INFOPLIST_FILE = MaroonSocial/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = app.maroonsocial.MaroonSocial;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		318AAD426B6C9E2A2C029F01 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		57E51E6A0602B03972438CDB /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = app.maroonsocial.MaroonSocialUITests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = MaroonSocial;
+			};
+			name = Release;
+		};
+		7949EC2429E96642CF681E9C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = app.maroonsocial.MaroonSocialUITests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = MaroonSocial;
+			};
+			name = Debug;
+		};
+		E02DDC794013FB70C703FF99 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				INFOPLIST_FILE = MaroonSocial/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = app.maroonsocial.MaroonSocial;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		EE0C97645171F7D4176E2C48 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = "";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		62C67FF13DC70FD24C8D6C32 /* Build configuration list for PBXProject "MaroonSocial" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				318AAD426B6C9E2A2C029F01 /* Debug */,
+				EE0C97645171F7D4176E2C48 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		6401AC86EF62060259FD2199 /* Build configuration list for PBXNativeTarget "MaroonSocialUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7949EC2429E96642CF681E9C /* Debug */,
+				57E51E6A0602B03972438CDB /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		BBF33BBD16A3330C66A15C5B /* Build configuration list for PBXNativeTarget "MaroonSocial" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				08E1E3141DD344B02DB4BD70 /* Debug */,
+				E02DDC794013FB70C703FF99 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		1F95986B10D9D2FC3FCDFF03 /* XCLocalSwiftPackageReference "MaroonCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = MaroonCore;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		020A5D20698A8FD9F6D74319 /* MaroonCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = MaroonCore;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = CC1C1A604051F860ABC40884 /* Project object */;
+}
