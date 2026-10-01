@@ -96,6 +96,11 @@ struct CommunityView: View {
 struct PostCard: View {
   @Environment(AppStore.self) private var store
   let post: Post
+  var navigates = true
+  private var postText: some View {
+    Text(post.text).font(.system(size: 17, weight: .medium)).lineSpacing(5)
+      .multilineTextAlignment(.leading).frame(maxWidth: .infinity, alignment: .leading)
+  }
   var body: some View {
     Card {
       VStack(alignment: .leading, spacing: 15) {
@@ -127,12 +132,15 @@ struct PostCard: View {
             Image(systemName: "ellipsis").padding(7)
           }
         }
-        NavigationLink {
-          PostDetailView(id: post.id)
-        } label: {
-          Text(post.text).font(.system(size: 17, weight: .medium)).lineSpacing(5)
-            .multilineTextAlignment(.leading).frame(maxWidth: .infinity, alignment: .leading)
-        }.buttonStyle(.plain)
+        if navigates {
+          NavigationLink {
+            PostDetailView(id: post.id)
+          } label: {
+            postText
+          }.buttonStyle(.plain)
+        } else {
+          postText
+        }
         HStack(spacing: 15) {
           HStack(spacing: 10) {
             Button {
@@ -149,9 +157,13 @@ struct PostCard: View {
                 post.vote == -1 ? Palette.maroon : .secondary)
             }.accessibilityLabel("Downvote")
           }.padding(.horizontal, 12).padding(.vertical, 8).background(Palette.paper, in: Capsule())
-          NavigationLink {
-            PostDetailView(id: post.id)
-          } label: {
+          if navigates {
+            NavigationLink {
+              PostDetailView(id: post.id)
+            } label: {
+              Label("\(post.comments.count)", systemImage: "bubble.right").font(.caption)
+            }
+          } else {
             Label("\(post.comments.count)", systemImage: "bubble.right").font(.caption)
           }
           Spacer()
@@ -217,7 +229,7 @@ struct PostDetailView: View {
     ScrollView {
       VStack(spacing: 18) {
         if let post {
-          PostCard(post: post)
+          PostCard(post: post, navigates: false)
           if post.acceptsDM {
             Button("Request a private chat") {
               let chatID = "post-\(post.id)"

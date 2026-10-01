@@ -74,7 +74,7 @@ struct PreviewLabel: View {
       Circle().fill(Color.orange).frame(width: 5, height: 5)
       Text("LOCAL PREVIEW").tracking(1.5)
       Spacer()
-      Text("Your changes stay on this iPhone")
+      Text("Social activity stays on this iPhone")
     }.font(.system(size: 9, weight: .bold)).foregroundStyle(.secondary).padding(.horizontal, 20)
       .padding(.vertical, 7).background(Palette.paper)
   }
