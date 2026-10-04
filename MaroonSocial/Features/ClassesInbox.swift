@@ -235,6 +235,8 @@ struct ChatView: View {
   @State private var gamePicker = false
   @State private var meme = false
   @State private var klipy = false
+  @State private var editImage = false
+  @State private var offers = AttachmentOffers()
   @State private var groupInfo = false
   @State private var notificationSettings = false
   @State private var showOutbox = false
@@ -364,13 +366,17 @@ struct ChatView: View {
       .persistentDraft("message:" + id, value: savedDraft)
       .sheet(isPresented: $groupInfo) { GroupManageView(roomID: id) }
       .sheet(isPresented: $acceptingGroup) { GroupIdentityView(social: store.social, fixtureMode: store.fixtureMode, action: .accept(id), groupName: chat?.title ?? "") { _ in } }
-      .sheet(isPresented: $meme) { MemeComposerView(draftKey:"meme:message:"+id) { attachment in item = nil; media = attachment } }
+      .sheet(isPresented: $meme) { MemeComposerView(draftKey:"meme:message:"+id) { attachment in item = nil; media = attachment; offers.arrived(attachment) } }
       .sheet(isPresented: $klipy) { KlipyPickerView(available: !store.fixtureMode) { attachment in item = nil; media = attachment } }
+      .sheet(isPresented: $editImage) {
+        if let media { ImageEditorView(source: media) { edited in item = nil; self.media = edited; offers.arrived(edited) } }
+      }
+      .attachmentOffers(offers, service: SharedMemeService(social: store.social, fixtureMode: store.fixtureMode))
       .task { await store.markRead(id) }
       .onChange(of: chat?.id) { _, value in
         if value == nil {
           focused = false; text = ""; media = nil; item = nil; replyTo = nil
-          gamePicker = false; meme = false; klipy = false; groupInfo = false; acceptingGroup = false; showCall = false
+          gamePicker = false; meme = false; klipy = false; editImage = false; groupInfo = false; acceptingGroup = false; showCall = false
           displayedMessages = []; hasMessagesBelow = false
         }
       }
@@ -380,6 +386,7 @@ struct ChatView: View {
         let prepared = await loadPickedMedia(item, store: store)
         guard !Task.isCancelled, self.item == item else { return }
         media = prepared; loadingMedia = false
+        if let prepared { offers.arrived(prepared) }
       }
       .toolbar { ToolbarItem(placement: .topBarTrailing) { if focused { KeyboardDismissButton { focused = false } } } }
   }
@@ -436,9 +443,10 @@ struct ChatView: View {
         HStack { Text("Replying to: \(replyTo.text)").lineLimit(1).font(.caption); Spacer(); Button { self.replyTo = nil; restoredReplyID = nil } label: { Image(systemName: "xmark").frame(width: 44, height: 44) }.accessibilityLabel("Cancel reply") }
       }
       if let media {
-        HStack { AttachmentPreview(media: media).frame(width: 44, height: 44); Text(media.kind == .video ? "Video attached" : media.kind == .gif ? "GIF attached" : "Photo attached").font(.caption); Spacer(); Button { self.media = nil; item = nil } label: { Text("Remove").frame(minHeight: 44) }.accessibilityLabel("Remove attachment") }
+        HStack { AttachmentPreview(media: media).frame(width: 44, height: 44); Text(media.kind == .video ? "Video attached" : media.kind == .gif ? "GIF attached" : "Photo attached").font(.caption); Spacer(); if media.kind == .image { Button { AppHaptics.shared.play(.impact); focused = false; editImage = true } label: { Text("Edit").frame(minHeight: 44) }.accessibilityLabel("Edit image").accessibilityIdentifier("messageEditImage") }; Button { self.media = nil; item = nil } label: { Text("Remove").frame(minHeight: 44) }.accessibilityLabel("Remove attachment") }
       }
       if loadingMedia { ProgressView("Preparing attachment…").font(.caption) }
+      if let status = offers.status { Text(status).font(.caption).foregroundStyle(Palette.secondary).accessibilityIdentifier("messageShareStatus") }
       (dynamicTypeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4)) : AnyLayout(HStackLayout(alignment: .bottom, spacing: 6))) {
         HStack(spacing: 6) {
         Menu {

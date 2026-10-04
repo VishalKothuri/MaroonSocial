@@ -7,6 +7,17 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		F3BE1B12D75A1FFC49FDF025 /* ImageEditorUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14583614CBECE0A73DBCDCF2 /* ImageEditorUITests.swift */; };
+		63D7D9C5FFA782CD3EC41ECB /* ImageLibraryServicesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70D55AC8841306D02664EEDA /* ImageLibraryServicesTests.swift */; };
+		7EB1F1A02D24234DCC8F06DA /* ImageEditorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B98398E368CE821D2E5D7D2 /* ImageEditorTests.swift */; };
+		9B88A748B3D6C2ED6CB97AF2 /* ImageSearch.example.json in Resources */ = {isa = PBXBuildFile; fileRef = ED749BF0EC87E1621543C4D9 /* ImageSearch.example.json */; };
+		05AF47AC6FEB49D2FB85145F /* SharedMemeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = E820BA2F23FCFFCE9C5A3423 /* SharedMemeService.swift */; };
+		D7F7CA097578B50A76D148EC /* ImageSearchService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 857DEBE4A22570FB02B5884C /* ImageSearchService.swift */; };
+		5D3A833D7CF30DE8199B0BA0 /* StickerCutout.swift in Sources */ = {isa = PBXBuildFile; fileRef = F440340E24AD9A64B846A8AE /* StickerCutout.swift */; };
+		F86432ED7BF70F908D92B572 /* PhotoPolicyNotice.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2A0CC8C51422BA19AF3A7E9 /* PhotoPolicyNotice.swift */; };
+		98897BCEECAD3F1F06B65648 /* ImageSearchSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71B418CF44983A0A2653C33F /* ImageSearchSheet.swift */; };
+		4A9ABD8669FDF463D6340781 /* ImageEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB061A9ACEF9C6AD11D9E905 /* ImageEditorView.swift */; };
+		DD7B178CB88A00A549D364B9 /* AttachmentOffers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 519C864F4CB663758C864724 /* AttachmentOffers.swift */; };
 		01D1B1A8384556720CF40E49 /* VideoCompression.swift in Sources */ = {isa = PBXBuildFile; fileRef = B799940D4B92862B62885198 /* VideoCompression.swift */; };
 		08FE10239EB3AEDA299FC870 /* SportsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 784C9944B5C148A26A1779FE /* SportsService.swift */; };
 		0C40E3B4C58B8753C4B88040 /* MaroonCore in Frameworks */ = {isa = PBXBuildFile; productRef = 020A5D20698A8FD9F6D74319 /* MaroonCore */; };
@@ -211,6 +222,17 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		14583614CBECE0A73DBCDCF2 /* ImageEditorUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageEditorUITests.swift; sourceTree = "<group>"; };
+		70D55AC8841306D02664EEDA /* ImageLibraryServicesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageLibraryServicesTests.swift; sourceTree = "<group>"; };
+		4B98398E368CE821D2E5D7D2 /* ImageEditorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageEditorTests.swift; sourceTree = "<group>"; };
+		ED749BF0EC87E1621543C4D9 /* ImageSearch.example.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = ImageSearch.example.json; sourceTree = "<group>"; };
+		E820BA2F23FCFFCE9C5A3423 /* SharedMemeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedMemeService.swift; sourceTree = "<group>"; };
+		857DEBE4A22570FB02B5884C /* ImageSearchService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageSearchService.swift; sourceTree = "<group>"; };
+		F440340E24AD9A64B846A8AE /* StickerCutout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StickerCutout.swift; sourceTree = "<group>"; };
+		C2A0CC8C51422BA19AF3A7E9 /* PhotoPolicyNotice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoPolicyNotice.swift; sourceTree = "<group>"; };
+		71B418CF44983A0A2653C33F /* ImageSearchSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageSearchSheet.swift; sourceTree = "<group>"; };
+		EB061A9ACEF9C6AD11D9E905 /* ImageEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageEditorView.swift; sourceTree = "<group>"; };
+		519C864F4CB663758C864724 /* AttachmentOffers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentOffers.swift; sourceTree = "<group>"; };
 		02512052256BA80EF6A66CB1 /* PushSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushSettingsView.swift; sourceTree = "<group>"; };
 		0299250DC6B3ECFE44D8794F /* GroupCallWebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupCallWebView.swift; sourceTree = "<group>"; };
 		063D262DB4408A5BF8075E54 /* VideoAttachmentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoAttachmentView.swift; sourceTree = "<group>"; };
@@ -437,6 +459,8 @@
 		187BE34A2CA2C5433EC83F9E /* MaroonSocialTests */ = {
 			isa = PBXGroup;
 			children = (
+				70D55AC8841306D02664EEDA /* ImageLibraryServicesTests.swift */,
+				4B98398E368CE821D2E5D7D2 /* ImageEditorTests.swift */,
 				1F592B47F6F7CFADA427FD4B /* AccountControlsServiceTests.swift */,
 				EDEF5D5CC64FDC301D859886 /* ActivityLibraryTests.swift */,
 				1171D4797625B80CEC29C630 /* ActivityPlansServiceTests.swift */,
@@ -508,6 +532,10 @@
 		21CB09E97F125AA99BDF07BF /* Services */ = {
 			isa = PBXGroup;
 			children = (
+				E820BA2F23FCFFCE9C5A3423 /* SharedMemeService.swift */,
+				857DEBE4A22570FB02B5884C /* ImageSearchService.swift */,
+				F440340E24AD9A64B846A8AE /* StickerCutout.swift */,
+				C2A0CC8C51422BA19AF3A7E9 /* PhotoPolicyNotice.swift */,
 				F39190E14D09E208B3E8209F /* AccountControlsService.swift */,
 				5A4C3A2CF5E1B9BCA5934832 /* ActivityPlansService.swift */,
 				BF858EDBFA8B6B15B762D327 /* AppHaptics.swift */,
@@ -555,6 +583,7 @@
 		2627A584561F2CE62DB7C518 /* MaroonSocialUITests */ = {
 			isa = PBXGroup;
 			children = (
+				14583614CBECE0A73DBCDCF2 /* ImageEditorUITests.swift */,
 				890A979E4B2BBEAE4EF2F68E /* CommunitiesUITests.swift */,
 				C612C1D1AF0EAB81107A70CA /* DiscoveryLiveUITests.swift */,
 				DBD333A869102E003CF3089B /* DurableDraftsUITests.swift */,
@@ -605,6 +634,9 @@
 		86B3D8AD9D9030E49A44641A /* Features */ = {
 			isa = PBXGroup;
 			children = (
+				71B418CF44983A0A2653C33F /* ImageSearchSheet.swift */,
+				EB061A9ACEF9C6AD11D9E905 /* ImageEditorView.swift */,
+				519C864F4CB663758C864724 /* AttachmentOffers.swift */,
 				D099009FB989C575770EF644 /* ActiveTagBanner.swift */,
 				5CA3D87A37E23B6998E630DB /* AdPlacementPreview.swift */,
 				F63AFEB63DE9451EAD1B4207 /* CampusView.swift */,
@@ -656,6 +688,7 @@
 		9B4E91C3E12D74549F9F3EC8 /* Resources */ = {
 			isa = PBXGroup;
 			children = (
+				ED749BF0EC87E1621543C4D9 /* ImageSearch.example.json */,
 				A27EBD864695A2A26FAA0416 /* Assets.xcassets */,
 				2B945338C6F379FBA03BD7B6 /* Backend.json */,
 				F2BB6466FE718966E96DFAE1 /* campus-data.json */,
@@ -811,6 +844,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				9B88A748B3D6C2ED6CB97AF2 /* ImageSearch.example.json in Resources */,
 				3542711320034796C8063F51 /* Assets.xcassets in Resources */,
 				6185E0099804146DB065D51B /* Backend.json in Resources */,
 				80FE27055DD3C3C98988B253 /* CommunityLaunch.storyboard in Resources */,
@@ -844,6 +878,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				63D7D9C5FFA782CD3EC41ECB /* ImageLibraryServicesTests.swift in Sources */,
+				7EB1F1A02D24234DCC8F06DA /* ImageEditorTests.swift in Sources */,
 				C4DDC5BD74B0DB6D23110A16 /* AccountControlsServiceTests.swift in Sources */,
 				5596DEF819F721ABF2A5A508 /* ActivityLibraryTests.swift in Sources */,
 				A2D39CF5266E401A2F9399A9 /* ActivityPlansServiceTests.swift in Sources */,
@@ -906,6 +942,13 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				05AF47AC6FEB49D2FB85145F /* SharedMemeService.swift in Sources */,
+				D7F7CA097578B50A76D148EC /* ImageSearchService.swift in Sources */,
+				5D3A833D7CF30DE8199B0BA0 /* StickerCutout.swift in Sources */,
+				F86432ED7BF70F908D92B572 /* PhotoPolicyNotice.swift in Sources */,
+				98897BCEECAD3F1F06B65648 /* ImageSearchSheet.swift in Sources */,
+				4A9ABD8669FDF463D6340781 /* ImageEditorView.swift in Sources */,
+				DD7B178CB88A00A549D364B9 /* AttachmentOffers.swift in Sources */,
 				BD288CCBD6455FBAAD5388F5 /* AccountControlsService.swift in Sources */,
 				10286A013FBD0A353FDAFF2A /* ActiveTagBanner.swift in Sources */,
 				DF0B053A4EE3B7426895A0EF /* ActivityPlansService.swift in Sources */,
@@ -1006,6 +1049,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				F3BE1B12D75A1FFC49FDF025 /* ImageEditorUITests.swift in Sources */,
 				260B9947FE0A2F5981F6054C /* CommunitiesUITests.swift in Sources */,
 				E9013C739BA8F12604776D8E /* DiscoveryLiveUITests.swift in Sources */,
 				884D72668CB83773BBA7E7E3 /* DurableDraftsUITests.swift in Sources */,

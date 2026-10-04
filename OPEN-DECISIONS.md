@@ -41,3 +41,7 @@ Hangouts are casual plans using the unified username. Verified organizations can
 ## October 1 build decisions
 
 SwiftUI and iPhone first are confirmed. Supabase is connected. Dining means today’s public menus and hours, not a personal meal balance. Coding and uploading the project to the connected GitHub repository are authorized. Email delivery, identity enforcement and live multiplayer are not yet configured.
+
+## Shared memes live in our backend, not KLIPY (October 4)
+
+KLIPY’s documented API is retrieval-only (search, trending, share, report); there is no upload endpoint. “Publish this meme to other users” therefore stores the image in the app’s own private media bucket through new `meme.*` actions and shows it in the picker’s Community tab. Owners are never exposed, three distinct reports hide a meme, and owners can remove their own. Revisit if KLIPY adds a partner upload API.

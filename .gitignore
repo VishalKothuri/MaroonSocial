@@ -22,3 +22,6 @@ __pycache__/
 
 # Local KLIPY mobile application key
 MaroonSocial/Resources/Klipy.json
+
+# Local Google image-search key and engine ID
+MaroonSocial/Resources/ImageSearch.json

@@ -20,6 +20,8 @@ struct InlinePostComposer: View {
   @State private var loadingMedia = false
   @State private var meme = false
   @State private var klipy = false
+  @State private var editImage = false
+  @State private var offers = AttachmentOffers()
   @State private var discard = false
   @State private var error: String?
   @State private var draftCommunity: Community?
@@ -74,10 +76,15 @@ struct InlinePostComposer: View {
         loadingMedia = true; let prepared = await loadPickedMedia(item, store: store)
         guard !Task.isCancelled, self.item == item else { return }
         media = prepared; loadingMedia = false
+        if let prepared { offers.arrived(prepared) }
       }
       .photosPicker(isPresented: $photoPicker, selection: $item, matching: .any(of: [.images, .videos]))
-      .sheet(isPresented: $meme) { MemeComposerView(draftKey:"meme:post") { attachment in item = nil; media = attachment } }
+      .sheet(isPresented: $meme) { MemeComposerView(draftKey:"meme:post") { attachment in item = nil; media = attachment; offers.arrived(attachment) } }
       .sheet(isPresented: $klipy) { KlipyPickerView(available: !store.fixtureMode) { attachment in item = nil; media = attachment } }
+      .sheet(isPresented: $editImage) {
+        if let media { ImageEditorView(source: media) { edited in item = nil; self.media = edited; offers.arrived(edited) } }
+      }
+      .attachmentOffers(offers, service: SharedMemeService(social: store.social, fixtureMode: store.fixtureMode))
       .alert("Discard this post draft?", isPresented: $discard) {
         Button("Discard draft", role: .destructive) { AppHaptics.shared.play(.warning); Task { guard draftOwner == store.compositions.owner else { return }; await store.discardPendingPostDraft(owner:draftOwner); resetDraft(); close() } }
         Button("Keep editing", role: .cancel) { focused = .body }
@@ -154,6 +161,7 @@ struct InlinePostComposer: View {
         if tagsEnabled { tagsEditor }
         if let media { attachmentRow(media) }
         if loadingMedia { ProgressView("Preparing attachment…").font(.caption) }
+        if let status = offers.status { Text(status).font(.caption).foregroundStyle(Palette.secondary).accessibilityIdentifier("postShareStatus") }
         privacyOptions
         draftFooter
         if let message = error ?? validationMessage {
@@ -239,6 +247,10 @@ struct InlinePostComposer: View {
       AttachmentPreview(media: attachment).frame(width: 56, height: 48).clipShape(RoundedRectangle(cornerRadius: 8))
       Text(label).font(.caption)
       Spacer()
+      if attachment.kind == .image {
+        Button("Edit image") { AppHaptics.shared.play(.impact); focused = nil; editImage = true }
+          .font(.caption).frame(minHeight: 44).accessibilityIdentifier("postEditImage")
+      }
       Button("Remove attachment", role: .destructive) { AppHaptics.shared.play(.selection); media = nil; item = nil }
         .font(.caption).frame(minHeight: 44)
     }
