@@ -39,7 +39,7 @@ struct GroupCallView: View {
         if let notice = service.notice { Text(notice).font(.caption).foregroundStyle(Palette.secondary) }
         Text("Leaving this screen or backgrounding the app stops your microphone and camera. Calls are not recorded by this app.").font(.caption).foregroundStyle(Palette.secondary)
       }.padding(24)
-    }.appBackground().navigationTitle("Group call").navigationBarTitleDisplayMode(.inline).toolbar(.hidden, for: .tabBar)
+    }.appBackground().navigationTitle("Group call").navigationBarTitleDisplayMode(.inline).hidesTabBarWhenPushed()
       .task { await service.activate() }.onDisappear { service.deactivate() }
       .onChange(of: scenePhase) { _, phase in if phase == .background { service.deactivate() } else if phase == .active { Task { await service.activate() } } }
   }

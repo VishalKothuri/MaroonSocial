@@ -7,7 +7,7 @@ struct GameView: View {
   var body: some View {
     Group { if kind == "Chess" { ChessView() } else { PhysicsGameView(kind: kind) } }.navigationTitle(
       kind
-    ).navigationBarTitleDisplayMode(.inline).toolbar(.hidden, for: .tabBar)
+    ).navigationBarTitleDisplayMode(.inline).hidesTabBarWhenPushed()
   }
 }
 private func material(_ color: UIColor, metal: CGFloat = 0, rough: CGFloat = 0.5) -> SCNMaterial {

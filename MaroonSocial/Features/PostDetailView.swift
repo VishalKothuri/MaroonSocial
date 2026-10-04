@@ -67,7 +67,7 @@ struct PostDetailView: View {
             withAnimation(reduceMotion ? nil : .easeOut(duration: 0.23)) { proxy.scrollTo(target, anchor: .bottom) }
           }
         }
-    }.onAppear { if draftOwner.isEmpty { draftOwner = store.compositions.owner } }.persistentDraft(draftKey,value:savedDraft).appBackground().navigationTitle("Post").navigationBarTitleDisplayMode(.inline).toolbar(.hidden, for: .tabBar)
+    }.onAppear { if draftOwner.isEmpty { draftOwner = store.compositions.owner } }.persistentDraft(draftKey,value:savedDraft).appBackground().navigationTitle("Post").navigationBarTitleDisplayMode(.inline).hidesTabBarWhenPushed()
       .navigationDestination(item: $conversationID) { ChatView(id: $0) }
       .sheet(item: $messageTarget) { comment in
         NewMessageView(commentID: comment.id, anonymous: true) { conversationID = $0 }

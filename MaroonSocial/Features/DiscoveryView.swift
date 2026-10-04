@@ -25,7 +25,7 @@ struct DiscoveryView: View {
         if let notice = service.notice { Text(notice).font(.callout).foregroundStyle(Palette.secondary) }
         if let error = service.error { Text(error).font(.callout).foregroundStyle(Palette.accentText).accessibilityIdentifier("discoveryError") }
       }.padding(20)
-    }.scrollDismissesKeyboard(.interactively).appBackground().navigationTitle("Meet people").navigationBarTitleDisplayMode(.inline).toolbar(.hidden, for: .tabBar)
+    }.scrollDismissesKeyboard(.interactively).appBackground().navigationTitle("Meet people").navigationBarTitleDisplayMode(.inline).hidesTabBarWhenPushed()
       .toolbar { ToolbarItem(placement: .topBarTrailing) { Menu {
         Button("Use in browser", systemImage: "safari") { incoming = nil; selectedPerson = nil; service.deactivate(); showBrowser = true }
         if service.session != nil { Button("Block this account", systemImage: "hand.raised", role: .destructive) { Task { await service.moderate(reason: nil) } }; Button("Report", systemImage: "flag", role: .destructive) { showReport = true } }

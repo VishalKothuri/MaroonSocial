@@ -239,7 +239,7 @@ struct OnlineGameView: View {
       } else { ProgressView("Opening match…").frame(maxWidth: .infinity, maxHeight: .infinity) }
       if let error = service.error { HStack { Text(error).font(.caption); Spacer(); Button("Retry") { Task { service.error = nil; await service.fetch(sessionID, using: store.social) } } }.padding(10).background(Color.orange.opacity(0.15)) }
     }.background(Palette.paper).tint(Palette.accentText)
-      .navigationTitle(service.game?.title ?? "Match").navigationBarTitleDisplayMode(.inline).toolbar(.hidden, for: .tabBar)
+      .navigationTitle(service.game?.title ?? "Match").navigationBarTitleDisplayMode(.inline).hidesTabBarWhenPushed()
       .toolbar { if service.game?.status == "active" && service.game?.usesHostedPool != true { ToolbarItem(placement: .topBarTrailing) { Button("Resign") { resign = true }.font(.caption) } } }
       .confirmationDialog("Resign this match?", isPresented: $resign, titleVisibility: .visible) { Button("Resign", role: .destructive) { Task { await service.act("forfeit", using: store.social) } } } message: { Text("Your opponent will win. Leaving this screen keeps the match active.") }
       .sheet(isPresented: $rematch) { if let game = service.game { GameInviteSheet(roomID: game.roomID).presentationDetents([.medium, .large]) } }

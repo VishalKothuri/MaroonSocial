@@ -318,7 +318,7 @@ struct ChatView: View {
             }.buttonStyle(ControlPressStyle()).padding(.bottom, 8)
           }
         }
-    }.appBackground().navigationTitle(chat?.anonymous == true ? "Anonymous chat" : chat?.title ?? "Conversation").navigationBarTitleDisplayMode(.inline).toolbar(.hidden, for: .tabBar)
+    }.appBackground().navigationTitle(chat?.anonymous == true ? "Anonymous chat" : chat?.title ?? "Conversation").navigationBarTitleDisplayMode(.inline).hidesTabBarWhenPushed()
       .safeAreaInset(edge: .top) {
         if let call = meta?.call, call.state == "ringing" || call.state == "connected" {
           Button { AppHaptics.shared.play(.selection); showCall = true } label: {

@@ -57,7 +57,7 @@ struct GameLobbyView: View {
         }.font(.subheadline.weight(.semibold)).buttonStyle(.plain).background(Palette.surface, in: RoundedRectangle(cornerRadius: 16)).disabled(matching.searching || matching.busy)
         Text("Prefer a friend? Send a game invitation from your chat.").font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
       }.padding(24)
-    }.appBackground().navigationTitle("").navigationBarTitleDisplayMode(.inline).toolbar(.hidden, for: .tabBar)
+    }.appBackground().navigationTitle("").navigationBarTitleDisplayMode(.inline).hidesTabBarWhenPushed()
       .navigationDestination(item: $destination) { OnlineGameView(sessionID: $0) }
       .onChange(of: matching.game?.id) { _, id in if let id { destination = id; matching.clearMatch() } }
       .task(id: "\(matching.searching)-\(scenePhase)") {

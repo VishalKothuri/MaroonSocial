@@ -172,7 +172,7 @@ struct ActivityDetailView: View {
           Label("Meet in a public place. Share only what you choose.", systemImage: "hand.raised").font(.caption).foregroundStyle(.secondary)
         } else { EmptyCard(icon: "calendar.badge.exclamationmark", title: "Plan unavailable", detail: "It may have been cancelled or removed.") }
       }.padding(16)
-    }.maroonRefreshable { await store.refreshAndWait() }.appBackground().navigationTitle("Plan details").navigationBarTitleDisplayMode(.inline).toolbar(.hidden, for: .tabBar)
+    }.maroonRefreshable { await store.refreshAndWait() }.appBackground().navigationTitle("Plan details").navigationBarTitleDisplayMode(.inline).hidesTabBarWhenPushed()
       .toolbar { Button("Report", systemImage: "flag") { Task { _ = await store.mutate("report", ["target_type": "activity", "target_id": id, "reason": "Activity report"]) } } }
       .confirmationDialog(isHost ? "Cancel this activity?" : "Leave this activity?", isPresented: $confirmLeave, titleVisibility: .visible) {
         Button(isHost ? "Cancel activity" : "Leave activity", role: .destructive) {
