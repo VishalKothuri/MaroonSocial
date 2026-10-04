@@ -1,0 +1,217 @@
+import { expect } from "chai"
+import { AimInputs } from "../../src/view/dom/aiminputs"
+import { initDom, canvas3d } from "./dom"
+import { Container } from "../../src/container/container"
+import { fireEvent } from "@testing-library/dom"
+import { Assets } from "../../src/view/assets"
+import { Session } from "../../src/network/client/session"
+import { Cue } from "../../src/view/cue"
+
+import { PlaceBall } from "../../src/controller/placeball"
+
+initDom()
+
+describe("AimInput", () => {
+  let container: Container
+  let aiminputs: AimInputs
+
+  beforeEach(function (done) {
+    initDom()
+    container = new Container({
+      element: canvas3d,
+      log: (_) => {},
+      assets: Assets.localAssets(),
+    })
+    aiminputs = container.table.cue.aimInputs
+    done()
+  })
+
+  it("adjust spin", (done) => {
+    const e = { buttons: 1, offsetX: 1, offsetY: 1 }
+    fireEvent.click(aiminputs.cueBallElement)
+    aiminputs.mousemove(e)
+    expect(aiminputs.cueHitElement).to.be.not.null
+    done()
+  })
+
+  it("adjust power", (done) => {
+    aiminputs.setDisabled(false)
+    aiminputs.cuePowerElement.value = "1"
+    fireEvent.input(aiminputs.cuePowerElement, { target: { value: "1" } })
+    expect(container.table.cue.aim.power).to.be.greaterThan(0)
+    expect(aiminputs.cuePowerPercentElement?.innerText).to.equal("100%")
+    done()
+  })
+
+  it("double click cue ball toggles tilt slider", (done) => {
+    aiminputs.setDisabled(false)
+    expect(aiminputs.tiltSliderContainerElement.hidden).to.be.true
+    fireEvent.dblClick(aiminputs.cueBallElement)
+    expect(aiminputs.tiltSliderContainerElement.hidden).to.be.false
+    fireEvent.dblClick(aiminputs.cueBallElement)
+    expect(aiminputs.tiltSliderContainerElement.hidden).to.be.true
+    done()
+  })
+
+  it("openElevation button toggles tilt slider", (done) => {
+    aiminputs.setDisabled(false)
+    expect(aiminputs.tiltSliderContainerElement.hidden).to.be.true
+    fireEvent.click(document.getElementById("openElevation") as HTMLElement)
+    expect(aiminputs.tiltSliderContainerElement.hidden).to.be.false
+    fireEvent.click(document.getElementById("openElevation") as HTMLElement)
+    expect(aiminputs.tiltSliderContainerElement.hidden).to.be.true
+    done()
+  })
+
+  it("toggleTiltControl without arguments toggles tilt slider", (done) => {
+    aiminputs.setDisabled(false)
+    expect(aiminputs.tiltSliderContainerElement.hidden).to.be.true
+    aiminputs.toggleTiltControl()
+    expect(aiminputs.tiltSliderContainerElement.hidden).to.be.false
+    aiminputs.toggleTiltControl()
+    expect(aiminputs.tiltSliderContainerElement.hidden).to.be.true
+    done()
+  })
+
+  it("tilt slider updates aim elevation", (done) => {
+    aiminputs.setDisabled(false)
+    aiminputs.tiltSliderContainerElement.hidden = false
+    aiminputs.cueTiltElement.elevation = 0.75
+    fireEvent.input(aiminputs.cueTiltElement)
+    expect(container.table.cue.aim.elevation).to.equal(0.75)
+    done()
+  })
+
+  it("elevation raise shows the tilt control", (done) => {
+    aiminputs.setDisabled(false)
+    expect(aiminputs.tiltSliderContainerElement.hidden).to.be.true
+    container.table.cue.setElevation(0.05)
+    expect(aiminputs.tiltSliderContainerElement.hidden).to.be.false
+    done()
+  })
+
+  it("click hit button", (done) => {
+    aiminputs.setDisabled(false)
+    aiminputs.tiltSliderContainerElement.hidden = false
+    document.getElementById("cueHit")?.click()
+    expect(aiminputs.tiltSliderContainerElement.hidden).to.be.true
+    expect(aiminputs.container.inputQueue).to.be.not.empty
+    done()
+  })
+
+  it("mouse wheel updates power", (done) => {
+    aiminputs.setDisabled(false)
+    const initialPower = Number(aiminputs.cuePowerElement.value)
+    aiminputs.mousewheel({ deltaY: 10 })
+    expect(Number(aiminputs.cuePowerElement.value)).to.not.equal(initialPower)
+    expect(aiminputs.cuePowerElement.style.getPropertyValue("--p")).to.not.be
+      .empty
+    done()
+  })
+
+  it("spectator mode disables hit button, power and spin controls", (done) => {
+    Session.init("id", "name", "table", true)
+    const spectatorAimInputs = new AimInputs(container)
+    expect(spectatorAimInputs.cueHitElement.disabled).to.be.true
+    expect(spectatorAimInputs.cuePowerElement.disabled).to.be.true
+    expect(spectatorAimInputs.cueBallElement.style.pointerEvents).to.equal(
+      "none"
+    )
+    spectatorAimInputs.setDisabled(false)
+    expect(spectatorAimInputs.cueHitElement.disabled).to.be.true
+    expect(spectatorAimInputs.cuePowerElement.disabled).to.be.true
+    expect(spectatorAimInputs.cueBallElement.style.pointerEvents).to.equal(
+      "none"
+    )
+    Session.reset()
+    done()
+  })
+
+  it("setDisabled toggles hit, spin and power controls", (done) => {
+    aiminputs.tiltSliderContainerElement.hidden = false
+    aiminputs.setDisabled(true)
+    expect(aiminputs.cueHitElement.disabled).to.be.true
+    expect(aiminputs.cuePowerElement.disabled).to.be.true
+    expect(aiminputs.cueTiltElement.disabled).to.be.true
+    expect(aiminputs.tiltSliderContainerElement.hidden).to.be.true
+    expect(aiminputs.cueBallElement.style.pointerEvents).to.equal("none")
+
+    aiminputs.setDisabled(false)
+    expect(aiminputs.cueHitElement.disabled).to.be.false
+    expect(aiminputs.cuePowerElement.disabled).to.be.false
+    expect(aiminputs.cueTiltElement.disabled).to.be.false
+    expect(aiminputs.tiltSliderContainerElement.hidden).to.be.true
+    expect(aiminputs.cueBallElement.style.pointerEvents).to.equal("auto")
+    done()
+  })
+
+  it("disabled controls ignore spin and power input events", (done) => {
+    aiminputs.setDisabled(true)
+    const initialPower = container.table.cue.aim.power
+    const initialOffset = container.table.cue.aim.offset.clone()
+
+    aiminputs.cuePowerElement.value = 1
+    aiminputs.powerChanged({})
+    aiminputs.mousewheel({ deltaY: 10 })
+    aiminputs.cueTiltElement.value = 1
+    aiminputs.tiltChanged({})
+    aiminputs.adjustSpin({ offsetX: 1, offsetY: 1 })
+
+    expect(container.table.cue.aim.power).to.equal(initialPower)
+    expect(container.table.cue.aim.elevation).to.equal(0)
+    expect(container.table.cue.aim.offset.equals(initialOffset)).to.be.true
+    done()
+  })
+
+  it("respects Cue.helperEnabled for object ball overlap", (done) => {
+    aiminputs.setDisabled(false)
+    Cue.helperEnabled = false
+    aiminputs.showOverlap()
+    expect(aiminputs.objectBallStyle?.visibility).to.equal("hidden")
+    if (aiminputs.objectBallOverlap) {
+      expect(aiminputs.objectBallOverlap.textContent).to.equal("")
+    }
+    done()
+  })
+
+  it("viewportHit allows double click to place ball during PlaceBall mode", (done) => {
+    aiminputs.setDisabled(false)
+    container.controller = new PlaceBall(container)
+    container.inputQueue = []
+    aiminputs.viewportHit({ pointerType: "touch" })
+    expect(container.inputQueue).to.not.be.empty
+    expect(container.inputQueue[0].key).to.equal("SpaceUp")
+    done()
+  })
+
+  it("viewportHit rejects hit during Aim mode on touch devices", (done) => {
+    aiminputs.setDisabled(false)
+    container.inputQueue = []
+    aiminputs.viewportHit({ pointerType: "touch" })
+    expect(container.inputQueue).to.be.empty
+    done()
+  })
+
+  it("setButtonText localises the label and keeps aria-label in sync", (done) => {
+    globalThis.history.replaceState({}, "", "?locale=ko")
+    try {
+      aiminputs.setButtonText("Hit")
+      expect(aiminputs.cueHitElement.innerText).to.equal("공치기")
+      expect(aiminputs.cueHitElement.getAttribute("aria-label")).to.equal(
+        "공치기"
+      )
+    } finally {
+      globalThis.history.replaceState({}, "", "?")
+    }
+    done()
+  })
+
+  it("viewportHit allows hit during Aim mode on non-touch devices", (done) => {
+    aiminputs.setDisabled(false)
+    container.inputQueue = []
+    aiminputs.viewportHit({ pointerType: "mouse" })
+    expect(container.inputQueue).to.not.be.empty
+    expect(container.inputQueue[0].key).to.equal("SpaceUp")
+    done()
+  })
+})

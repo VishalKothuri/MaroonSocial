@@ -1,0 +1,36 @@
+begin;
+set local role service_role;
+do $$
+declare ha text:=encode(extensions.gen_random_bytes(32),'hex');hb text:=encode(extensions.gen_random_bytes(32),'hex');hc text:=encode(extensions.gen_random_bytes(32),'hex');hd text:=encode(extensions.gen_random_bytes(32),'hex');a uuid;b uuid;c uuid;d uuid;r text;g text;n uuid:=gen_random_uuid();out jsonb;inv jsonb;
+begin
+ insert into social_private.members(token_hash,username,adult,network_hash)values(ha,'gg_a_'||substr(ha,1,8),true,ha)returning id into a;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hb,'gg_b_'||substr(hb,1,8),true,hb)returning id into b;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hc,'gg_c_'||substr(hc,1,8),true,hc)returning id into c;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hd,'gg_d_'||substr(hd,1,8),true,hd)returning id into d;
+ insert into social_private.rooms(kind,title)values('group','Synthetic group match')returning id into r;
+ insert into community_private.communities(room,creator,nonce,description,category,is_public)values(r,a,gen_random_uuid(),'Synthetic match group','Friends',false);
+ perform community_private.set_identity(r,a,'Captain','gold');perform community_private.set_identity(r,b,'Comet','sky');perform community_private.set_identity(r,c,'Orbit','sage');
+ insert into social_private.room_members(room,member,role)values(r,a,'owner'),(r,b,'member'),(r,c,'member');
+ inv:=jsonb_build_object('room',r,'kind','chess','nonce',n,'rules','maroon-games-2.1.0','state',jsonb_build_object('rules','maroon-games-2.1.0','shots',0,'turn',0));
+ out:=public.games_gateway('invite',ha,inv);if out->>'code' is distinct from 'invalid'then raise exception 'Group opponent not required %',out;end if;
+ out:=public.games_gateway('invite',ha,inv||jsonb_build_object('opponent_member_key',(select member_key from community_private.identities where room=r and member=d)));if out->>'code' is distinct from 'invalid'then raise exception 'Outsider selected as opponent %',out;end if;
+ out:=public.games_gateway('invite',ha,inv||jsonb_build_object('opponent_member_key',(select member_key from community_private.identities where room=r and member=a)));if out->>'code' is distinct from 'invalid'then raise exception 'Self selected as opponent';end if;
+ inv:=inv||jsonb_build_object('opponent_member_key',(select member_key from community_private.identities where room=r and member=b));out:=public.games_gateway('invite',ha,inv);g:=out->'game'->>'id';if g is null or out->'game'->>'status' is distinct from 'pending'then raise exception 'Named group invitation failed %',out;end if;
+ out:=public.games_gateway('invite',ha,inv);if out->'game'->>'id' is distinct from g then raise exception 'Retry duplicated game';end if;
+ out:=public.games_gateway('invite',ha,inv||jsonb_build_object('opponent_member_key',(select member_key from community_private.identities where room=r and member=c)));if out->>'code' is distinct from 'conflict'then raise exception 'Retry changed opponent';end if;
+ out:=public.games_gateway('card',hc,jsonb_build_object('id',g));if out->'invitation'->>'canOpen' is distinct from 'false'or out->'invitation'?'state'or out->'invitation'?'replay'or out->'invitation'?'yourSeat'then raise exception 'Observer gained match state/access %',out;end if;
+ out:=public.games_gateway('card',hd,jsonb_build_object('id',g));if out->>'code' is distinct from 'not_found'then raise exception 'Outsider read private card';end if;
+ out:=public.games_gateway('accept',hc,jsonb_build_object('id',g));if out->>'code' is distinct from 'not_found'then raise exception 'Uninvited member accepted';end if;
+ out:=public.games_gateway('get',hc,jsonb_build_object('id',g));if out->>'code' is distinct from 'not_found'then raise exception 'Observer read match';end if;
+ out:=public.games_gateway('accept',ha,jsonb_build_object('id',g));if out->>'code' is distinct from 'forbidden'then raise exception 'Inviter autoaccepted';end if;
+ out:=public.games_gateway('accept',hb,jsonb_build_object('id',g));if out->'game'->>'status' is distinct from 'active'or out->'game'->>'yourSeat' is distinct from '1'then raise exception 'Chosen opponent could not accept %',out;end if;
+ out:=public.games_gateway('list',hc);if exists(select 1 from jsonb_array_elements(out->'games')x where x->>'id'=g)then raise exception 'Observer match list leaked';end if;
+ out:=public.social_gateway('room.leave',hb,jsonb_build_object('room_id',r));if out?'error'then raise exception 'Opponent leave failed %',out;end if;
+ out:=public.games_gateway('get',ha,jsonb_build_object('id',g));if out->>'code' is distinct from 'forbidden'then raise exception 'Inviter retained left-opponent match';end if;
+ out:=public.games_gateway('get',hb,jsonb_build_object('id',g));if out->>'code' is distinct from 'forbidden'then raise exception 'Left opponent retained match';end if;
+ out:=public.games_gateway('invite',ha,inv);if out->>'code' is distinct from 'forbidden'then raise exception 'Old nonce bypassed revocation';end if;
+ out:=public.games_gateway('list',ha);if exists(select 1 from jsonb_array_elements(out->'games')x where x->>'id'=g)then raise exception 'Revoked match list leaked';end if;
+ out:=public.games_gateway('card',hc,jsonb_build_object('id',g));if out->'invitation'->>'status' is distinct from 'unavailable'or out->'invitation'->>'canOpen' is distinct from 'false'then raise exception 'Revoked match card allows entry';end if;
+end $$;
+select 'PASS explicit accepted opponent binding; pending without autoaccept; nonce identity; observer card only; chosen-recipient acceptance; outsider/game-state denial; leave/retry/list revocation' result;
+rollback;

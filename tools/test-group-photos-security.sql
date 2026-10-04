@@ -1,0 +1,32 @@
+begin;
+set local role service_role;
+do $$
+declare ha text:=encode(extensions.gen_random_bytes(32),'hex'); hb text:=encode(extensions.gen_random_bytes(32),'hex'); hc text:=encode(extensions.gen_random_bytes(32),'hex');a uuid;b uuid;c uuid;rid text;result jsonb;att uuid;memberatt uuid;k text;oldpath text;content uuid;
+begin
+ insert into social_private.members(token_hash,username,adult,network_hash)values(ha,'photo_'||substr(ha,1,8),true,ha)returning id into a;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hb,'photo_'||substr(hb,1,8),true,hb)returning id into b;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hc,'photo_'||substr(hc,1,8),true,hc)returning id into c;
+ result:=public.communities_gateway('create',ha,jsonb_build_object('title','Photo QA','description','Private rollback photo test.','category','Friends','avatar','gold','is_public',false,'alias','Captain','member_avatar','sage','nonce',gen_random_uuid()));rid:=result->>'room_id';if rid is null then raise exception 'Create %',result;end if;
+ oldpath:=gen_random_uuid()::text||'.jpg';
+ result:=public.group_photo_gateway('reserve',ha,jsonb_build_object('room_id',rid,'scope','group','path',oldpath,'size',123));att:=(result->>'attachment_id')::uuid;if att is null then raise exception 'Reserve %',result;end if;
+ result:=public.group_photo_gateway('commit',ha,jsonb_build_object('room_id',rid,'scope','group','attachment_id',att));if result->>'saved'<>'true' then raise exception 'Commit %',result;end if;
+ result:=public.group_photo_gateway('read',hc,jsonb_build_object('room_id',rid,'scope','group'));if not result?'error' then raise exception 'Private outsider photo leak';end if;
+ perform public.communities_gateway('invite',ha,jsonb_build_object('room_id',rid,'username','photo_'||substr(hb,1,8)));
+ result:=public.group_photo_gateway('read',hb,jsonb_build_object('room_id',rid,'scope','group'));if result->>'has_photo'<>'true' then raise exception 'Invite preview missing %',result;end if;
+ result:=public.group_photo_gateway('read',hb,jsonb_build_object('room_id',rid,'scope','member'));if result->>'code' is distinct from 'forbidden' then raise exception 'Pending member photo read';end if;
+ perform public.communities_gateway('accept',hb,jsonb_build_object('room_id',rid,'alias','Comet','member_avatar','sky'));
+ result:=public.group_photo_gateway('authorize',hb,jsonb_build_object('room_id',rid,'scope','group'));if result->>'code' is distinct from 'forbidden' then raise exception 'Nonowner photo write';end if;
+ result:=public.group_photo_gateway('reserve',hb,jsonb_build_object('room_id',rid,'scope','member','path',gen_random_uuid()::text||'.jpg','size',122));memberatt:=(result->>'attachment_id')::uuid;
+ result:=public.group_photo_gateway('commit',hb,jsonb_build_object('room_id',rid,'scope','member','attachment_id',memberatt));if result->>'saved'<>'true' then raise exception 'Member commit %',result;end if;
+ select member_key::text into k from community_private.identities where room=rid and member=b;
+ result:=public.group_photo_gateway('read',ha,jsonb_build_object('room_id',rid,'scope','member','member_key',k));if result->>'has_photo'<>'true' then raise exception 'Accepted roster photo %',result;end if;
+ result:=public.group_photo_gateway('remove',ha,jsonb_build_object('room_id',rid,'scope','member','member_key',k));if result->>'code' is distinct from 'forbidden' then raise exception 'Changed someone else avatar';end if;
+ insert into social_private.attachments(owner,room,kind,mime,size,path,ready)values(a,rid,'image','image/jpeg',100,gen_random_uuid()::text||'.jpg',true)returning id into content;
+ result:=public.group_photo_gateway('commit',ha,jsonb_build_object('room_id',rid,'scope','group','attachment_id',content));if result->>'code' is distinct from 'forbidden' then raise exception 'Ordinary attachment repurposed';end if;
+ result:=public.group_photo_gateway('remove',ha,jsonb_build_object('room_id',rid,'scope','group'));if result->>'saved'<>'true' or exists(select 1 from community_private.photos where room=rid and subject='group')then raise exception 'Removal failed';end if;
+ if not exists(select 1 from social_private.storage_deletions where path=oldpath)then raise exception 'Old object cleanup not queued';end if;
+ perform public.communities_gateway('leave',hb,jsonb_build_object('room_id',rid));
+ result:=public.group_photo_gateway('read',ha,jsonb_build_object('room_id',rid,'scope','member','member_key',k));if result->>'code' is distinct from 'forbidden' then raise exception 'Former member photo revealed';end if;
+ if has_function_privilege('anon','public.group_photo_gateway(text,text,jsonb)','EXECUTE') or has_table_privilege('authenticated','community_private.photos','SELECT')then raise exception 'Private photo grants leaked';end if;
+end $$;
+rollback;

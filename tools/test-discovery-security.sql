@@ -1,0 +1,48 @@
+begin;set local role service_role;
+do $$
+declare ha text:=encode(extensions.gen_random_bytes(32),'hex');hb text:=encode(extensions.gen_random_bytes(32),'hex');hc text:=encode(extensions.gen_random_bytes(32),'hex');a uuid;b uuid;c uuid;ia uuid:=gen_random_uuid();ib uuid:=gen_random_uuid();ic uuid:=gen_random_uuid();out jsonb;pa uuid;pb uuid;req uuid;sid uuid;rid uuid;dm text;snap jsonb;aliasa text:='Copper'||substr(ha,1,6);aliasb text:='Silver'||substr(hb,1,6);n uuid:=gen_random_uuid();gid uuid;
+begin
+ if has_schema_privilege('authenticated','discovery_private','USAGE')or has_function_privilege('anon','public.discovery_gateway(text,text,jsonb)','EXECUTE')then raise exception 'Private discovery exposed';end if;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(ha,'ds_a_'||substr(ha,1,8),true,ha)returning id into a;insert into social_private.members(token_hash,username,adult,network_hash)values(hb,'ds_b_'||substr(hb,1,8),true,hb)returning id into b;insert into social_private.members(token_hash,username,adult,network_hash)values(hc,'ds_c_'||substr(hc,1,8),true,hc)returning id into c;
+ out:=public.discovery_gateway('profile',ha,jsonb_build_object('instance',ia,'username',aliasa,'tags','["music","music"]'::jsonb));if out->>'code'<>'invalid'then raise exception 'Duplicate interests';end if;
+ out:=public.discovery_gateway('profile',ha,jsonb_build_object('instance',ia,'username',aliasa,'tags','["a","b","c","d","e","f","g"]'::jsonb));if out->>'code'<>'invalid'then raise exception 'More than six interests';end if;
+ out:=public.discovery_gateway('profile',ha,jsonb_build_object('instance',ia,'username',aliasa,'tags','["music","engineering"]'::jsonb));if out?'error'then raise exception 'Profile %',out;end if;
+ out:=public.discovery_gateway('profile',hb,jsonb_build_object('instance',ib,'username',lower(aliasa),'tags','[]'::jsonb));if out->>'code'<>'username_taken'then raise exception 'Case-insensitive names';end if;
+ perform public.discovery_gateway('profile',hb,jsonb_build_object('instance',ib,'username',aliasb,'tags','["music"]'::jsonb));
+ out:=public.discovery_gateway('enter',ha,jsonb_build_object('instance',ia,'transport','direct'));if out->>'code'<>'consent'then raise exception 'Direct consent bypass';end if;
+ out:=public.discovery_gateway('enter',ha,jsonb_build_object('instance',ia,'transport','direct','allow_direct',true));if out->>'state'<>'waiting'then raise exception 'Enter %',out;end if;
+ out:=public.discovery_gateway('enter',hb,jsonb_build_object('instance',ib,'transport','direct','allow_direct',true));if out->>'state'<>'waiting'then raise exception 'No automatic matching %',out;end if;
+ select id into pa from discovery_private.presence where member=a;select id into pb from discovery_private.presence where member=b;
+ if out::text like '%'||a::text||'%'or out::text like '%ds_a_%'or out->'session'<>'null'then raise exception 'Directory reveals account or creates session';end if;
+ out:=public.discovery_gateway('request',ha,jsonb_build_object('instance',ia,'target',pb,'nonce',n));req:=(out->'outgoing'->>'id')::uuid;if req is null then raise exception 'Request %',out;end if;
+ out:=public.discovery_gateway('request',ha,jsonb_build_object('instance',ia,'target',pb,'nonce',n));if(out->'outgoing'->>'id')::uuid<>req then raise exception 'Request retry duplicate';end if;
+ out:=public.discovery_gateway('accept',ha,jsonb_build_object('instance',ia,'request_id',req,'transport','direct'));if out->>'code'<>'forbidden'then raise exception 'Sender self-accepted';end if;
+ out:=public.discovery_gateway('accept',hb,jsonb_build_object('instance',ib,'request_id',req,'transport','direct'));sid:=(out->'session'->>'id')::uuid;if out->>'state'<>'connecting'or out->'session'->>'room'is not null then raise exception 'Media before double confirmation %',out;end if;
+ out:=public.discovery_gateway('media',ha,jsonb_build_object('instance',ia,'session_id',sid));if out->>'code'<>'consent'then raise exception 'Unconfirmed media';end if;
+ out:=public.discovery_gateway('ack',hb,jsonb_build_object('instance',ib,'session_id',sid));if out->>'state'<>'connecting'then raise exception 'One ack connected';end if;
+ out:=public.discovery_gateway('ack',ha,jsonb_build_object('instance',ia,'session_id',sid));rid:=(out->'session'->>'room')::uuid;if out->>'state'<>'connected'or rid is null then raise exception 'Both ack failed %',out;end if;
+ out:=public.discovery_gateway('send',ha,jsonb_build_object('instance',ia,'session_id',sid,'body','Named interest conversation','nonce',gen_random_uuid()));if out?'error'then raise exception 'Text %',out;end if;
+ out:=public.discovery_gateway('heartbeat',hb,jsonb_build_object('instance',ib));if out->'messages'->0->>'body'<>'Named interest conversation'then raise exception 'Text delivery';end if;
+ out:=public.discovery_gateway('continue',ha,jsonb_build_object('instance',ia,'session_id',sid));dm:=out->>'continue_room';if dm is null then raise exception 'Named continuation %',out;end if;
+ snap:=public.social_gateway('snapshot',hb);select x into out from jsonb_array_elements(snap->'snapshot'->'conversations')x where x->>'id'=dm;
+ if out->>'title'<>aliasa or out->>'request'<>'true'or out::text like '%ds_a_%'or out::text like '%'||a::text||'%'then raise exception 'Named lobby room privacy %',out;end if;
+ perform public.social_gateway('dm.accept',hb,jsonb_build_object('room_id',dm));perform public.social_gateway('room.typing',ha,jsonb_build_object('room_id',dm));
+ out:=public.games_gateway('invite',ha,jsonb_build_object('room',dm,'kind','chess','rules','maroon-games-2.1.0','nonce',gen_random_uuid(),'state','{"turn":0}'::jsonb));if out?'error'then raise exception 'Discovery game %',out;end if;
+ if out::text like '%ds_a_%'or out::text like '%ds_b_%'then raise exception 'Game account names leaked';end if;
+ snap:=public.social_gateway('snapshot',hb);select x into out from jsonb_array_elements(snap->'snapshot'->'conversationMeta')x where x->>'id'=dm;if out::text like '%ds_a_%'or out->'typing'->>0<>aliasa then raise exception 'Typing account privacy %',out;end if;
+ out:=public.discovery_gateway('leave',ha,jsonb_build_object('instance',ia));if exists(select 1 from discovery_private.presence where member=a)or not exists(select 1 from random_private.rooms where id=rid and ended_at is not null)then raise exception 'Leave retained video';end if;
+ out:=public.discovery_gateway('heartbeat',hb,jsonb_build_object('instance',ib));if out->>'state'<>'ended'then raise exception 'Peer did not see end';end if;
+ -- A stale waiting tab cannot be connected by an accept; two confirmations timeout.
+ perform public.discovery_gateway('enter',ha,jsonb_build_object('instance',ia,'transport','direct','allow_direct',true));perform public.discovery_gateway('enter',hb,jsonb_build_object('instance',ib,'transport','direct','allow_direct',true));select id into pb from discovery_private.presence where member=b;
+ update discovery_private.requests set created_at=now()-interval '1 minute'where sender=a;
+ out:=public.discovery_gateway('request',ha,jsonb_build_object('instance',ia,'target',pb,'nonce',gen_random_uuid()));req:=(out->'outgoing'->>'id')::uuid;
+ update discovery_private.presence set seen_at=now()-interval '16 seconds'where member=a;
+ out:=public.discovery_gateway('accept',hb,jsonb_build_object('instance',ib,'request_id',req,'transport','direct'));if out->>'code'<>'unavailable'then raise exception 'Stale sender accepted %',out;end if;
+ perform public.discovery_gateway('leave',hb,jsonb_build_object('instance',ib));perform public.discovery_gateway('enter',ha,jsonb_build_object('instance',ia,'transport','direct','allow_direct',true));perform public.discovery_gateway('enter',hb,jsonb_build_object('instance',ib,'transport','direct','allow_direct',true));select id into pb from discovery_private.presence where member=b;update discovery_private.requests set created_at=now()-interval '1 minute'where sender=a;
+ out:=public.discovery_gateway('request',ha,jsonb_build_object('instance',ia,'target',pb,'nonce',gen_random_uuid()));req:=(out->'outgoing'->>'id')::uuid;out:=public.discovery_gateway('accept',hb,jsonb_build_object('instance',ib,'request_id',req,'transport','direct'));sid:=(out->'session'->>'id')::uuid;
+ perform public.discovery_gateway('ack',hb,jsonb_build_object('instance',ib,'session_id',sid));update discovery_private.sessions set ack_deadline=now()-interval '1 second'where id=sid;
+ out:=public.discovery_gateway('ack',ha,jsonb_build_object('instance',ia,'session_id',sid));if out->>'code'<>'ended'or exists(select 1 from discovery_private.sessions where id=sid and room is not null)then raise exception 'Missing peer ack connected: %, session %',out,sid;end if;
+ if exists(select 1 from push_private.jobs where kind in('call','group_call')and recipient in(a,b,c))then raise exception 'Discovery emitted unsolicited call push';end if;
+end $$;
+select 'PASS interest profiles, max6, named waiting directory, explicit request/accept, two foreground acks, stale/timeout denial, video/text only after mutual confirmation, scoped named continuation/game/typing and no push invitations' result;
+rollback;

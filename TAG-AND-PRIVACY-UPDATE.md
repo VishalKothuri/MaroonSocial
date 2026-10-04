@@ -1,5 +1,7 @@
 # MaroonSocial — HideZone, key-based accounts, and random-chat distribution
 
+> **October 4 product update:** The owner replaced random anonymous text/voice matching with a visible username-and-interests lobby and explicit mutual connection requests. Anonymous post/reply DMs remain. The older “random matching remains essential” statements below are superseded. Enrollment delivery is paused; stronger unlinkable eligibility and ban-preserving recovery remain unresolved architecture, not a shipped privacy guarantee. See [current feature status](FEATURE-STATUS.md).
+
 > **October 1, 2026 implementation update:** Coding is now authorized. The user selected SwiftUI, iPhone first, and connected Supabase **Maroon Social** plus GitHub **VishalKothuri/MaroonSocial**. Mascot work is paused. This document preserves the earlier research/proposals; its older no-code statements are historical. See [README](README.md) for tested implementation status and remaining work.
 
 September 29, 2026. This update incorporates your answers. Research and visual design only. Your latest message explicitly confirms NO CODE.

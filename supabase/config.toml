@@ -162,7 +162,7 @@ site_url = "http://127.0.0.1:3000"
 # A list of *exact* URLs that auth providers are permitted to redirect to post authentication.
 additional_redirect_urls = ["https://127.0.0.1:3000"]
 # How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 (1 week).
-jwt_expiry = 3600
+jwt_expiry = 900
 # JWT issuer URL. If not set, defaults to auth.external_url.
 # jwt_issuer = ""
 # Path to JWT signing key. DO NOT commit your signing keys file to git.
@@ -223,15 +223,15 @@ enable_signup = true
 # addresses. If disabled, only the new email is required to confirm.
 double_confirm_changes = true
 # If enabled, users need to confirm their email address before signing in.
-enable_confirmations = false
+enable_confirmations = true
 # If enabled, users will need to reauthenticate or have logged in recently to change their password.
 secure_password_change = false
 # Controls the minimum amount of time that must pass before sending another signup confirmation or password reset email.
-max_frequency = "1s"
+max_frequency = "60s"
 # Number of characters used in the email OTP.
 otp_length = 6
 # Number of seconds before the email OTP expires (defaults to 1 hour).
-otp_expiry = 3600
+otp_expiry = 600
 
 # Use a production-ready SMTP server
 # [auth.email.smtp]
@@ -242,6 +242,15 @@ otp_expiry = 3600
 # pass = "env(SENDGRID_API_KEY)"
 # admin_email = "admin@email.com"
 # sender_name = "Admin"
+
+# Personal-email login uses typed OTPs in the custom native screen.
+[auth.email.template.magic_link]
+subject = "Your Maroon Social login code"
+content_path = "./supabase/templates/login-code.html"
+
+[auth.email.template.confirmation]
+subject = "Your Maroon Social login code"
+content_path = "./supabase/templates/login-code.html"
 
 # Uncomment to customize email template
 # [auth.email.template.invite]
@@ -412,3 +421,37 @@ enabled = true
 # declarative_schema_path = "./database"
 # JSON string passed through to pg-delta SQL formatting.
 # format_options = "{\"keywordCase\":\"upper\",\"indent\":2,\"maxWidth\":80,\"commaStyle\":\"trailing\"}"
+
+# The handler authenticates device-scoped guest tokens itself; it never trusts the public API key as a user identity.
+[functions.random-chat]
+verify_jwt = false
+
+# Server authenticates independent, private member device credentials for social features.
+[functions.social]
+verify_jwt = false
+
+[functions.room-calls]
+verify_jwt = false
+
+[functions.tag-game]
+verify_jwt = false
+
+# Private social credentials are verified by the games gateway.
+[functions.games]
+verify_jwt = false
+
+[functions.verification]
+verify_jwt = false
+
+[functions.account-controls]
+verify_jwt = false
+
+# Explicit getUser + auth.sessions validation lives in the shared auth adapter.
+[functions.auth-account]
+verify_jwt = false
+
+[functions.communities]
+verify_jwt = false
+
+[functions.courses]
+verify_jwt = false

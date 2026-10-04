@@ -7,6 +7,8 @@ def fetch(url):
     req=urllib.request.Request(url,headers={'User-Agent':'MaroonSocial/0.1 (public campus calendar preview)'})
     with urllib.request.urlopen(req,timeout=30) as r:return json.load(r)
 def clean(value):return html.unescape(re.sub('<[^>]+>',' ',str(value or ''))).strip()
+def feed_flag(value):return value is True or value == 1 or value in ('1','true')
+def cancelled_title(title):return bool(re.search(r'(?:^\s*cancel(?:l)?ed(?:\s*[:–—-]|\s*$)|[\[(]\s*cancel(?:l)?ed\s*[\])]|[–—-]\s*cancel(?:l)?ed\s*$)',title,re.I))
 def main():
     stamp=time.time(); events={};errors=[]
     for category,url in SOURCES:
@@ -15,7 +17,8 @@ def main():
                 starts=float(row['date_ts'])
                 if not stamp-86400 <= starts <= stamp+31*86400:continue
                 eid=f"{row['id']}-{int(starts)}"
-                e=dict(id=eid,title=clean(row['title']),category=category,starts=starts,allDay=bool(row.get('is_all_day')),location=clean(row.get('location_title') or row.get('location')),details=clean(row.get('description'))[:1200],url=row['url'],source=url,fetchedAt=stamp,cancelled=bool(row.get('is_canceled')))
+                title=clean(row['title'])
+                e=dict(id=eid,title=title,category=category,starts=starts,allDay=feed_flag(row.get('is_all_day')),location=clean(row.get('location_title') or row.get('location')),details=clean(row.get('description'))[:1200],url=row['url'],source=url,fetchedAt=stamp,cancelled=feed_flag(row.get('is_canceled')) or feed_flag(row.get('is_cancelled')) or cancelled_title(title))
                 if row.get('date2_ts'): e['ends']=float(row['date2_ts'])
                 image=row.get('thumbnailURL')
                 if isinstance(image,str) and image.startswith('https://'):e['imageURL']=image

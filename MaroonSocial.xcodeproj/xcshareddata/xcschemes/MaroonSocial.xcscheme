@@ -44,6 +44,17 @@
             parallelizable = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
+               BlueprintIdentifier = "8DE2B67D0E44A1C9B6462AC6"
+               BuildableName = "MaroonSocialTests.xctest"
+               BlueprintName = "MaroonSocialTests"
+               ReferencedContainer = "container:MaroonSocial.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
                BlueprintIdentifier = "FBB4DE3BA05CD7D4D1D7BA81"
                BuildableName = "MaroonSocialUITests.xctest"
                BlueprintName = "MaroonSocialUITests"

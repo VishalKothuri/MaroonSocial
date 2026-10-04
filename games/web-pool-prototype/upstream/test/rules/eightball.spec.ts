@@ -1,0 +1,407 @@
+import { expect } from "chai"
+import { Vector3 } from "three"
+import { Container } from "../../src/container/container"
+import { Ball, State } from "../../src/model/ball"
+import { Outcome } from "../../src/model/outcome"
+import { isFirstShot } from "../../src/utils/utils"
+import { EightBall } from "../../src/controller/rules/eightball"
+import { Assets } from "../../src/view/assets"
+import { initDom } from "../view/dom"
+import { PlaceBall } from "../../src/controller/placeball"
+import { Aim } from "../../src/controller/aim"
+import { WatchAim } from "../../src/controller/watchaim"
+import { WatchShot } from "../../src/controller/watchshot"
+import { WatchEvent } from "../../src/events/watchevent"
+import { End } from "../../src/controller/end"
+import { Session } from "../../src/network/client/session"
+import { ScoreEvent } from "../../src/events/scoreevent"
+import { TableGeometry } from "../../src/view/tablegeometry"
+import { R } from "../../src/model/physics/constants"
+
+initDom()
+
+function initEightBall(): {
+  container: Container
+  eightball: EightBall
+} {
+  Ball.id = 0
+  Session.reset()
+  Session.init("test-client", "TestPlayer", "test-table", false, false, false)
+  const container = new Container({
+    element: undefined,
+    log: (_: any) => {},
+    assets: Assets.localAssets(),
+    ruletype: "eightball",
+  })
+  const eightball = container.rules as EightBall
+  return { container, eightball }
+}
+
+describe("EightBall Rules", () => {
+  let container: Container
+  let eightball: EightBall
+
+  beforeEach(() => {
+    ;({ container, eightball } = initEightBall())
+  })
+
+  afterEach(() => {
+    Session.reset()
+  })
+
+  it("should be eightball", () => {
+    expect(eightball.rulename).to.equal("eightball")
+    expect(container.table.balls).to.have.length(16) // Cue ball + 15 balls
+  })
+
+  it("should have open table initially", () => {
+    expect(Session.getInstance().p1type).to.equal(0)
+  })
+
+  it("should detect foul if 8-ball hit first on open table", () => {
+    const eightBall = container.table.balls.find((b) => b.label === 8)!
+    const outcome = [Outcome.collision(container.table.cueball, eightBall, 1)]
+    const nextController = eightball.update(outcome)
+    expect(nextController).to.be.an.instanceof(PlaceBall)
+    expect(eightball.foulReason(outcome)).to.equal(
+      "Hitting the 8-ball first is a foul"
+    )
+  })
+
+  it("should assign solids if only solids are potted", () => {
+    const ball1 = container.table.balls.find((b) => b.label === 1)!
+    const outcome = [
+      Outcome.collision(container.table.cueball, ball1, 1),
+      Outcome.pot(ball1, 1),
+    ]
+    eightball.update(outcome)
+    expect(Session.getInstance().p1type).to.equal(1) // Solids
+  })
+
+  it("should assign stripes if only stripes are potted", () => {
+    const ball9 = container.table.balls.find((b) => b.label === 9)!
+    const outcome = [
+      Outcome.collision(container.table.cueball, ball9, 1),
+      Outcome.pot(ball9, 1),
+    ]
+    eightball.update(outcome)
+    expect(Session.getInstance().p1type).to.equal(2) // Stripes
+  })
+
+  it("should remain open if both solid and stripe are potted", () => {
+    const ball1 = container.table.balls.find((b) => b.label === 1)!
+    const ball9 = container.table.balls.find((b) => b.label === 9)!
+    const outcome = [
+      Outcome.collision(container.table.cueball, ball1, 1),
+      Outcome.pot(ball1, 1),
+      Outcome.pot(ball9, 1),
+    ]
+    eightball.update(outcome)
+    expect(Session.getInstance().p1type).to.equal(0)
+  })
+
+  it("should foul if wrong group hit first after assignment", () => {
+    Session.getInstance().p1type = 1 // Solids
+    const ball9 = container.table.balls.find((b) => b.label === 9)!
+    const outcome = [Outcome.collision(container.table.cueball, ball9, 1)]
+    const nextController = eightball.update(outcome)
+    expect(nextController).to.be.an.instanceof(PlaceBall)
+    expect(eightball.foulReason(outcome)).to.equal("Wrong group hit first")
+  })
+
+  it("should foul if no cushion hit and no pot", () => {
+    const ball1 = container.table.balls.find((b) => b.label === 1)!
+    const outcome = [Outcome.collision(container.table.cueball, ball1, 1)]
+    const nextController = eightball.update(outcome)
+    expect(nextController).to.be.an.instanceof(PlaceBall)
+  })
+
+  it("should respot 8-ball and give ball in hand if 8-ball potted early", () => {
+    const eightBall = container.table.balls.find((b) => b.label === 8)!
+    const ball1 = container.table.balls.find((b) => b.label === 1)!
+    const outcome = [
+      Outcome.collision(container.table.cueball, ball1, 1),
+      Outcome.pot(eightBall, 1),
+    ]
+    const nextController = eightball.update(outcome)
+    expect(nextController).to.be.an.instanceof(PlaceBall)
+    expect(eightBall.onTable()).to.be.true
+  })
+
+  it("should win if 8-ball potted after clearing group", () => {
+    Session.getInstance().p1type = 1 // Solids
+    // Clear solids
+    container.table.balls.forEach((b) => {
+      if ((b.label || 0) >= 1 && (b.label || 0) <= 7) {
+        b.state = State.InPocket
+      }
+    })
+    const eightBall = container.table.balls.find((b) => b.label === 8)!
+    const outcome = [
+      Outcome.collision(container.table.cueball, eightBall, 1),
+      Outcome.pot(eightBall, 1),
+    ]
+    expect(eightball.isEndOfGame(outcome)).to.be.true
+    const nextController = eightball.update(outcome)
+    expect(nextController).to.be.an.instanceof(End)
+  })
+
+  it("should score the winning 8-ball", () => {
+    Session.getInstance().p1type = 1 // Solids
+    container.table.balls.forEach((b) => {
+      if ((b.label || 0) >= 1 && (b.label || 0) <= 7) {
+        b.state = State.InPocket
+      }
+    })
+    const eightBall = container.table.balls.find((b) => b.label === 8)!
+    const outcome = [
+      Outcome.collision(container.table.cueball, eightBall, 1),
+      Outcome.pot(eightBall, 1),
+    ]
+    eightball.update(outcome)
+    expect(Session.getInstance().myScore()).to.equal(1)
+  })
+
+  describe("?image= reveal", () => {
+    const stubReveal = (): { value?: number } => {
+      const captured: { value?: number } = {}
+      ;(container.view as any).reveal = {
+        reveal: (fraction: number) => (captured.value = fraction),
+      }
+      return captured
+    }
+
+    it("advances with score / 8 from the score-update funnel", () => {
+      const revealed = stubReveal()
+      container.updateScoreHud(3, 1, 0)
+      expect(revealed.value).to.equal(3 / 8)
+    })
+
+    it("leaves non-eightball rules alone", () => {
+      const revealed = stubReveal()
+      ;(container.rules as any).rulename = "snooker"
+      container.updateScoreHud(3, 1, 0)
+      expect(revealed.value).to.be.undefined
+    })
+  })
+
+  it("should lose if 8-ball potted on open table with no other balls remaining", () => {
+    // Clear all non-8-ball, non-cue balls so it's a valid end-game foul
+    container.table.balls.forEach((b) => {
+      if (b !== container.table.cueball && b.label !== 8) {
+        b.state = State.InPocket
+      }
+    })
+    const eightBall = container.table.balls.find((b) => b.label === 8)!
+    const outcome = [
+      Outcome.collision(container.table.cueball, eightBall, 1),
+      Outcome.pot(eightBall, 1),
+    ]
+    expect(eightball.isEndOfGame(outcome)).to.be.false
+    const nextController = eightball.update(outcome)
+    expect(nextController).to.be.an.instanceof(End)
+  })
+
+  it("should lose if 8-ball potted on foul with no other balls remaining", () => {
+    Session.getInstance().p1type = 1
+    container.table.balls.forEach((b) => {
+      if (b !== container.table.cueball && b.label !== 8) {
+        b.state = State.InPocket
+      }
+    })
+    const eightBall = container.table.balls.find((b) => b.label === 8)!
+    const outcome = [
+      Outcome.pot(container.table.cueball, 1),
+      Outcome.pot(eightBall, 1),
+    ]
+    const nextController = eightball.update(outcome)
+    expect(nextController).to.be.an.instanceof(End)
+  })
+
+  it("should respot 8-ball and give ball in hand if cue ball and 8-ball both potted with other balls remaining", () => {
+    Session.getInstance().p1type = 1 // Solids assigned
+    const eightBall = container.table.balls.find((b) => b.label === 8)!
+    // Leave some solids and stripes on the table
+    const outcome = [
+      Outcome.collision(container.table.cueball, eightBall, 1),
+      Outcome.pot(eightBall, 1),
+      Outcome.pot(container.table.cueball, 1),
+    ]
+    const nextController = eightball.update(outcome)
+    expect(nextController).to.be.an.instanceof(PlaceBall)
+    expect(eightBall.onTable()).to.be.true
+  })
+
+  it("should lose if cue ball and 8-ball both potted with only those two on table", () => {
+    Session.getInstance().p1type = 1 // Solids assigned
+    // Remove all balls except cue ball and 8-ball
+    container.table.balls.forEach((b) => {
+      if (b !== container.table.cueball && b.label !== 8) {
+        b.state = State.InPocket
+      }
+    })
+    const eightBall = container.table.balls.find((b) => b.label === 8)!
+    const outcome = [
+      Outcome.collision(container.table.cueball, eightBall, 1),
+      Outcome.pot(eightBall, 1),
+      Outcome.pot(container.table.cueball, 1),
+    ]
+    const nextController = eightball.update(outcome)
+    expect(nextController).to.be.an.instanceof(End)
+    expect(eightball.isEndOfGame(outcome)).to.be.false // foul means no win
+  })
+
+  it("should scale the breakoff line with the table size", () => {
+    const defaultBreakoff = eightball.placeBall().x
+    globalThis.history.replaceState({}, "", "?tableSize=5")
+    eightball.tableGeometry()
+
+    expect(eightball.placeBall().x).to.equal(defaultBreakoff * 0.5)
+    expect(eightball.placeBall().x).to.equal(-((R * 11) / 0.5) * 0.5)
+
+    globalThis.history.replaceState({}, "", "?tableSize=10")
+    eightball.tableGeometry()
+    expect(TableGeometry.tableX).to.equal(R * 43)
+  })
+
+  it("should allow placeBall anywhere on the table after a foul", () => {
+    // Simulate it's NOT the first shot
+    container.recorder.record({ type: "PLACEBALL" } as any)
+    container.recorder.record({
+      type: "HIT",
+      tablejson: { aim: { pos: { x: 0, y: 0 } } },
+    } as any)
+    // Manually force an AIM type entry if recorder doesn't do it automatically from HIT
+    container.recorder.entries.push({ event: { type: "AIM" } } as any)
+    expect(isFirstShot(container.recorder)).to.be.false
+
+    const pos = new Vector3(1, 0, 0) // Beyond the kitchen (which is at -0.72)
+    const result = eightball.placeBall(pos)
+    expect(result.x).to.equal(1)
+  })
+
+  it("should broadcast ScoreEvent with p1type", () => {
+    const sentEvents: any[] = []
+    container.broadcast = (event) => sentEvents.push(event)
+
+    const ball1 = container.table.balls.find((b) => b.label === 1)!
+    const outcome = [
+      Outcome.collision(container.table.cueball, ball1, 1),
+      Outcome.pot(ball1, 1),
+    ]
+    eightball.update(outcome)
+
+    const scoreEvents = sentEvents.filter((e) => e instanceof ScoreEvent)
+    expect(scoreEvents).to.have.length(1)
+    expect(scoreEvents[0].p1type).to.equal(1)
+  })
+
+  it("nextCandidateBall should return group ball", () => {
+    Session.getInstance().p1type = 1 // Solids
+    const candidate = eightball.nextCandidateBall()
+    expect(candidate?.label).to.be.at.least(1).and.at.most(7)
+  })
+
+  describe("getAmountScored", () => {
+    it("returns 0 when no balls potted", () => {
+      const ball1 = container.table.balls.find((b) => b.label === 1)!
+      const outcome = [Outcome.collision(container.table.cueball, ball1, 1)]
+      expect(eightball.getAmountScored(outcome)).to.equal(0)
+    })
+
+    it("returns pot count when balls are potted", () => {
+      const ball1 = container.table.balls.find((b) => b.label === 1)!
+      const ball9 = container.table.balls.find((b) => b.label === 9)!
+      const outcome = [
+        Outcome.collision(container.table.cueball, ball1, 1),
+        Outcome.pot(ball1, 1),
+        Outcome.pot(ball9, 1),
+      ]
+      expect(eightball.getAmountScored(outcome)).to.equal(2)
+    })
+  })
+
+  it("nextCandidateBall should return 8-ball if group cleared", () => {
+    Session.getInstance().p1type = 1 // Solids
+    container.table.balls.forEach((b) => {
+      if ((b.label || 0) >= 1 && (b.label || 0) <= 7) {
+        b.state = State.InPocket
+      }
+    })
+    const candidate = eightball.nextCandidateBall()
+    expect(candidate?.label).to.equal(8)
+  })
+
+  it("should continue turn if both own and opponent balls are potted (own hit first)", () => {
+    Session.getInstance().p1type = 1 // Solids
+    const myBall = container.table.balls.find((b) => b.label === 1)!
+    const opponentBall = container.table.balls.find((b) => b.label === 9)!
+
+    const outcome = [
+      Outcome.collision(container.table.cueball, myBall, 1),
+      Outcome.pot(myBall, 1),
+      Outcome.pot(opponentBall, 2),
+    ]
+
+    const nextController = eightball.update(outcome)
+    expect(nextController).to.be.an.instanceof(Aim)
+  })
+
+  it("should end turn if only opponent ball is potted (own hit first)", () => {
+    container.isSinglePlayer = false
+    Session.getInstance().p1type = 1 // Solids
+    const myBall = container.table.balls.find((b) => b.label === 1)!
+    const opponentBall = container.table.balls.find((b) => b.label === 9)!
+
+    const outcome = [
+      Outcome.collision(container.table.cueball, myBall, 1),
+      Outcome.pot(opponentBall, 1),
+    ]
+
+    const nextController = eightball.update(outcome)
+    // Should return WatchAim or handleMiss result which is WatchAim for multiplayer
+    expect(nextController).to.be.an.instanceof(WatchAim)
+  })
+
+  it("should hand the turn to the watcher after potting only the opponent's ball", () => {
+    const sentEvents: any[] = []
+    container.broadcast = (event) => sentEvents.push(event)
+    container.isSinglePlayer = false
+    Session.getInstance().p1type = 1 // Solids
+    const myBall = container.table.balls.find((b) => b.label === 1)!
+    const opponentBall = container.table.balls.find((b) => b.label === 9)!
+
+    const outcome = [
+      Outcome.collision(container.table.cueball, myBall, 1),
+      Outcome.pot(opponentBall, 1),
+    ]
+
+    eightball.update(outcome)
+
+    // A turn pass must not be preceded by a WatchEvent, which would bump the
+    // watcher out of WatchShot so it drops the StartAimEvent (and both players
+    // end up stuck in WatchAim).
+    expect(sentEvents.some((e) => e instanceof WatchEvent)).to.be.false
+
+    // Simulate the watcher applying the emitted events in order.
+    let watcher: any = new WatchShot(container)
+    for (const event of sentEvents) {
+      watcher = event.applyToController(watcher)
+    }
+    expect(watcher).to.be.an.instanceof(Aim)
+  })
+
+  it("should continue turn if any ball potted on open table", () => {
+    Session.getInstance().p1type = 0 // Open table
+    const ball1 = container.table.balls.find((b) => b.label === 1)!
+    const ball9 = container.table.balls.find((b) => b.label === 9)!
+
+    const outcome = [
+      Outcome.collision(container.table.cueball, ball1, 1),
+      Outcome.pot(ball9, 1),
+    ]
+
+    const nextController = eightball.update(outcome)
+    expect(nextController).to.be.an.instanceof(Aim)
+  })
+})

@@ -1,325 +1,312 @@
 import MaroonCore
+import PhotosUI
 import SwiftUI
 
 struct CommunityView: View {
   @Environment(AppStore.self) private var store
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
   @State private var community = Community.campus
   @State private var sort = "New"
+  @State private var sortMovesForward = true
+  @State private var feedWidth: CGFloat = 0
   @State private var compose = false
+  @State private var chrome = FeedChromeState()
+  @State private var headerHeight: CGFloat = 104
+  @State private var tabBarHeight: CGFloat = 90
+  @State private var interacting = false
+  @State private var published = 0
   @State private var settings = false
   @State private var adultGate = false
-  @State private var unlocked = false
-  var posts: [Post] {
-    let p = store.state.posts.filter {
-      $0.community == community && !store.state.hiddenPosts.contains($0.id)
+  @State private var savedOnly = false
+  @State private var search = ""
+  @State private var showSearch = false
+  @State private var conversationID: String?
+  @State private var refreshPresentation = RefreshPresentation.idle
+  private var posts: [Post] {
+    let posts = store.state.posts.filter {
+      (store.feedPostIDs?.contains($0.id) ?? true) && $0.community == community && $0.deleted != true && !store.state.hiddenPosts.contains($0.id) && (!savedOnly || $0.saved)
+        && (search.isEmpty || $0.text.localizedCaseInsensitiveContains(search))
     }
-    return sort == "Top" ? p.sorted { $0.score > $1.score } : p.sorted { $0.created > $1.created }
+    return sort == "Hot" ? posts.sorted { rank($0) > rank($1) } : posts.sorted { $0.created > $1.created }
   }
+  private func rank(_ post: Post) -> Double {
+    Double(post.score) / pow(max(1, Date.now.timeIntervalSince(post.created) / 3600) + 2, 1.4)
+  }
+  private var chromeInteractionLocked: Bool { compose || showSearch || settings || adultGate || dynamicTypeSize.isAccessibilitySize }
+  private var collapsed: Bool { chrome.collapsed && !chromeInteractionLocked }
   var body: some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: 20) {
-        HStack {
-          Wordmark(small: true)
-          Spacer()
-          Button {
-            settings = true
-          } label: {
-            Image(systemName: "person.crop.circle").font(.title2)
+    VStack(spacing: 0) {
+      SlidingFeedHeader(collapsed: collapsed, onHeightChange: { headerHeight = $0 }) {
+        HStack(spacing: 4) {
+          Button { AppHaptics.shared.play(.impact); withAnimation(reduceMotion ? nil : .smooth(duration: 0.3)) { showSearch.toggle() }; if !showSearch { search = "" } } label: {
+            Image(systemName: "magnifyingglass").font(.system(size: 19, weight: .semibold)).frame(width: 44, height: 44)
+          }.accessibilityLabel("Search posts")
+          // Mirror the bell + profile pair on the trailing side so the flexible
+          // wordmark frame, and therefore the artwork, is centered on the screen.
+          Color.clear.frame(width: 44, height: 44).accessibilityHidden(true)
+          ViewThatFits(in: .horizontal) {
+            LoadingWordmark(animating: false, size: 23)
+            LoadingWordmark(animating: false, size: 19)
+          }.offset(y: -44 * refreshPresentation.progress)
+            .frame(maxWidth: .infinity, minHeight: 44, maxHeight: 44).clipped()
+            .accessibilityIdentifier("communityHeaderWordmark").allowsHitTesting(false)
+          NotificationsBell()
+          Button { AppHaptics.shared.play(.impact); settings = true } label: {
+            Image(systemName: "person.crop.circle").font(.system(size: 22, weight: .semibold)).frame(width: 44, height: 44)
           }.accessibilityLabel("Profile and settings")
-        }
-        ZStack(alignment: .bottomLeading) {
-          CampusPhoto().frame(height: 170).clipped()
-          LinearGradient(
-            colors: [.clear, .black.opacity(0.7)], startPoint: .top, endPoint: .bottom)
-          VStack(alignment: .leading, spacing: 5) {
-            Text("THE CAMPUS CONVERSATION").font(.system(size: 9, weight: .bold)).tracking(2)
-            Text(community == .campus ? "Howdy, Aggies." : "After hours.").font(
-              .system(size: 33, weight: .bold, design: .serif))
-            Text(
-              community == .campus
-                ? "Big campus. Small world." : "18+ conversations. Keep it non-explicit."
-            ).font(.caption)
-          }.foregroundStyle(.white).padding(20)
-        }.clipShape(RoundedRectangle(cornerRadius: 22))
-        HStack {
-          Menu {
-            Button("Texas A&M") { community = .campus }
-            Button("NSFW · 18+ discussions") {
-              if unlocked { community = .nsfw } else { adultGate = true }
-            }
-          } label: {
-            Label(community.rawValue, systemImage: "chevron.down").font(.headline)
+        }.padding(.horizontal, 16).padding(.top, 2)
+      (dynamicTypeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout(spacing: 8))) {
+        Menu {
+          ForEach(Community.campusCommunities) { value in
+            Button(value.rawValue) { chooseCommunity(value) }
           }
-          Spacer()
-          ForEach(["New", "Top"], id: \.self) { s in
-            Button {
-              sort = s
-            } label: {
-              Pill(text: s, selected: sort == s)
+          Button("NSFW · 18+ discussions") {
+            if store.nsfwEnabled { chooseCommunity(.nsfw) } else { AppHaptics.shared.play(.impact); adultGate = true }
+          }
+          if community == .nsfw {
+            Button("Leave NSFW", role: .destructive) {
+              Task { if await store.mutate("community.leave", ["community": Community.nsfw.rawValue]) { chooseCommunity(.campus) } }
             }
           }
-        }
-        if community == .nsfw {
-          Text(
-            "No nudity or explicit sexual media. Be considerate and protect other people’s privacy."
-          ).font(.caption).foregroundStyle(.secondary)
-        }
-        ForEach(posts) { post in PostCard(post: post) }
-        Text("Sample conversations · not real student activity").font(.caption2).foregroundStyle(
-          .secondary
-        ).frame(maxWidth: .infinity)
-      }.padding(20).padding(.bottom, 70)
-    }.appBackground().toolbar(.hidden, for: .navigationBar)
-      .overlay(alignment: .bottomTrailing) {
-        Button {
-          compose = true
         } label: {
-          Image(systemName: "plus").font(.title2.bold()).padding(20).background(
-            Palette.maroon, in: Circle()
-          ).foregroundStyle(.white).shadow(color: .black.opacity(0.2), radius: 8, y: 4)
-        }.accessibilityLabel("Create post").padding(22)
+          HStack(spacing: 6) {
+            Text(community.rawValue).fixedSize(horizontal: true, vertical: false)
+            Image(systemName: "chevron.down").font(.caption.bold())
+          }.font(.subheadline.bold()).frame(minWidth: dynamicTypeSize.isAccessibilitySize ? 0 : 138, minHeight: 44, alignment: .leading)
+        }.id(community).transaction { $0.animation = nil }.accessibilityIdentifier("communityPicker").disabled(compose)
+        if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 0) }
+        HStack(spacing: 8) {
+          CompactSelector(options: ["New", "Hot"], selection: Binding(get: { sort }, set: chooseSort))
+          if dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 0) }
+          Button { AppHaptics.shared.play(.impact); savedOnly.toggle() } label: {
+          Image(systemName: savedOnly ? "bookmark.fill" : "bookmark").frame(width: 44, height: 44)
+            .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
+        }.buttonStyle(ControlPressStyle()).accessibilityLabel("Saved posts").accessibilityIdentifier("savedPostsFilter")
+          .accessibilityAddTraits(savedOnly ? .isSelected : [])
+          .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: savedOnly)
+        }
+      }.padding(.horizontal, 16).padding(.vertical, 6)
+      if showSearch {
+        HStack {
+          Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+          TextField("Search conversations", text: $search).autocorrectionDisabled().accessibilityIdentifier("postSearch")
+          if !search.isEmpty { Button { AppHaptics.shared.play(.impact); search = "" } label: { Image(systemName: "xmark.circle.fill").frame(width: 44, height: 44) }.accessibilityLabel("Clear search") }
+        }.frame(minHeight: 44).padding(11).background(Palette.surface, in: RoundedRectangle(cornerRadius: 12)).padding(.horizontal, 16).padding(.bottom, 10)
       }
-      .sheet(isPresented: $compose) { ComposePostView(community: community) }.sheet(
-        isPresented: $settings
-      ) { SettingsView() }
+      Divider()
+      }
+      ScrollViewReader { proxy in
+      ScrollView {
+        ZStack(alignment: .top) {
+        VStack(spacing: 0) {
+          Color.clear.frame(height: 0).id("feedTop")
+          if community == .nsfw {
+            Text("18+ discussion only. No explicit media.").font(.caption).foregroundStyle(.secondary).padding(12)
+          }
+          if posts.isEmpty && store.loadingCommunity {
+            LoadingWordmark(size: 25).padding(.top, 24).accessibilityLabel("Loading \(community.rawValue)")
+          } else if posts.isEmpty {
+            EmptyCard(icon: savedOnly ? "bookmark" : "bubble.left.and.bubble.right",
+              title: savedOnly ? "No saved posts" : search.isEmpty ? "Start a conversation" : "No matching posts",
+              detail: savedOnly ? "Save a post from its menu to keep it here." : "Share a question, a thought, or a campus moment.")
+            if !savedOnly && search.isEmpty { Button("Create a post") { compose = true }.buttonStyle(.borderedProminent).tint(Palette.maroon).foregroundStyle(Palette.onAccent) }
+          } else {
+            // Keep the flexible empty state outside the lazy row cache. A
+            // filter can remove every row while the feed is scrolled down.
+            LazyVStack(spacing: 0) {
+              ForEach(posts) { PostCard(post: $0, onConversationCreated: { conversationID = $0 }) }
+            }
+          }
+        }.padding(.bottom, 12).id(sort).transition(feedSortTransition)
+        }
+      }.accessibilityIdentifier("communityFeed")
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { feedWidth = $0 }
+        .background(CommunitySortSwipeNavigation(selection: Binding(get: { sort }, set: chooseSort),
+          enabled: !chromeInteractionLocked).frame(width: 0, height: 0))
+        .maroonRefreshable(onProgressChanged: { refreshPresentation = $0 }) { await store.refreshAndWait() }.scrollDismissesKeyboard(.interactively)
+        .onScrollPhaseChange { _, phase in interacting = phase == .interacting }
+        .onScrollGeometryChange(for: FeedScrollMetrics.self) { geometry in
+          let maximumOffset = max(0, geometry.contentSize.height + geometry.contentInsets.top + geometry.contentInsets.bottom - geometry.containerSize.height)
+          // Rubber-banding a short feed or its bottom edge isn't navigation
+          // intent. Clamping also stops a bounce from reversing the header.
+          return FeedScrollMetrics(offset: Double(min(maximumOffset, max(0, geometry.contentOffset.y + geometry.contentInsets.top))), viewport: Double(geometry.containerSize.height), scrollRange: Double(maximumOffset))
+        } action: { _, value in
+          // Keyboard and sheet layout changes are not scrolling intent. The
+          // lock transition resets tracking once; feeding every fractional
+          // viewport correction back into @State can perpetuate lazy layout.
+          guard !chromeInteractionLocked else { return }
+          var next = chrome
+          // Collapsing a barely-scrollable list can make it fit the expanded
+          // viewport, snap its offset to zero and immediately reopen the bars.
+          let insufficientTravel = !collapsed && value.scrollRange < Double(headerHeight + tabBarHeight + 32)
+          next.observe(offset: value.offset, viewport: value.viewport, interacting: interacting, locked: insufficientTravel)
+          if next.collapsed != chrome.collapsed { withAnimation(reduceMotion ? nil : .smooth(duration: 0.34)) { chrome = next } }
+          else { chrome = next }
+        }
+        .onChange(of: published) { _, _ in withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { proxy.scrollTo("feedTop", anchor: .top) } }
+        .onChange(of: community) { _, _ in chrome.reset(); proxy.scrollTo("feedTop", anchor: .top) }
+        .onChange(of: sort) { _, _ in
+          var transaction = Transaction(animation: nil); transaction.disablesAnimations = true
+          withTransaction(transaction) { proxy.scrollTo("feedTop", anchor: .top) }
+        }
+        .onChange(of: showSearch) { _, visible in if visible { resetSearchPosition(using: proxy) } }
+        .onChange(of: search) { _, _ in resetSearchPosition(using: proxy) }
+        .onChange(of: savedOnly) { _, _ in resetSearchPosition(using: proxy) }
+      }
+    }.appBackground().navigationBarTitleDisplayMode(.inline)
+      .toolbar(.hidden, for: .navigationBar)
+      .background(SlidingFeedTabBar(hidden: collapsed && store.tab == 0, animated: !reduceMotion, onHeightChange: { tabBarHeight = $0 }).frame(width: 0, height: 0))
+      .safeAreaInset(edge: .bottom, spacing: 0) {
+        InlinePostComposer(community: community, expanded: $compose) {
+          chrome.reset(); sort = "New"; savedOnly = false; search = ""; published += 1
+        }
+      }
+      .onChange(of: chromeInteractionLocked) { _, locked in if locked { chrome.reset() } }
+      .onChange(of: store.tab) { _, _ in chrome.reset() }
+      .onDisappear { chrome.reset(); interacting = false }
+      .sheet(isPresented: $settings) { SettingsView() }
+      .navigationDestination(item: $conversationID) { ChatView(id: $0).toolbar(.visible, for: .navigationBar) }
       .alert("18+ discussions", isPresented: $adultGate) {
-        Button("Enter community") {
-          unlocked = true
-          community = .nsfw
+        Button("Join community") {
+          Task { if await store.mutate("community.join", ["community": Community.nsfw.rawValue]) { chooseCommunity(.nsfw) } }
         }
         Button("Cancel", role: .cancel) {}
-      } message: {
-        Text("This space allows mature discussions, but no nudity or explicit sexual media.")
-      }
+      } message: { Text("Mature discussion is welcome. Nudity and explicit sexual media are not allowed. Your membership is private.") }
+  }
+  private var feedSortTransition: AnyTransition {
+    guard !reduceMotion else { return .identity }
+    return .asymmetric(
+      insertion: .modifier(active: FeedPageSlide(distance: feedWidth, forward: $sortMovesForward, entering: true),
+        identity: FeedPageSlide(distance: 0, forward: $sortMovesForward, entering: true)),
+      removal: .modifier(active: FeedPageSlide(distance: feedWidth, forward: $sortMovesForward, entering: false),
+        identity: FeedPageSlide(distance: 0, forward: $sortMovesForward, entering: false)))
+  }
+  private func chooseSort(_ value: String) {
+    guard value != sort, ["New", "Hot"].contains(value) else { return }
+    sortMovesForward = value == "Hot"
+    AppHaptics.shared.play(.selection)
+    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.3)) { sort = value; chrome.reset() }
+  }
+  private func chooseCommunity(_ value: Community) {
+    guard value != community else { return }
+    AppHaptics.shared.play(.selection)
+    community = value
+    Task { await store.selectCommunity(value) }
+  }
+  private func resetSearchPosition(using proxy: ScrollViewProxy) {
+    // Search starts with its first result even when opened from a collapsed,
+    // scrolled feed. Avoid combining offset restoration with keyboard motion.
+    var transaction = Transaction(animation: nil)
+    transaction.disablesAnimations = true
+    withTransaction(transaction) {
+      chrome.reset()
+      proxy.scrollTo("feedTop", anchor: .top)
+    }
   }
 }
+
 struct PostCard: View {
   @Environment(AppStore.self) private var store
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+  @State private var requestMessage = false
   let post: Post
   var navigates = true
-  private var postText: some View {
-    Text(post.text).font(.system(size: 17, weight: .medium)).lineSpacing(5)
-      .multilineTextAlignment(.leading).frame(maxWidth: .infinity, alignment: .leading)
-  }
+  var onConversationCreated: ((String) -> Void)? = nil
   var body: some View {
-    Card {
-      VStack(alignment: .leading, spacing: 15) {
-        HStack {
-          Circle().fill(post.anonymous ? Palette.maroon.opacity(0.1) : Palette.lime).frame(
-            width: 28, height: 28
-          ).overlay(
-            Image(systemName: post.anonymous ? "bubble.left" : "person.fill").font(.caption)
-              .foregroundStyle(Palette.maroon))
-          Text(post.displayName).font(.caption.bold())
-          Text(post.created, style: .relative).font(.caption2).foregroundStyle(.secondary)
-          Spacer()
-          Menu {
-            Button(post.saved ? "Unsave" : "Save", systemImage: "bookmark") {
-              store.toggleSave(post.id)
-            }
-            Button("Hide and report", systemImage: "flag", role: .destructive) {
-              store.report(post.id, reason: "Community report")
-            }
-            Button(
-              "Hide this author", systemImage: "person.crop.circle.badge.minus", role: .destructive
-            ) {
-              for p in store.state.posts where p.author == post.author {
-                store.state.hiddenPosts.insert(p.id)
-              }
-              store.save()
-            }
-          } label: {
-            Image(systemName: "ellipsis").padding(7)
+    VStack(alignment: .leading, spacing: 9) {
+      HStack(spacing: 7) {
+        Avatar(symbol: post.anonymous ? "bubble.left.fill" : "person.fill", size: navigates ? 26 : 34)
+        Text(post.displayName).font(.caption.bold())
+        Text("· \(shortAge(post.created))").font(.caption).foregroundStyle(.secondary)
+        Spacer()
+        Menu {
+          Button(post.saved ? "Unsave" : "Save", systemImage: "bookmark") { AppHaptics.shared.play(.impact); store.toggleSave(post.id) }
+          if store.owns(post) {
+            Button("Delete post", systemImage: "trash", role: .destructive) { Task { _ = await store.mutate("post.delete", ["post_id": post.id]) } }
           }
-        }
+          Button("Report post", systemImage: "flag", role: .destructive) { store.report(post.id, reason: "Community report") }
+          Button("Block author", systemImage: "hand.raised", role: .destructive) { Task { _ = await store.mutate("block", ["post_id": post.id]) } }
+          Button("Hide post", systemImage: "eye.slash") { store.state.hiddenPosts.insert(post.id); store.save() }
+        } label: { Image(systemName: "ellipsis").font(.title3.weight(.semibold)).foregroundStyle(Palette.accentText).frame(width: 44, height: 44) }.accessibilityLabel("Post options")
+      }
+      if !post.text.isEmpty {
         if navigates {
-          NavigationLink {
-            PostDetailView(id: post.id)
-          } label: {
-            postText
-          }.buttonStyle(.plain)
-        } else {
-          postText
-        }
-        HStack(spacing: 15) {
-          HStack(spacing: 10) {
-            Button {
-              store.vote(post.id, 1)
-            } label: {
-              Image(systemName: "arrow.up").fontWeight(.bold).foregroundStyle(
-                post.vote == 1 ? Palette.maroon : .secondary)
-            }.accessibilityLabel("Upvote")
-            Text("\(post.score)").font(.caption.bold()).monospacedDigit()
-            Button {
-              store.vote(post.id, -1)
-            } label: {
-              Image(systemName: "arrow.down").foregroundStyle(
-                post.vote == -1 ? Palette.maroon : .secondary)
-            }.accessibilityLabel("Downvote")
-          }.padding(.horizontal, 12).padding(.vertical, 8).background(Palette.paper, in: Capsule())
-          if navigates {
-            NavigationLink {
-              PostDetailView(id: post.id)
-            } label: {
-              Label("\(post.comments.count)", systemImage: "bubble.right").font(.caption)
-            }
-          } else {
-            Label("\(post.comments.count)", systemImage: "bubble.right").font(.caption)
-          }
-          Spacer()
-          if post.saved {
-            Image(systemName: "bookmark.fill").font(.caption).foregroundStyle(Palette.maroon)
-          }
-          if post.acceptsDM {
-            Text("DMs open").font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
-          }
-        }
+          NavigationLink { PostDetailView(id: post.id).appHapticOnOpen().toolbar(.visible, for: .navigationBar) } label: { bodyText }.buttonStyle(.plain)
+        } else { bodyText }
       }
-    }
-  }
-}
-struct ComposePostView: View {
-  @Environment(AppStore.self) private var store
-  @Environment(\.dismiss) private var dismiss
-  let community: Community
-  @State private var text = ""
-  @State private var anonymous = true
-  @State private var dms = false
-  var body: some View {
-    NavigationStack {
-      Form {
-        Section("What’s on your mind?") {
-          TextEditor(text: $text).frame(minHeight: 160).accessibilityIdentifier("postText")
-          Text("\(text.count)/1,000").font(.caption).foregroundStyle(.secondary)
+      if let attachmentID = post.attachmentID { RemoteMedia(attachmentID: attachmentID).frame(maxHeight: 280) }
+      else if let media = post.media { AttachmentPreview(media: media).frame(maxHeight: 280) }
+      PostExtrasView(post: post)
+      (dynamicTypeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4)) : AnyLayout(HStackLayout(spacing: 8))) {
+        HStack(spacing: 12) {
+        if navigates {
+          NavigationLink { PostDetailView(id: post.id).appHapticOnOpen().toolbar(.visible, for: .navigationBar) } label: { Label("\(post.comments.count)", systemImage: "bubble.right").font(.subheadline.weight(.semibold)).frame(minWidth: 44, minHeight: 44) }.accessibilityLabel("\(post.comments.count) replies")
+        } else { Label("\(post.comments.count)", systemImage: "bubble.right").font(.subheadline.weight(.semibold)) }
+        Button { AppHaptics.shared.play(.impact); requestMessage = true } label: { Image(systemName: "envelope").font(.subheadline.weight(.semibold)).frame(width: 44, height: 44) }
+          .buttonStyle(ControlPressStyle()).foregroundStyle(Palette.accentText).accessibilityLabel("Message the author")
+          .disabled(!post.acceptsDM || store.owns(post) || post.deleted == true)
+          .accessibilityHint(store.owns(post) ? "This is your post" : post.acceptsDM ? "Send an anonymous message request" : "This author is not accepting message requests")
         }
-        Section {
-          Toggle("Post anonymously", isOn: $anonymous)
-          Toggle("Allow message requests", isOn: $dms)
-        } footer: {
-          Text(
-            anonymous
-              ? "This post has its own anonymous conversation. Your username will not appear on it."
-              : "Your username @\(store.state.username) will appear on this post.")
+        if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 0) }
+        HStack(spacing: 8) {
+        if dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 0) }
+        Button { AppHaptics.shared.play(.impact); store.toggleSave(post.id) } label: {
+          Image(systemName: post.saved ? "bookmark.fill" : "bookmark").font(.system(size: 18, weight: .semibold))
+            .foregroundStyle(Palette.accentText).frame(width: 44, height: 44)
+            .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
+        }.buttonStyle(ControlPressStyle()).accessibilityLabel(post.saved ? "Unsave post" : "Save post")
+          .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: post.saved)
+        HStack(spacing: 3) {
+          voteButton(1, symbol: "arrow.up", label: "Upvote")
+          Text("\(post.score)").font(.subheadline.bold()).monospacedDigit().foregroundStyle(Palette.ink)
+            .frame(minWidth: 20).contentTransition(reduceMotion ? .identity : .numericText(value: Double(post.score)))
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.25), value: post.score)
+            .accessibilityLabel("Score \(post.score)")
+          voteButton(-1, symbol: "arrow.down", label: "Downvote")
         }
-        Section { Text("Posting to \(community.rawValue)").font(.subheadline) }
-      }.navigationTitle("Say something.").navigationBarTitleDisplayMode(.inline).toolbar {
-        ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-        ToolbarItem(placement: .confirmationAction) {
-          Button("Post") {
-            store.state.posts.insert(
-              Post(
-                author: store.state.username, anonymous: anonymous, community: community,
-                text: text.trimmingCharacters(in: .whitespacesAndNewlines), acceptsDM: dms), at: 0)
-            store.save()
-            dismiss()
-          }.disabled(
-            text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || text.count > 1000)
         }
-      }
-    }
-  }
-}
-struct PostDetailView: View {
-  @Environment(AppStore.self) private var store
-  let id: String
-  @State private var reply = ""
-  @State private var anonymous = true
-  var post: Post? { store.state.posts.first { $0.id == id } }
-  var body: some View {
-    ScrollView {
-      VStack(spacing: 18) {
-        if let post {
-          PostCard(post: post, navigates: false)
-          if post.acceptsDM {
-            Button("Request a private chat") {
-              let chatID = "post-\(post.id)"
-              if !store.state.conversations.contains(where: { $0.id == chatID }) {
-                store.state.conversations.append(
-                  Conversation(
-                    id: chatID,
-                    title: post.anonymous ? "Anonymous • post conversation" : post.displayName,
-                    subtitle: "Local conversation preview", anonymous: post.anonymous))
-                store.save()
-              }
-              store.notice =
-                "Conversation added to Inbox. In this local preview, no request is sent to another person."
-            }.font(.subheadline)
-          }
-          ForEach(post.comments) { comment in
-            Card {
-              VStack(alignment: .leading, spacing: 10) {
-                Text(comment.anonymous ? "Anonymous reply" : "@\(comment.author)").font(
-                  .caption.bold()
-                ).foregroundStyle(.secondary)
-                Text(comment.text)
-              }
-            }
-          }
-          if post.comments.isEmpty {
-            EmptyCard(
-              icon: "bubble.left", title: "Start the conversation",
-              detail: "A good reply goes a long way.")
-          }
-        }
-      }.padding(20)
-    }.appBackground().navigationTitle("Conversation").navigationBarTitleDisplayMode(.inline)
-      .safeAreaInset(edge: .bottom) {
-        VStack(spacing: 9) {
-          Toggle("Reply anonymously", isOn: $anonymous).font(.caption)
-          HStack {
-            TextField("Add a reply…", text: $reply, axis: .vertical).lineLimit(1...4)
-            Button {
-              guard let i = store.state.posts.firstIndex(where: { $0.id == id }) else { return }
-              store.state.posts[i].comments.append(
-                Comment(author: store.state.username, text: reply, anonymous: anonymous))
-              reply = ""
-              store.save()
-            } label: {
-              Image(systemName: "arrow.up.circle.fill").font(.title)
-            }.disabled(
-              reply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || reply.count > 1000)
-          }
-        }.padding().background(.regularMaterial)
+      }.foregroundStyle(Palette.accentText)
+    }.padding(.horizontal, 16).padding(.vertical, 12).background(Palette.surface)
+      .overlay(alignment: .bottom) { Divider() }
+      .sheet(isPresented: $requestMessage) {
+        NewMessageView(postID: post.id, anonymous: true) { onConversationCreated?($0) }
       }
   }
+  private func voteButton(_ value: Int, symbol: String, label: String) -> some View {
+    Button { AppHaptics.shared.play(.selection); store.vote(post.id, value) } label: {
+      Image(systemName: symbol).font(.system(size: 18, weight: .bold)).frame(width: 44, height: 44)
+        .foregroundStyle(Palette.onAccent)
+        .background(post.vote == value ? Palette.maroon : Palette.elevated.opacity(0.5), in: RoundedRectangle(cornerRadius: 12))
+        .scaleEffect(post.vote == value && !reduceMotion ? 1.06 : 1)
+        .animation(reduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.58), value: post.vote)
+    }.buttonStyle(ControlPressStyle()).accessibilityLabel(label).accessibilityAddTraits(post.vote == value ? .isSelected : [])
+      .disabled(store.owns(post) || post.deleted == true)
+  }
+  private var bodyText: some View {
+    Text(post.text).font(navigates ? .body : .title3.weight(.medium)).lineSpacing(navigates ? 3 : 5).multilineTextAlignment(.leading)
+      .frame(maxWidth: .infinity, alignment: .leading).foregroundStyle(post.deleted == true ? .secondary : Palette.ink)
+  }
 }
-struct SettingsView: View {
-  @Environment(AppStore.self) private var store
-  @Environment(\.dismiss) private var dismiss
+
+
+struct SavedPostsView: View {
   var body: some View {
-    NavigationStack {
-      List {
-        Section {
-          Label("@\(store.state.username)", systemImage: "person.crop.circle")
-          Text("Local preview · not student verified").font(.caption).foregroundStyle(.secondary)
-        }
-        Section("Your privacy") {
-          Text(
-            "Anonymous community posts hide your username from other users. This development build stores sample activity on your device. Enrollment and stronger identity separation are not enabled yet."
-          )
-          Text("One username is used in classes, study groups, recreation, hangouts and games.")
-        }
-        Section("Connections") {
-          Text("Supabase · Maroon Social")
-          Text("No paid plan or billing change has been made.").font(.caption)
-        }
-        Section("Photography") {
-          Text(
-            "Academic Building: Laura McKenzie / Texas A&M University. Uploaded by Kailynn.Nelson on Wikimedia Commons. CC BY-SA 4.0. Resized and cropped for display."
-          ).font(.caption)
-          Link(
-            "Photo source",
-            destination: URL(
-              string: "https://commons.wikimedia.org/wiki/File:Texas_A%26M_Academic_Building.jpg")!)
-          Link(
-            "CC BY-SA 4.0",
-            destination: URL(string: "https://creativecommons.org/licenses/by-sa/4.0/")!)
-        }
-        Section {
-          Text("Independent student project. Not an official Texas A&M University app.").font(
-            .caption)
-        }
-      }.navigationTitle("Your corner").toolbar { Button("Done") { dismiss() } }
-    }
+    PersonalLibraryView(kind: .saved)
+  }
+}
+
+private struct FeedScrollMetrics: Equatable { let offset: Double; let viewport: Double; let scrollRange: Double }
+
+/// Both outgoing and incoming pages read the current direction so reversing
+/// Hot → New also sends the old page right. Only horizontal position animates.
+private struct FeedPageSlide: AnimatableModifier {
+  var distance: CGFloat
+  @Binding var forward: Bool
+  let entering: Bool
+  var animatableData: CGFloat { get { distance } set { distance = newValue } }
+  func body(content: Content) -> some View {
+    content.offset(x: distance * (forward ? 1 : -1) * (entering ? 1 : -1))
   }
 }

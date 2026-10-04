@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; media-src blob:; img-src data:;">
+<style>
+*{box-sizing:border-box}body{margin:0;background:#0e0f12;color:#f4efe6;font-family:-apple-system,sans-serif}main{position:relative;height:300px;overflow:hidden;border-radius:22px}.remote{width:100%;height:100%;object-fit:cover}.local{position:absolute;right:14px;top:14px;width:85px;height:112px;object-fit:cover;border:2px solid #ffffff55;border-radius:13px;transform:scaleX(-1);background:#27272d}.placeholder{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;pointer-events:none}.placeholder strong{font:30px Georgia,serif}.placeholder span{font-size:13px;max-width:240px;text-align:center;line-height:1.5}.controls{position:absolute;bottom:16px;left:0;right:0;display:flex;gap:12px;justify-content:center}button{border:1px solid #ffffff55;background:#1b1c21ed;color:white;padding:12px 16px;font-size:13px;font-weight:600;border-radius:24px}button:disabled{opacity:.4}button[aria-pressed=true]{background:#500000;color:#f4efe6}
+</style></head><body><main>
+<video class="remote" id="remote" autoplay playsinline></video>
+<div id="placeholder" class="placeholder"><strong>Your connection</strong><span id="status" role="status">Preparing your call…</span></div>
+<video class="local" id="local" autoplay muted playsinline></video>
+<div class="controls"><button id="mic" disabled aria-pressed="false">Mute mic</button><button id="camera" disabled aria-pressed="false">Camera off</button></div>
+</main><script>
+(() => {
+  'use strict';
+  let peer,stream,generation=0,started=false,queued=[],candidates=[],timeout,receiveChain=Promise.resolve();
+  const $=id=>document.getElementById(id);
+  const emit=(body)=>window.webkit?.messageHandlers.maroonCall.postMessage(body);
+  const status=value=>{$('status').textContent=value;emit({type:'status',value})};
+  const signal=(kind,payload)=>emit({type:'signal',kind,payload});
+  // Public RTCRtpSender parameters bound existing calls without SDP rewriting.
+  // Unsupported encoder controls are optional; capture constraints still apply.
+  async function tuneSenders(pc){
+    for(const sender of pc.getSenders()){
+      if(!sender.track)continue;
+      try{
+        const parameters=sender.getParameters();
+        if(!parameters.encodings?.length)continue;
+        for(const encoding of parameters.encodings){
+          encoding.maxBitrate=sender.track.kind==='video'?650000:32000;
+          if(sender.track.kind==='video')encoding.maxFramerate=24;
+        }
+        await sender.setParameters(parameters);
+      }catch{}
+    }
+  }
+  function stop(){
+    generation++;clearTimeout(timeout);started=false;queued=[];candidates=[];receiveChain=Promise.resolve();$('placeholder').style.display='flex';
+    if(peer){peer.onicecandidate=null;peer.ontrack=null;peer.onconnectionstatechange=null;peer.close();peer=null}
+    stream?.getTracks().forEach(t=>t.stop());stream=null;
+    $('local').srcObject=null;$('remote').srcObject=null;
+    $('mic').disabled=true;$('camera').disabled=true;
+  }
+  async function start(config){
+    stop();const ownGeneration=generation;
+    if(config.transport!=='direct'&&!config.iceServers?.some(s=>(Array.isArray(s.urls)?s.urls:[s.urls]).some(u=>/^turns?:/.test(u)))){status('Video relay is unavailable. You can still use text chat.');return}
+    status('Allow camera and microphone to join.');
+    try{
+      const media=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true,channelCount:1},video:config.video?{facingMode:'user',width:{ideal:640,max:640},height:{ideal:480,max:480},frameRate:{ideal:20,max:24}}:false});
+      if(ownGeneration!==generation){media.getTracks().forEach(t=>t.stop());return}
+      stream=media;$('local').srcObject=media;$('local').hidden=!config.video;$('camera').hidden=!config.video;document.querySelector('main').style.height=config.video?'300px':'160px';
+      $('mic').disabled=false;$('camera').disabled=false;
+      $('mic').textContent='Mute mic';$('mic').setAttribute('aria-pressed','false');
+      $('camera').textContent='Camera off';$('camera').setAttribute('aria-pressed','false');
+      const pc=new RTCPeerConnection({iceServers:config.iceServers,iceTransportPolicy:config.transport==='direct'?'all':'relay'});peer=pc;
+      media.getTracks().forEach(track=>pc.addTrack(track,media));
+      peer.onicecandidate=e=>{if(e.candidate&&ownGeneration===generation)signal('ice',e.candidate.toJSON())};
+      peer.ontrack=e=>{if(ownGeneration!==generation)return;$('remote').srcObject=e.streams[0];$('remote').play().catch(()=>{});if(config.video)$('placeholder').style.display='none'};
+      peer.onconnectionstatechange=()=>{
+        if(!peer||ownGeneration!==generation)return;
+        if(peer.connectionState==='connected'){clearTimeout(timeout);status(config.video?'Video connected':'Voice connected');if(config.video&&$('remote').srcObject)$('placeholder').style.display='none'}
+        if(peer.connectionState==='disconnected'){status('Connection interrupted. Reconnecting…');$('placeholder').style.display='flex'}
+        if(peer.connectionState==='failed'){status('This network could not connect the call. End and retry on another Wi-Fi or mobile network; Wi-Fi is not a guarantee.');stop()}
+      };
+      started=true;status(config.transport==='direct'?'Connecting your call…':'Connecting through the private relay…');
+      timeout=setTimeout(()=>{if(ownGeneration===generation&&peer?.connectionState!=='connected'){status('Connection timed out. End and retry on another Wi-Fi or mobile network; some networks require a relay.');stop()}},30000);
+      if(config.initiator){const offer=await pc.createOffer();if(ownGeneration!==generation)return;await pc.setLocalDescription(offer);await tuneSenders(pc);if(ownGeneration!==generation)return;signal('offer',pc.localDescription.toJSON())}
+      for(const item of queued.splice(0))await receive(item);
+    }catch(error){if(ownGeneration===generation){stop();status(error.name==='NotAllowedError'?'Camera or microphone permission was denied. Enable access in Settings to call.':'Camera or microphone unavailable on this device. Use text chat or try an iPhone.')}}
+  }
+  function receive(item){
+    if(!started){if(queued.length<128)queued.push(item);return Promise.resolve()}
+    const currentGeneration=generation,pc=peer;
+    const valid=()=>currentGeneration===generation&&pc===peer;
+    receiveChain=receiveChain.then(async()=>{
+      if(!valid())return;
+      try{
+        if(item.type==='ice'){
+          if(pc.remoteDescription)await pc.addIceCandidate(item.payload);else if(candidates.length<128)candidates.push(item.payload);
+        }else if(item.type==='offer'||item.type==='answer'){
+          await pc.setRemoteDescription(item.payload);if(!valid())return;
+          for(const candidate of candidates.splice(0)){await pc.addIceCandidate(candidate);if(!valid())return}
+          if(item.type==='offer'){
+            const answer=await pc.createAnswer();if(!valid())return;
+            await pc.setLocalDescription(answer);await tuneSenders(pc);if(!valid())return;
+            signal('answer',pc.localDescription.toJSON());
+          }
+        }
+      }catch{if(valid())status('The call signal was interrupted. End this chat and try again.')}
+    });
+    return receiveChain;
+  }
+  function toggle(kind,id,on,off){const tracks=stream?.getTracks().filter(t=>t.kind===kind)||[];if(!tracks.length)return;const enabled=!tracks[0].enabled;tracks.forEach(t=>t.enabled=enabled);$(id).textContent=enabled?on:off;$(id).setAttribute('aria-pressed',String(!enabled))}
+  $('mic').onclick=()=>toggle('audio','mic','Mute mic','Unmute mic');
+  $('camera').onclick=()=>toggle('video','camera','Camera off','Camera on');
+  window.MaroonCall={start,receive,stop};
+  window.addEventListener('pagehide',stop);
+})();
+</script></body></html>

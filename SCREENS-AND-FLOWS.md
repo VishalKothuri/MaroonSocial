@@ -1,5 +1,7 @@
 # MaroonSocial — screen design and navigation specification
 
+> **October 4 product update:** The app now uses five tabs: Community, Classes, Explore, Campus and Inbox. Group setup uses three steps with per-group identities and username invitations. Meet people uses a visible username, at most six interests and explicit mutual connection requests. The screen proposals below are historical where they differ; see [current feature status](FEATURE-STATUS.md) and [verification](TESTING.md).
+
 > **October 1, 2026 implementation update:** Coding is now authorized. The user selected SwiftUI, iPhone first, and connected Supabase **Maroon Social** plus GitHub **VishalKothuri/MaroonSocial**. Mascot work is paused. This document preserves the earlier research/proposals; its older no-code statements are historical. See [README](README.md) for tested implementation status and remaining work.
 
 September 29, 2026 • Supporting navigation specification • No UI code or interactive prototype.

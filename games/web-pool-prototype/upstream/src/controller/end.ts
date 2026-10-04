@@ -1,0 +1,139 @@
+import { BeginEvent, Controller } from "./controller"
+import { Init } from "./init"
+import { Container } from "../container/container"
+import { MatchResult, MatchResultHelper } from "../network/client/matchresult"
+import { ReplayEncoder } from "../utils/replay-encoder"
+import { Session } from "../network/client/session"
+import { ResumeStore } from "../utils/resumestore"
+import { BreakEvent } from "../events/breakevent"
+import { Replay } from "./replay"
+import { isFirstShot } from "../utils/utils"
+
+async function submitResults(
+  container: Container,
+  result: MatchResult
+): Promise<void> {
+  const scoreReporter = container.scoreReporter
+  const session = Session.getInstance()
+  if (!scoreReporter) return
+
+  // A game with no shots recorded has nothing worth posting to the
+  // scoreboard, so skip that upload silently. Tournament results still go
+  // through so brackets keep advancing on instant forfeits/disconnects.
+  if (!isFirstShot(container.recorder)) {
+    await scoreReporter.submitMatchResult(result)
+  }
+  if (!session.tournamentId || !result.winnerId) {
+    return
+  }
+
+  const challengeId =
+    Session.isBotMode() && session.tableId === "default"
+      ? `G_${Date.now().toString()}`
+      : session.tableId
+
+  await scoreReporter.submitTournamentResult(
+    session.tournamentId,
+    challengeId,
+    result.winnerId,
+    result.loserId,
+    result.winnerId?.startsWith("bot-") ? undefined : result.berserk
+  )
+}
+
+export class End extends Controller {
+  override get name(): string {
+    return "End"
+  }
+
+  private readonly result?: MatchResult
+
+  constructor(container: Container, result?: MatchResult) {
+    super(container)
+    this.result = result
+  }
+
+  override onFirst(): void {
+    ResumeStore.clear()
+    const isDiagram = this.container.id === "diagram"
+    this.container.view.camera.forceMode(
+      isDiagram
+        ? this.container.view.camera.topView
+        : this.container.view.camera.orbitView
+    )
+    this.container.menu?.setConcedeVisible(false)
+    console.log("result:", this.result)
+    if (isDiagram) {
+      return
+    }
+    if (
+      this.result &&
+      this.container.scoreReporter &&
+      (MatchResultHelper.isWinner(this.result) ||
+        this.container.isSinglePlayer ||
+        Session.isBotMode())
+    ) {
+      if (!this.result.replayData) {
+        try {
+          const gameState = this.container.recorder.wholeGame()
+          const jsonState = JSON.stringify(gameState)
+          this.result.replayData = ReplayEncoder.crush(jsonState)
+        } catch (e) {
+          console.error("Failed to encode replay data", e)
+        }
+      }
+      void submitResults(this.container, this.result)
+    }
+    this.container.lobbyIndicator.setTableId(undefined)
+
+    const wasBotWin = !this.result && Session.isBotMode()
+    if (wasBotWin) {
+      return
+    }
+
+    if (!this.result || MatchResultHelper.isWinner(this.result)) {
+      this.container.particles.initParticles(this.container.view.scene)
+    }
+
+    const highBreaks = MatchResultHelper.getHighBreaks(this.container)
+    this.container.notification?.updateHighBreaks(highBreaks)
+
+    if (
+      Session.isSpeedrunMode() &&
+      this.result &&
+      MatchResultHelper.isWinner(this.result)
+    ) {
+      const gameState = this.container.recorder.wholeGame()
+      const replayUrl = this.container.linkFormatter.getReplayUri(gameState)
+      globalThis.parent?.postMessage(
+        {
+          type: "speedrun-result",
+          status: "complete",
+          matchResult: this.result,
+          replayUrl,
+        },
+        "*"
+      )
+    }
+  }
+
+  override handleBegin(_: BeginEvent): Controller {
+    this.container.particles.dispose()
+    return new Init(this.container)
+  }
+
+  override handleBreak(event: BreakEvent): Controller {
+    if (event.init) {
+      this.container.table.updateFromShortSerialised(event.init)
+      return new Replay(
+        this.container,
+        event.init,
+        event.shots,
+        false,
+        1000,
+        event.diagram
+      )
+    }
+    return this
+  }
+}

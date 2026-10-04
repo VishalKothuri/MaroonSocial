@@ -1,0 +1,138 @@
+import { expect } from "chai"
+import { AimEvent } from "../../src/events/aimevent"
+import { AbortEvent } from "../../src/events/abortevent"
+import { WatchEvent } from "../../src/events/watchevent"
+import { EventUtil } from "../../src/events/eventutil"
+import { EventType } from "../../src/events/eventtype"
+import { Table } from "../../src/model/table"
+import { Rack } from "../../src/utils/rack"
+import { BreakEvent } from "../../src/events/breakevent"
+import { PlaceBallEvent } from "../../src/events/placeballevent"
+import { zero } from "../../src/utils/three-utils"
+import { ChatEvent } from "../../src/events/chatevent"
+import { BeginEvent } from "../../src/events/beginevent"
+import { HitEvent } from "../../src/events/hitevent"
+import { ScoreEvent } from "../../src/events/scoreevent"
+import { ConcedeEvent } from "../../src/events/concedeevent"
+
+describe("EventUtil", () => {
+  it("Serialise and deserialise AimEvent", (done) => {
+    const event: AimEvent = new AimEvent()
+    event.i = 1
+    const serialised = EventUtil.serialise(event)
+    const deserialised = <AimEvent>EventUtil.fromSerialised(serialised)
+    expect(deserialised.type).to.equal(EventType.AIM)
+    done()
+  })
+
+  it("Serialise and deserialise AbortEvent", (done) => {
+    const serialised = EventUtil.serialise(new AbortEvent())
+    const deserialised = EventUtil.fromSerialised(serialised)
+    expect(deserialised.type).to.equal(EventType.ABORT)
+    done()
+  })
+
+  it("Serialise and deserialise WatchEvent", (done) => {
+    const table = new Table(Rack.diamond())
+    const serialised = EventUtil.serialise(new WatchEvent(table.serialise()))
+    const deserialised = EventUtil.fromSerialised(serialised)
+    expect(deserialised.type).to.equal(EventType.WATCHAIM)
+    done()
+  })
+
+  it("Serialise and deserialise BreakEvent", (done) => {
+    const serialised = EventUtil.serialise(new BreakEvent())
+    const deserialised = EventUtil.fromSerialised(serialised)
+    expect(deserialised.type).to.equal(EventType.BREAK)
+    done()
+  })
+
+  it("Serialise and deserialise PlaceBallEvent", (done) => {
+    const serialised = EventUtil.serialise(new PlaceBallEvent(zero))
+    const deserialised = EventUtil.fromSerialised(serialised)
+    expect(deserialised.type).to.equal(EventType.PLACEBALL)
+    done()
+  })
+
+  it("Throw on unknown event", (done) => {
+    expect(() => EventUtil.fromSerialised("{}")).to.throw(
+      "Unknown GameEvent: {}"
+    )
+    done()
+  })
+
+  it("Serialise and deserialise ChatEvent", (done) => {
+    const line = {
+      p1: { x: 1, y: 2 },
+      p2: { x: 3, y: 4 },
+      colour: "#ff0000",
+    }
+    const serialised = EventUtil.serialise(new ChatEvent("a", "m", line))
+    const deserialised = EventUtil.fromSerialised(serialised) as ChatEvent
+    expect(deserialised.type).to.equal(EventType.CHAT)
+    expect(deserialised.line?.colour).to.equal("#ff0000")
+    expect(deserialised.line?.p1.x).to.equal(1)
+    done()
+  })
+
+  it("Serialise and deserialise BeginEvent", (done) => {
+    const serialised = EventUtil.serialise(new BeginEvent())
+    const deserialised = EventUtil.fromSerialised(serialised)
+    expect(deserialised.type).to.equal(EventType.BEGIN)
+    done()
+  })
+
+  it("Serialise and deserialise ConcedeEvent", (done) => {
+    const serialised = EventUtil.serialise(new ConcedeEvent())
+    const deserialised = EventUtil.fromSerialised(serialised)
+    expect(deserialised.type).to.equal(EventType.CONCEDE)
+    done()
+  })
+
+  it("Serialise and deserialise HitEvent", (done) => {
+    const table = new Table([])
+    const event = new HitEvent(table.serialise())
+    event.sequence = "seq-1000"
+    const serialised = EventUtil.serialise(event)
+    const deserialised = EventUtil.fromSerialised(serialised)
+    expect(deserialised.type).to.equal(EventType.HIT)
+    expect(deserialised.sequence).to.equal("seq-1000")
+    done()
+  })
+
+  it("Serialise and deserialise ScoreEvent with active player", (done) => {
+    const serialised = EventUtil.serialise(new ScoreEvent(7, 3, 2, 2))
+    const deserialised = EventUtil.fromSerialised(serialised) as ScoreEvent
+    expect(deserialised.type).to.equal(EventType.SCORE)
+    expect(deserialised.p1).to.equal(7)
+    expect(deserialised.p2).to.equal(3)
+    expect(deserialised.b).to.equal(2)
+    expect(deserialised.active).to.equal(2)
+    done()
+  })
+
+  it("Deserialise ScoreEvent without active player defaults to none", (done) => {
+    const deserialised = EventUtil.fromSerialised(
+      JSON.stringify({ type: EventType.SCORE, p1: 1, p2: 0, b: 0 })
+    ) as ScoreEvent
+    expect(deserialised.active).to.equal(0)
+    done()
+  })
+
+  it("Serialise and deserialise GameEvent with playername", (done) => {
+    const event: AimEvent = new AimEvent()
+    event.playername = "Player 1"
+    const serialised = EventUtil.serialise(event)
+    const deserialised = EventUtil.fromSerialised(serialised)
+    expect(deserialised.playername).to.equal("Player 1")
+    done()
+  })
+
+  it("Serialise and deserialise GameEvent without playername", (done) => {
+    const event: AimEvent = new AimEvent()
+    const serialised = EventUtil.serialise(event)
+    const deserialised = EventUtil.fromSerialised(serialised)
+    expect(deserialised.playername).to.be.undefined
+    done()
+  })
+})

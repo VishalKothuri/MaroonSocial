@@ -5,9 +5,9 @@ import SwiftUI
 struct GameView: View {
   let kind: String
   var body: some View {
-    Group { if kind == "Chess" { ChessView() } else { ArcadeView(kind: kind) } }.navigationTitle(
+    Group { if kind == "Chess" { ChessView() } else { PhysicsGameView(kind: kind) } }.navigationTitle(
       kind
-    ).navigationBarTitleDisplayMode(.inline)
+    ).navigationBarTitleDisplayMode(.inline).toolbar(.hidden, for: .tabBar)
   }
 }
 private func material(_ color: UIColor, metal: CGFloat = 0, rough: CGFloat = 0.5) -> SCNMaterial {
@@ -28,7 +28,7 @@ private let cream = UIColor(red: 0.93, green: 0.89, blue: 0.78, alpha: 1)
 private let dark = UIColor(red: 0.12, green: 0.17, blue: 0.14, alpha: 1)
 private func stage(camera: SCNVector3, at: SCNVector3 = SCNVector3Zero) -> SCNScene {
   let scene = SCNScene()
-  scene.background.contents = UIColor(red: 0.91, green: 0.91, blue: 0.87, alpha: 1)
+  scene.background.contents = UIColor(red: 0.055, green: 0.059, blue: 0.071, alpha: 1)
   let c = SCNNode()
   c.camera = SCNCamera()
   c.camera?.usesOrthographicProjection = true
@@ -88,74 +88,127 @@ struct InteractiveScene: UIViewRepresentable {
 }
 struct ChessView: View {
   @State private var game = ChessGame()
+  @State private var previous: [ChessGame] = []
   @State private var selected: Int?
   @State private var scene = SCNScene()
   @State private var accessibleBoard = false
-  func refresh() { scene = ChessScene.make(game, selected: selected) }
-  func select(_ square: Int) {
-    if let selected, game.move(from: selected, to: square) {
-      self.selected = nil
-    } else {
-      selected = game.board[square]?.side == game.turn ? square : nil
+  @State private var computer = false
+  @State private var thinking = false
+  @State private var confirmReset = false
+  @State private var pendingPromotion: (Int, Int)?
+  private var targets: Set<Int> { Set(selected.map { game.legalMoves(from: $0).map { $0.1 } } ?? []) }
+  private func refresh() { scene = ChessScene.make(game, selected: selected) }
+  private func reset() {
+    game = ChessGame(); previous = []; selected = nil; thinking = false; pendingPromotion = nil
+    refresh()
+  }
+  private func move(_ from: Int, _ to: Int, promotion: ChessGame.Kind = .queen, userInitiated: Bool = true) {
+    let before = game
+    if game.move(from: from, to: to, promotion: promotion) {
+      previous.append(before); selected = nil
+      if userInitiated { AppHaptics.shared.play(.impact) }
     }
     refresh()
   }
+  private func select(_ square: Int) {
+    guard !game.finished, !thinking, !(computer && game.turn == .black) else { return }
+    if let selected, targets.contains(square) {
+      if game.board[selected]?.kind == .pawn && [0, 7].contains(square / 8) {
+        pendingPromotion = (selected, square)
+      } else { move(selected, square) }
+    } else {
+      let previousSelection = selected
+      selected = selected == square ? nil : game.board[square]?.side == game.turn ? square : nil
+      if selected != previousSelection, selected != nil { AppHaptics.shared.play(.selection) }
+      refresh()
+    }
+  }
   var body: some View {
     ScrollView {
-      VStack(spacing: 18) {
+      VStack(spacing: 16) {
         HStack {
-          Pill(text: "Pass & play", icon: "person.2")
+          Pill(text: computer ? "You vs. computer" : "Pass & play", icon: computer ? "cpu" : "person.2")
           Spacer()
-          Button("New game") {
-            game = ChessGame()
-            selected = nil
-            refresh()
-          }
+          Button("New game") { confirmReset = true }.font(.subheadline.bold())
         }
-        Text(game.status).font(.title3.bold()).accessibilityIdentifier("chessStatus")
-        InteractiveScene(scene: scene) { name in
-          if let s = Int(name.replacingOccurrences(of: "square-", with: "")) { select(s) }
-        }.frame(height: 380).clipShape(RoundedRectangle(cornerRadius: 25))
-        Text("Tap a piece, then a highlighted square.").font(.caption).foregroundStyle(.secondary)
-        Toggle("Show labeled board", isOn: $accessibleBoard).font(.caption)
-        if accessibleBoard {
-          LazyVGrid(
-            columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: 8), spacing: 2
-          ) {
-            ForEach((0..<64).reversed(), id: \.self) { s in
-              let square = (s / 8) * 8 + (7 - s % 8)
-              Button {
-                select(square)
-              } label: {
-                VStack(spacing: 1) {
-                  Text(game.board[square].map { symbol($0) } ?? " ").font(.title3)
-                  Text(ChessGame.square(square)).font(.system(size: 8))
-                }.frame(maxWidth: .infinity).frame(height: 40).background(
-                  selected == square
-                    ? Palette.lime
-                    : ((square % 8 + square / 8) % 2 == 0
-                      ? Color.white : Palette.maroon.opacity(0.15)))
-              }.buttonStyle(.plain).accessibilityIdentifier("square-\(ChessGame.square(square))")
-            }
-          }
+        Picker("Opponent", selection: $computer) {
+          Text("Two players").tag(false)
+          Text("Computer").tag(true)
+        }.pickerStyle(.segmented).onChange(of: computer) { _, _ in reset() }
+        VStack(spacing: 5) {
+          Text(game.status).font(.title3.bold()).accessibilityIdentifier("chessStatus")
+          Text(thinking ? "Computer is thinking…" : game.finished ? "Start a rematch or undo the last move." : selected.map { "\(ChessGame.square($0)) selected · choose a highlighted square" } ?? "Tap one of your pieces to see legal moves.")
+            .font(.caption).foregroundStyle(.secondary)
+        }.frame(maxWidth: .infinity).frame(minHeight: 56)
+        if accessibleBoard { labeledBoard }
+        else {
+          InteractiveScene(scene: scene) { name in
+            if let s = Int(name.replacingOccurrences(of: "square-", with: "")) { select(s) }
+          }.frame(height: 340).clipShape(RoundedRectangle(cornerRadius: 25))
+        }
+        HStack {
+          Toggle("Show labeled board", isOn: $accessibleBoard).font(.caption)
+          Spacer(minLength: 18)
+          Button {
+            if computer && game.turn == .white && previous.count >= 2 {
+              previous.removeLast(); game = previous.removeLast()
+            } else if let last = previous.popLast() { game = last }
+            selected = nil; refresh()
+          } label: { Label("Undo", systemImage: "arrow.uturn.backward") }
+          .font(.caption.bold()).disabled(previous.isEmpty || thinking)
         }
         if !game.history.isEmpty {
-          Text(game.history.suffix(8).joined(separator: "   ")).font(.caption.monospaced())
-            .foregroundStyle(.secondary)
+          ScrollView(.horizontal, showsIndicators: false) {
+            Text(game.history.enumerated().map { "\($0.offset + 1). \($0.element)" }.suffix(8).joined(separator: "   "))
+              .font(.caption.monospaced()).padding(12)
+          }.background(Palette.surface, in: RoundedRectangle(cornerRadius: 12))
         }
-        Text(
-          "Local two-player chess. Pawns promote to queen automatically. Online invitations and server-authoritative games are not connected yet."
-        ).font(.caption).foregroundStyle(.secondary)
+        GameRules(title: "Chess at your pace", text: computer ? "You play White. The computer considers your next reply before moving. Tap Undo to take back a turn. Castling, en passant, promotion, checkmate and draw rules are supported." : "Share this iPhone and alternate moves. White moves first. Castling, en passant and promotion are supported. Legal destinations glow green; your king can never move into check.")
       }.padding(20)
     }.appBackground().onAppear { refresh() }
+      .confirmationDialog("Start a new chess game?", isPresented: $confirmReset, titleVisibility: .visible) {
+        Button("New game", role: .destructive) { reset(); AppHaptics.shared.play(.selection) }
+      }
+      .confirmationDialog("Promote your pawn", isPresented: Binding(get: { pendingPromotion != nil }, set: { if !$0 { pendingPromotion = nil } }), titleVisibility: .visible) {
+        ForEach([ChessGame.Kind.queen, .rook, .bishop, .knight], id: \.self) { kind in
+          Button(kind.rawValue.capitalized) {
+            if let pending = pendingPromotion { move(pending.0, pending.1, promotion: kind) }
+            pendingPromotion = nil
+          }
+        }
+      }
+      .task(id: "\(computer)-\(game.history.count)") {
+        guard computer, game.turn == .black, !game.finished else { return }
+        thinking = true
+        let snapshot = game
+        let choice = await Task.detached(priority: .userInitiated) { snapshot.suggestedMove() }.value
+        guard !Task.isCancelled else { return }
+        thinking = false
+        if let choice { move(choice.from, choice.to, userInitiated: false) }
+      }
   }
-  func symbol(_ p: ChessGame.Piece) -> String {
-    let white: [ChessGame.Kind: String] = [
-      .king: "♔", .queen: "♕", .rook: "♖", .bishop: "♗", .knight: "♘", .pawn: "♙",
-    ]
-    let black: [ChessGame.Kind: String] = [
-      .king: "♚", .queen: "♛", .rook: "♜", .bishop: "♝", .knight: "♞", .pawn: "♟",
-    ]
+  private var labeledBoard: some View {
+    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 0), count: 8), spacing: 0) {
+      ForEach(0..<64, id: \.self) { index in
+        let square = (7 - index / 8) * 8 + index % 8
+        let piece = game.board[square]
+        Button { select(square) } label: {
+          ZStack(alignment: .bottomLeading) {
+            Rectangle().fill(selected == square ? Palette.lime : (square % 8 + square / 8) % 2 == 0 ? Color(red: 0.52, green: 0.39, blue: 0.40) : Color(red: 0.86, green: 0.81, blue: 0.72))
+            if targets.contains(square) {
+              Circle().fill(Palette.maroon.opacity(0.32)).frame(width: piece == nil ? 13 : 34, height: piece == nil ? 13 : 34).frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            Text(piece.map { symbol($0) } ?? "").font(.system(size: 32)).foregroundStyle(Color(red: 0.10, green: 0.07, blue: 0.08)).frame(maxWidth: .infinity, maxHeight: .infinity)
+            Text(ChessGame.square(square)).font(.system(size: 8, weight: .semibold)).foregroundStyle(Color.black.opacity(0.7)).padding(3)
+          }.aspectRatio(1, contentMode: .fit)
+        }.buttonStyle(.plain).accessibilityIdentifier("square-\(ChessGame.square(square))")
+          .accessibilityLabel("\(ChessGame.square(square)), \(piece.map { "\($0.side.rawValue) \($0.kind.rawValue)" } ?? "empty")\(targets.contains(square) ? ", legal destination" : "")")
+      }
+    }.clipShape(RoundedRectangle(cornerRadius: 12)).overlay(RoundedRectangle(cornerRadius: 12).stroke(Palette.maroon.opacity(0.2)))
+  }
+  private func symbol(_ p: ChessGame.Piece) -> String {
+    let white: [ChessGame.Kind: String] = [.king: "♔", .queen: "♕", .rook: "♖", .bishop: "♗", .knight: "♘", .pawn: "♙"]
+    let black: [ChessGame.Kind: String] = [.king: "♚", .queen: "♛", .rook: "♜", .bishop: "♝", .knight: "♞", .pawn: "♟"]
     return (p.side == .white ? white : black)[p.kind]!
   }
 }
@@ -237,248 +290,15 @@ enum ChessScene {
     return root
   }
 }
-@Observable final class ArcadeEngine {
-  let kind: String
-  var scene: SCNScene
-  var angle: Double = 0
-  var power: Double = 0.65
-  var score = 0
-  var shots = 0
-  var busy = false
-  var status = "Aim, set your power, and take a shot."
-  private var balls: [SCNNode] = []
-  private var cups: [SCNNode] = []
-  private var cue: SCNNode?
-  private var ticks = 0
-  init(_ kind: String) {
-    self.kind = kind
-    scene = stage(camera: SCNVector3(0, 6, 6))
-    reset()
-  }
-  func reset() {
-    scene = stage(camera: SCNVector3(0, 6, 6))
-    balls = []
-    cups = []
-    score = 0
-    shots = 0
-    busy = false
-    scene.physicsWorld.gravity = SCNVector3Zero
-    scene.physicsWorld.speed = 1
-    let pool = kind == "8 Ball"
-    let table = node(
-      SCNBox(width: 2.8, height: 0.25, length: 5.15, chamferRadius: 0.15), dark,
-      SCNVector3(0, -0.2, 0))
-    scene.rootNode.addChildNode(table)
-    scene.rootNode.addChildNode(
-      node(
-        SCNBox(width: 2.35, height: 0.05, length: 4.65, chamferRadius: 0.1),
-        pool ? UIColor(red: 0.15, green: 0.37, blue: 0.28, alpha: 1) : cream,
-        SCNVector3(0, -0.04, 0)))
-    if pool {
-      for (x, z, w, l) in [
-        (-1.24, 0.0, 0.1, 4.8), (1.24, 0.0, 0.1, 4.8), (0.0, -2.39, 2.5, 0.1),
-        (0.0, 2.39, 2.5, 0.1),
-      ] {
-        let rail = node(
-          SCNBox(width: w, height: 0.4, length: l, chamferRadius: 0.03), dark,
-          SCNVector3(Float(x), 0.08, Float(z)))
-        rail.physicsBody = .static()
-        rail.physicsBody?.restitution = 0.75
-        scene.rootNode.addChildNode(rail)
-      }
-      for x: Float in [-1.12, 1.12] {
-        for z: Float in [-2.25, 0, 2.25] {
-          scene.rootNode.addChildNode(
-            node(SCNCylinder(radius: 0.17, height: 0.03), .black, SCNVector3(x, 0.002, z)))
-        }
-      }
-      let white = ball(.white, at: SCNVector3(0, 0.10, 1.1))
-      cue = white
-      balls.append(white)
-      var n = 1
-      for row in 0..<5 {
-        for col in 0...row {
-          let color: UIColor =
-            n == 8
-            ? .black
-            : [
-              .systemYellow, .systemBlue, .systemRed, .systemPurple, .systemOrange, .systemGreen,
-              .brown,
-            ][(n - 1) % 7]
-          let b = ball(
-            color,
-            at: SCNVector3(Float(col) * 0.215 - Float(row) * 0.1075, 0.1, -0.7 - Float(row) * 0.19))
-          b.name = "ball-\(n)"
-          b.geometry?.firstMaterial?.diffuse.contents = ballTexture(number: n, color: color)
-          balls.append(b)
-          n += 1
-        }
-      }
-    } else {
-      for row in 0..<3 {
-        for col in 0...row {
-          let cup = node(
-            SCNTube(innerRadius: 0.135, outerRadius: 0.16, height: 0.34),
-            UIColor(red: 0.45, green: 0.07, blue: 0.12, alpha: 1),
-            SCNVector3(Float(col) * 0.37 - Float(row) * 0.185, 0.17, -0.6 - Float(row) * 0.37))
-          cups.append(cup)
-          scene.rootNode.addChildNode(cup)
-        }
-      }
-      cue = ball(.white, at: SCNVector3(0, 0.14, 1.65))
-      cue?.physicsBody = nil
-    }
-    status = pool ? "Practice table · pocket all 15 balls." : "Sink all six cups."
-  }
-  private func ballTexture(number: Int, color: UIColor) -> UIImage {
-    let renderer = UIGraphicsImageRenderer(size: CGSize(width: 512, height: 256))
-    return renderer.image { context in
-      (number > 8 ? UIColor.white : color).setFill()
-      context.fill(CGRect(x: 0, y: 0, width: 512, height: 256))
-      if number > 8 {
-        color.setFill()
-        context.fill(CGRect(x: 0, y: 69, width: 512, height: 118))
-      }
-      for x in [128, 384] {
-        UIColor.white.setFill()
-        UIBezierPath(ovalIn: CGRect(x: x - 32, y: 96, width: 64, height: 64)).fill()
-        let text = "\(number)" as NSString
-        let attrs: [NSAttributedString.Key: Any] = [
-          .font: UIFont.boldSystemFont(ofSize: 37), .foregroundColor: UIColor.black,
-        ]
-        let size = text.size(withAttributes: attrs)
-        text.draw(
-          at: CGPoint(x: CGFloat(x) - size.width / 2, y: 128 - size.height / 2),
-          withAttributes: attrs)
-      }
-    }
-  }
-  private func ball(_ color: UIColor, at position: SCNVector3) -> SCNNode {
-    let b = node(SCNSphere(radius: 0.1), color, position)
-    b.geometry?.materials = [material(color, rough: 0.16)]
-    let body = SCNPhysicsBody(
-      type: .dynamic, shape: SCNPhysicsShape(geometry: SCNSphere(radius: 0.1)))
-    body.mass = 0.17
-    body.restitution = 0.91
-    body.friction = 0.1
-    body.damping = 0.50
-    body.angularDamping = 0.6
-    body.velocityFactor = SCNVector3(1, 0, 1)
-    b.physicsBody = body
-    scene.rootNode.addChildNode(b)
-    return b
-  }
-  func shoot() {
-    guard !busy, let cue else { return }
-    shots += 1
-    busy = true
-    ticks = 0
-    if kind == "8 Ball" {
-      let a = Float(angle * Double.pi / 180)
-      cue.physicsBody?.velocity = SCNVector3(
-        sin(a) * Float(power) * 7, 0, -cos(a) * Float(power) * 7)
-      status = "Nice and easy…"
-    } else {
-      let x = Float(angle / 45) * 1.4
-      let z = Float(1.65 - power * 4.5)
-      let start = cue.position
-      let action = SCNAction.customAction(duration: 1.1) { node, t in
-        let f = Float(t / 1.1)
-        node.position = SCNVector3(
-          start.x + (x - start.x) * f, 0.14 + sin(f * .pi) * 1.5, start.z + (z - start.z) * f)
-      }
-      cue.runAction(action) {
-        DispatchQueue.main.async {
-          if let hit = self.cups.first(where: { hypot($0.position.x - x, $0.position.z - z) < 0.17 }
-          ) {
-            hit.removeFromParentNode()
-            self.cups.removeAll { $0 === hit }
-            self.score += 1
-            self.status = self.score == 6 ? "All six! \(self.shots) shots." : "In the cup."
-          } else {
-            self.status = "Close. Adjust the aim and power."
-          }
-          cue.position = SCNVector3(0, 0.14, 1.65)
-          self.busy = false
-        }
-      }
-    }
-  }
-  func tick() {
-    guard kind == "8 Ball", busy else { return }
-    ticks += 1
-    for ball in balls {
-      let p = ball.presentation.position
-      let pocket = abs(p.x) > 0.99 && (abs(p.z) > 2.10 || abs(p.z) < 0.13)
-      if pocket {
-        if ball === cue {
-          ball.physicsBody?.velocity = SCNVector3Zero
-          ball.position = SCNVector3(0, 0.1, 1.1)
-          ball.physicsBody?.resetTransform()
-          status = "Scratch · cue ball reset."
-        } else {
-          ball.removeFromParentNode()
-          score += 1
-          balls.removeAll { $0 === ball }
-        }
-      }
-    }
-    if ticks > 15
-      && (balls.allSatisfy {
-        let v = $0.physicsBody?.velocity ?? SCNVector3Zero
-        return abs(v.x) + abs(v.z) < 0.07
-      } || ticks > 150)
-    {
-      busy = false
-      status =
-        score == 15
-        ? "Table cleared in \(shots) shots!" : "\(score) pocketed. Line up your next shot."
-    }
-  }
-}
-struct ArcadeView: View {
-  let kind: String
-  @State private var engine: ArcadeEngine
-  init(kind: String) {
-    self.kind = kind
-    _engine = State(initialValue: ArcadeEngine(kind))
-  }
-  let timer = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
+
+private struct GameRules: View {
+  let title: String
+  let text: String
   var body: some View {
-    ScrollView {
-      VStack(spacing: 18) {
-        HStack {
-          Pill(text: "Solo practice", icon: "gamecontroller")
-          Spacer()
-          Button("Reset") { engine.reset() }
-        }
-        HStack {
-          Text("\(engine.score) \(kind=="8 Ball" ? "pocketed":"cups")").font(.title3.bold())
-          Spacer()
-          Text("\(engine.shots) shots").font(.caption).foregroundStyle(.secondary)
-        }
-        InteractiveScene(scene: engine.scene).frame(height: 365).clipShape(
-          RoundedRectangle(cornerRadius: 26))
-        Text(engine.status).font(.subheadline).frame(minHeight: 30)
-        HStack {
-          Text("Aim").frame(width: 48, alignment: .leading)
-          Slider(value: $engine.angle, in: kind == "8 Ball" ? -180...180 : -80...80)
-          Text("\(Int(engine.angle))°").monospacedDigit().frame(width: 40)
-        }
-        HStack {
-          Text("Power").frame(width: 48, alignment: .leading)
-          Slider(value: $engine.power, in: 0.1...1)
-          Text("\(Int(engine.power*100))%").monospacedDigit().frame(width: 40)
-        }
-        Button(engine.busy ? "Shot in motion…" : "Take shot") { engine.shoot() }.buttonStyle(
-          PrimaryButton()
-        ).disabled(engine.busy).accessibilityIdentifier("takeShot")
-        Text(
-          kind == "8 Ball"
-            ? "Physics practice table. Competitive 8-ball rules, turn synchronization and online opponents are not enabled yet."
-            : "3D skill practice. Online cup pong matches are not enabled yet."
-        ).font(.caption).foregroundStyle(.secondary)
-      }.padding(20)
-    }.appBackground().onReceive(timer) { _ in engine.tick() }
+    DisclosureGroup {
+      Text(text).font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading).padding(.top, 8)
+    } label: {
+      Label(title, systemImage: "info.circle").font(.subheadline.weight(.medium))
+    }.padding(16).background(Palette.surface, in: RoundedRectangle(cornerRadius: 18))
   }
 }

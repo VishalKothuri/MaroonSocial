@@ -1,3 +1,6 @@
+import { cleanupDeletedAuthUsers } from '../_shared/social-auth-cleanup.ts';
+import { maintainCourseChats } from '../_shared/course-retention.ts';
+declare const EdgeRuntime: { waitUntil(task: Promise<unknown>): void };
 // Public university facts only; writes use the function's server-side credential.
 const feeds = [
   ['Campus', 'https://calendar.tamu.edu/live/json/events/group/*%20Main%20University%20Calendar'],
@@ -5,6 +8,8 @@ const feeds = [
   ['Sports', 'https://calendar.tamu.edu/live/json/events/group/Aggie%20Athletics'],
 ];
 const clean = (value: unknown) => String(value ?? '').replace(/<[^>]+>/g, ' ').replace(/&amp;/g, '&').replace(/&nbsp;/g, ' ').replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/\s+/g, ' ').trim();
+const feedFlag = (value: unknown) => value === true || value === 1 || value === '1' || value === 'true';
+const cancelledTitle = (title: string) => /(?:^\s*cancel(?:l)?ed(?:\s*[:–—-]|\s*$)|[\[(]\s*cancel(?:l)?ed\s*[\])]|[–—-]\s*cancel(?:l)?ed\s*$)/i.test(title);
 Deno.serve(async (req: Request) => {
   if (req.method !== 'POST') return new Response('Use POST', {status:405});
   const origin = Deno.env.get('SUPABASE_URL')!;
@@ -18,6 +23,8 @@ Deno.serve(async (req: Request) => {
   try {
     const claimed = await (await db('rpc/claim_campus_refresh',{method:'POST',body:'{}'})).json();
     if (!claimed) return Response.json({status:'cached',message:'Refresh is limited to once per 55 minutes.'});
+    EdgeRuntime.waitUntil(cleanupDeletedAuthUsers(20).catch(() => console.error('auth_cleanup_retry_pending')));
+    EdgeRuntime.waitUntil(maintainCourseChats(db).catch(() => console.error('course_retention_retry_pending')));
     const now = Date.now()/1000;
     const read = async (url:string) => {const r=await fetch(url,{signal:AbortSignal.timeout(20000)});if(!r.ok)throw new Error(`Source failed: ${r.status}`);return await r.json();};
     const previousRows=await (await db('campus_cache?id=eq.current&select=payload')).json();
@@ -32,7 +39,8 @@ Deno.serve(async (req: Request) => {
           const starts=Number(row.date_ts);
           if(!Number.isFinite(starts)||starts<now-86400||starts>now+31*86400)continue;
           const id=`${row.id}-${starts}`;
-          const event:Record<string,unknown>={id,title:clean(row.title),category,starts,allDay:Boolean(row.is_all_day),location:clean(row.location_title||row.location),details:clean(row.description).slice(0,1200),url:row.url,source:url,fetchedAt:now,cancelled:Boolean(row.is_canceled)};
+          const title=clean(row.title);
+          const event:Record<string,unknown>={id,title,category,starts,allDay:feedFlag(row.is_all_day),location:clean(row.location_title||row.location),details:clean(row.description).slice(0,1200),url:row.url,source:url,fetchedAt:now,cancelled:feedFlag(row.is_canceled)||feedFlag(row.is_cancelled)||cancelledTitle(title)};
           if(row.date2_ts)event.ends=Number(row.date2_ts);
           if(typeof row.thumbnailURL==='string' && row.thumbnailURL.startsWith('https://'))event.imageURL=row.thumbnailURL;
           events.set(id,event);

@@ -1,5 +1,7 @@
 # MaroonSocial — proposed architecture
 
+> **October 4 product update:** The current requirement replaces anonymous random text/voice matching with a visible username-and-interests lobby, explicit connection requests and mutual acceptance before text/video. Anonymous post/reply DMs remain. Group nicknames are separate per room. Email/TAMU delivery and paid advertising are paused by the owner; direct video has no paid relay. [Feature status](FEATURE-STATUS.md) and [verification](TESTING.md) describe the implemented behavior and remaining limits; the proposals below are historical where they differ.
+
 > **October 1, 2026 implementation update:** Coding is now authorized. The user selected SwiftUI, iPhone first, and connected Supabase **Maroon Social** plus GitHub **VishalKothuri/MaroonSocial**. Mascot work is paused. This document preserves the earlier research/proposals; its older no-code statements are historical. See [README](README.md) for tested implementation status and remaining work.
 
 September 29, 2026 • Discussion draft • No implementation authorized.

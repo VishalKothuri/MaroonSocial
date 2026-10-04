@@ -1,0 +1,28 @@
+{
+  "name": "maroon-social-pool-preview",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "GPL-3.0-only",
+  "scripts": {
+    "build": "node build.mjs",
+    "serve": "python3 -m http.server 4173 --directory dist",
+    "test:physics": "jest --config jest.config.cjs --runInBand upstream/test/model/physics.spec.ts upstream/test/model/ball.spec.ts upstream/test/model/collision.spec.ts upstream/test/model/cushion.spec.ts upstream/test/model/pocket.spec.ts",
+    "test:adapter": "node server/build.mjs && node --test server/engine.test.mjs && jest --config jest.config.cjs --runInBand web/online.test.ts web/online-container.test.ts"
+  },
+  "dependencies": {
+    "@tailuge/messaging": "1.42.0",
+    "fflate": "0.8.3",
+    "interactjs": "1.10.28",
+    "jsoncrush": "1.1.8",
+    "three": "0.186.1"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.10",
+    "@swc/core": "1.16.13",
+    "@swc/jest": "0.2.39",
+    "jest": "30.5.2",
+    "jest-environment-jsdom": "30.5.2",
+    "chai": "6.3.0"
+  }
+}

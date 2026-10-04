@@ -1,0 +1,411 @@
+import { expect } from "chai"
+import { Container } from "../../src/container/container"
+import { initDom } from "../view/dom"
+import { Assets } from "../../src/view/assets"
+import { NineBall } from "../../src/controller/rules/nineball"
+import { Snooker } from "../../src/controller/rules/snooker"
+import { Session } from "../../src/network/client/session"
+import { Outcome } from "../../src/model/outcome"
+import { End } from "../../src/controller/end"
+import {
+  MatchResult,
+  MatchResultHelper,
+} from "../../src/network/client/matchresult"
+import { Ball, State } from "../../src/model/ball"
+import { ScoreReporter } from "../../src/network/client/scorereporter"
+
+initDom()
+
+function createNineBallContainer(ruletype: string = "nineball"): Container {
+  return new Container({
+    element: undefined,
+    log: (_) => {},
+    assets: Assets.localAssets(ruletype),
+    ruletype,
+  })
+}
+
+function setupNineBallTable(container: Container): void {
+  Ball.id = 0
+  container.table.balls.forEach((b) => {
+    if (b !== container.table.cueball && b.label !== 9) {
+      b.state = State.InPocket
+    }
+  })
+}
+
+function getNineBallOutcome(container: Container): Outcome[] {
+  const nineBall = container.table.balls.find((b) => b.label === 9)!
+  return [
+    Outcome.collision(container.table.cueball, nineBall, 1),
+    Outcome.pot(nineBall, 1),
+  ]
+}
+
+describe("MatchResult Construction", () => {
+  let container: Container
+
+  beforeEach(() => {
+    Session.init("test-client", "TestPlayer", "test-table", false)
+  })
+
+  afterEach(() => {
+    Session.reset()
+  })
+
+  it("NineBall should include Anon as winner if playername is empty", () => {
+    Session.init("test-client", "", "test-table", false)
+    container = createNineBallContainer()
+    setupNineBallTable(container)
+
+    const nineball = container.rules as NineBall
+    const outcome = getNineBallOutcome(container)
+    const endController = nineball.update(outcome) as End
+    const result = (endController as any).result as MatchResult
+
+    expect(result.winner).to.equal("Anon")
+    expect(result.loser).to.be.undefined
+    expect(result.loserScore).to.be.undefined
+  })
+
+  it("NineBall should include opponent if session.opponentName is present", () => {
+    container = createNineBallContainer()
+    const session = Session.getInstance()
+    session.opponentName = "TestOpponent"
+    session.setOpponentClientId("opponent")
+    setupNineBallTable(container)
+
+    const nineball = container.rules as NineBall
+    const outcome = getNineBallOutcome(container)
+    const endController = nineball.update(outcome) as End
+    const result = (endController as any).result as MatchResult
+
+    expect(result.winner).to.equal("TestPlayer")
+    expect(result.winnerId).to.equal("test-client")
+    expect(result.loser).to.equal("TestOpponent")
+    expect(result.loserId).to.equal("opponent")
+    expect(result.loserScore).to.equal(0)
+  })
+
+  it("NineBall should include replayData in MatchResult", () => {
+    container = createNineBallContainer()
+    container.scoreReporter = new ScoreReporter()
+    setupNineBallTable(container)
+
+    const nineball = container.rules as NineBall
+    const outcome = getNineBallOutcome(container)
+    const endController = nineball.update(outcome) as End
+    endController.onFirst()
+    const result = (endController as any).result as MatchResult
+
+    expect(result.replayData).to.be.a("string")
+    expect(result.replayData!.length).to.be.greaterThan(0)
+  })
+
+  it("skips scoreboard upload but reports tournament result when no shots taken", async () => {
+    Session.init(
+      "test-client",
+      "TestPlayer",
+      "test-table",
+      false,
+      false,
+      false,
+      false,
+      1,
+      false,
+      false,
+      "arena-1"
+    )
+    container = createNineBallContainer()
+    const reporter = {
+      submitMatchResult: jest.fn().mockResolvedValue(undefined),
+      submitTournamentResult: jest.fn().mockResolvedValue(undefined),
+    }
+    container.scoreReporter = reporter as any
+    setupNineBallTable(container)
+
+    const nineball = container.rules as NineBall
+    const endController = nineball.update(getNineBallOutcome(container)) as End
+    endController.onFirst()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const result = (endController as any).result as MatchResult
+    expect(result.replayData).to.be.a("string")
+    expect(reporter.submitMatchResult.mock.calls).to.have.lengthOf(0)
+    expect(reporter.submitTournamentResult.mock.calls).to.have.lengthOf(1)
+  })
+
+  it("uploads the scoreboard result when at least one shot was taken", async () => {
+    container = createNineBallContainer()
+    container.recorder.entries.push({
+      state: [],
+      event: { type: "AIM", i: 0 } as any,
+      pots: 0,
+      isPartOfBreak: false,
+      time: Date.now(),
+    })
+    const reporter = {
+      submitMatchResult: jest.fn().mockResolvedValue(undefined),
+      submitTournamentResult: jest.fn().mockResolvedValue(undefined),
+    }
+    container.scoreReporter = reporter as any
+    setupNineBallTable(container)
+
+    const nineball = container.rules as NineBall
+    const endController = nineball.update(getNineBallOutcome(container)) as End
+    endController.onFirst()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(reporter.submitMatchResult.mock.calls).to.have.lengthOf(1)
+  })
+
+  it("NineBall should declare potter winner even if behind on points", () => {
+    container = createNineBallContainer()
+    const session = Session.getInstance()
+    session.opponentName = "TestOpponent"
+    session.setMyScore(2)
+    session.setOpponentScore(8)
+    setupNineBallTable(container)
+
+    const nineball = container.rules as NineBall
+    const outcome = getNineBallOutcome(container)
+    const endController = nineball.update(outcome) as End
+    const result = (endController as any).result as MatchResult
+
+    expect(result.winner).to.equal("TestPlayer")
+    expect(result.loser).to.equal("TestOpponent")
+  })
+
+  it("Snooker should include Anon as winner if playername is empty", () => {
+    Session.init("test-client", "", "test-table", false)
+    container = new Container({
+      element: undefined,
+      log: (_) => {},
+      assets: Assets.localAssets("snooker"),
+      ruletype: "snooker",
+    })
+    container.scoreReporter = new ScoreReporter()
+    const snooker = container.rules as Snooker
+    Session.getInstance().updateScoresFromNetwork(60, 0, 0)
+    snooker.currentBreak = 10
+
+    // Mock table is clear (only cueball remains)
+    container.table.balls.forEach((b) => {
+      if (b !== container.table.cueball) {
+        b.state = State.InPocket
+      }
+    })
+
+    // Snooker's continueBreak is called when a ball is potted and table is clear
+    const endController = (snooker as any).continueBreak() as End
+    endController.onFirst()
+    const result = (endController as any).result as MatchResult
+
+    expect(result.winner).to.equal("Anon")
+    expect(result.winnerScore).to.equal(60)
+    expect(result.loser).to.be.undefined
+    expect(result.replayData).to.be.a("string")
+    expect(result.replayData!.length).to.be.greaterThan(0)
+  })
+
+  it("ThreeCushion should include replayData in MatchResult", () => {
+    container = new Container({
+      element: undefined,
+      log: (_) => {},
+      assets: Assets.localAssets("threecushion"),
+      ruletype: "threecushion",
+    })
+    container.scoreReporter = new ScoreReporter()
+    const threecushion = container.rules as any
+    Session.getInstance().updateScoresFromNetwork(10, 5, 0)
+
+    const endController = threecushion.handleGameEnd(true) as End
+    endController.onFirst()
+    const result = (endController as any).result as MatchResult
+
+    expect(result.winner).to.equal("TestPlayer")
+    expect(result.winnerScore).to.equal(10)
+    expect(result.replayData).to.be.a("string")
+    expect(result.replayData!.length).to.be.greaterThan(0)
+  })
+
+  it("ThreeCushion should report correct winnerScore when player at index 1 wins", () => {
+    const session = Session.getInstance()
+    session.playerIndex = 1
+    session.opponentName = "OpponentPlayer"
+    container = new Container({
+      element: undefined,
+      log: (_) => {},
+      assets: Assets.localAssets("threecushion"),
+      ruletype: "threecushion",
+    })
+    container.scoreReporter = new ScoreReporter()
+    const threecushion = container.rules as any
+    Session.getInstance().updateScoresFromNetwork(3, 7, 0)
+
+    const endController = threecushion.handleGameEnd(true) as End
+    endController.onFirst()
+    const result = (endController as any).result as MatchResult
+
+    expect(result.winner).to.equal("TestPlayer")
+    expect(result.winnerScore).to.equal(7)
+  })
+
+  it("MatchResultHelper should show Lostber subtext in bot mode loss", () => {
+    Session.init("test-client", "TestPlayer", "test-table", false, true)
+    Session.getInstance().setMyScore(0)
+    Session.getInstance().setOpponentScore(1)
+    container = createNineBallContainer()
+    const result = (container.rules as any).handleGameEnd(false)
+    expect(result.name).to.equal("End")
+    const notification = document.getElementById("notification")
+    expect(notification?.innerHTML).to.contain("Lostber 🦞")
+    expect(notification?.innerHTML).to.contain("New Game")
+  })
+
+  it("MatchResult should include bot flag when playing against bot", () => {
+    Session.init("test-client", "TestPlayer", "test-table", false, true) // botMode: true
+    container = createNineBallContainer()
+    const session = Session.getInstance()
+    session.opponentName = "ClawBreak" // Bot sets this
+    setupNineBallTable(container)
+
+    const nineball = container.rules as NineBall
+    const outcome = getNineBallOutcome(container)
+    const endController = nineball.update(outcome) as End
+    const result = (endController as any).result as MatchResult
+
+    expect(result.bot).to.be.true
+  })
+
+  it("MatchResultHelper should show the top 3 high breaks in game over notification", () => {
+    container = createNineBallContainer()
+    container.ballTray.addBreak({ shots: [] }, 4)
+    container.ballTray.addBreak({ shots: [] }, 11)
+    container.ballTray.addBreak({ shots: [] }, 2)
+    container.ballTray.addBreak({ shots: [] }, 7)
+
+    const result = (container.rules as any).handleGameEnd(true)
+    expect(result.name).to.equal("End")
+
+    const notification = document.getElementById("notification")
+    const scores = Array.from(
+      notification?.querySelectorAll(".notification-high-break-label") ?? []
+    ).map((element) => element.textContent?.trim())
+
+    expect(scores).to.deep.equal(["Break : 11", "Break : 7", "Break : 4"])
+    expect(
+      notification?.querySelectorAll(".notification-high-break").length
+    ).to.equal(3)
+    expect(notification?.querySelector(".notification-actions")).to.exist
+  })
+
+  describe("ThreeCushion & Sagu Innings & Average Tracking", () => {
+    it("should calculate correct innings and averages in single player mode", () => {
+      container = new Container({
+        element: undefined,
+        log: (_) => {},
+        assets: Assets.localAssets("threecushion"),
+        ruletype: "threecushion",
+      })
+
+      // Simulate recorded shots in single player mode
+      container.isSinglePlayer = true
+      Session.getInstance().setMyScore(2)
+
+      // Inning 1 (White)
+      container.recorder.entries.push({
+        state: [],
+        event: { type: "AIM", i: 0 } as any,
+        pots: 0,
+        isPartOfBreak: true,
+        time: Date.now(),
+      })
+      container.recorder.entries.push({
+        state: [],
+        event: { type: "AIM", i: 0 } as any,
+        pots: 0,
+        isPartOfBreak: false,
+        time: Date.now(),
+      })
+
+      // Inning 1 (Yellow)
+      container.recorder.entries.push({
+        state: [],
+        event: { type: "AIM", i: 1 } as any,
+        pots: 0,
+        isPartOfBreak: false,
+        time: Date.now(),
+      })
+
+      // Inning 2 (White)
+      container.recorder.entries.push({
+        state: [],
+        event: { type: "AIM", i: 0 } as any,
+        pots: 0,
+        isPartOfBreak: true,
+        time: Date.now(),
+      })
+      container.recorder.entries.push({
+        state: [],
+        event: { type: "AIM", i: 0 } as any,
+        pots: 0,
+        isPartOfBreak: false,
+        time: Date.now(),
+      })
+
+      const subtext = (MatchResultHelper as any).getScoreSubtext(
+        container,
+        "threecushion"
+      )
+      expect(subtext).to.equal("Score: 2 (Avg: 0.7 - 3 inn)")
+    })
+
+    it("should calculate correct innings and averages in multiplayer mode", () => {
+      container = new Container({
+        element: undefined,
+        log: (_) => {},
+        assets: Assets.localAssets("threecushion"),
+        ruletype: "threecushion",
+      })
+
+      container.isSinglePlayer = false
+      const session = Session.getInstance()
+      session.playername = "Player 1"
+      session.opponentName = "Player 2"
+      session.playerIndex = 0
+      session.updateScoresFromNetwork(10, 5, 0)
+
+      // Simulate recorded shots: Player 1 (White), Player 2 (Yellow)
+      container.recorder.entries.push({
+        state: [],
+        event: { type: "AIM", i: 0 } as any,
+        pots: 0,
+        isPartOfBreak: true,
+        time: Date.now(),
+      })
+      container.recorder.entries.push({
+        state: [],
+        event: { type: "AIM", i: 0 } as any,
+        pots: 0,
+        isPartOfBreak: false,
+        time: Date.now(),
+      })
+
+      container.recorder.entries.push({
+        state: [],
+        event: { type: "AIM", i: 1 } as any,
+        pots: 0,
+        isPartOfBreak: false,
+        time: Date.now(),
+      })
+
+      const subtext = (MatchResultHelper as any).getScoreSubtext(
+        container,
+        "threecushion"
+      )
+      expect(subtext).to.contain("Player 1: 10 (Avg: 10.0 - 1 inn)")
+      expect(subtext).to.contain("Player 2: 5 (Avg: 5.0 - 1 inn)")
+    })
+  })
+})

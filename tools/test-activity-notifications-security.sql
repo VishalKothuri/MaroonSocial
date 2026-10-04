@@ -1,0 +1,72 @@
+-- All members, announcements and activity below are synthetic and rolled back.
+begin;
+select set_config('maroon.activity_qa_announcement',social_private.operator('announcements.publish','{"title":"Activity QA announcement","body":"Synthetic rollback-only owner announcement.","note":"Validate new activity inbox without publishing a lasting announcement."}','activity-qa')->>'id',true);
+set local role service_role;
+do $$
+declare ha text:=encode(extensions.gen_random_bytes(32),'hex');hb text:=encode(extensions.gen_random_bytes(32),'hex');hc text:=encode(extensions.gen_random_bytes(32),'hex');a uuid;b uuid;c uuid;post_id uuid;reply_id uuid;parent_id uuid;notice_id uuid;announcement_id uuid:=current_setting('maroon.activity_qa_announcement')::uuid;out jsonb;obj jsonb;old_post uuid;voter uuid;i int;
+begin
+ if has_function_privilege('anon','public.social_activity(text,text,jsonb)','EXECUTE')or has_function_privilege('authenticated','public.social_activity(text,text,jsonb)','EXECUTE')or has_table_privilege('authenticated','social_private.notifications','SELECT')or has_table_privilege('service_role','social_private.announcements','INSERT')or has_function_privilege('service_role','social_private.operator(text,jsonb,text)','EXECUTE')then raise exception 'Activity or operator permissions exposed';end if;
+ if not exists(select 1 from pg_class where oid='social_private.notifications'::regclass and relrowsecurity)then raise exception 'Notification RLS missing';end if;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(ha,'activity_a_'||substr(ha,1,8),true,ha)returning id into a;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hb,'activity_b_'||substr(hb,1,8),true,hb)returning id into b;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hc,'activity_c_'||substr(hc,1,8),true,hc)returning id into c;
+ out:=public.social_activity('notifications','bad');if out->>'code'is distinct from'unauthorized'then raise exception 'Unauthenticated activity allowed';end if;
+ out:=public.social_gateway('post.create',ha,'{"text":"Activity test post","anonymous":true}');post_id:=(out->>'resource_id')::uuid;
+ out:=public.social_gateway('comment.create',ha,jsonb_build_object('post_id',post_id,'text','Self reply'));parent_id:=(out->>'resource_id')::uuid;
+ if exists(select 1 from social_private.notifications where recipient=a)then raise exception 'Self comment notified';end if;
+ out:=public.social_gateway('comment.create',hb,jsonb_build_object('post_id',post_id,'text','Private anonymous comment'));reply_id:=(out->>'resource_id')::uuid;
+ out:=public.social_activity('notifications',ha);
+ select value into obj from jsonb_array_elements(out->'items')where value->>'postID'=post_id::text and value->>'kind'='comment';
+ if obj is null or obj->>'body'is distinct from'Private anonymous comment'or obj->>'read'is distinct from'false'then raise exception 'New comment missing %',out;end if;
+ if obj::text like '%'||b::text||'%'or obj::text like '%activity_b_%'then raise exception 'Commenter identity leaked';end if;
+ notice_id:=(obj->>'id')::uuid;
+ out:=public.social_activity('notification.read',hb,jsonb_build_object('id',notice_id));if out->>'code'is distinct from'forbidden'then raise exception 'Foreign notification read allowed';end if;
+ out:=public.social_activity('notifications.read_all',hb,jsonb_build_object('ids',jsonb_build_array(notice_id)));
+ if exists(select 1 from social_private.notifications where id=notice_id and read_at is not null)then raise exception 'Read all modified foreign notification';end if;
+ out:=public.social_activity('notification.read',ha,jsonb_build_object('id',notice_id));if out->>'read'is distinct from'true'then raise exception 'Owner notification read failed %',out;end if;
+ out:=public.social_gateway('comment.create',hc,jsonb_build_object('post_id',post_id,'parent_id',reply_id,'text','Reply to B'));
+ if not exists(select 1 from social_private.notifications where recipient=b and kind='reply')or(select count(*)from social_private.notifications where recipient=a and comment=(out->>'resource_id')::uuid)<>1 then raise exception 'Parent reply notification incorrect';end if;
+ out:=public.social_gateway('post.vote',hb,jsonb_build_object('post_id',post_id,'value',1));
+ out:=public.social_gateway('post.vote',hb,jsonb_build_object('post_id',post_id,'value',0));
+ out:=public.social_gateway('post.vote',hb,jsonb_build_object('post_id',post_id,'value',1));
+ if(select count(*)from social_private.notifications where recipient=a and post=post_id and kind='upvotes'and milestone=1)<>1 then raise exception 'Repeated votes duplicated milestone';end if;
+ for i in 1..9 loop
+  insert into social_private.members(token_hash,username,adult,network_hash)values(encode(extensions.gen_random_bytes(32),'hex'),'act_vote_'||i||'_'||substr(ha,1,8),true,ha)returning id into voter;
+  insert into social_private.votes(member,post,value)values(voter,post_id,1);
+ end loop;
+ if not exists(select 1 from social_private.notifications where recipient=a and post=post_id and milestone=10)then raise exception 'Ten-upvote milestone missing';end if;
+ insert into social_private.blocks(blocker,blocked)values(a,b);
+ out:=public.social_activity('notifications',ha);if exists(select 1 from jsonb_array_elements(out->'items')where value->>'id'=notice_id::text)then raise exception 'Blocked comment notification retained';end if;
+ delete from social_private.blocks where blocker=a and blocked=b;
+ out:=public.social_gateway('comment.delete',hb,jsonb_build_object('comment_id',reply_id));
+ out:=public.social_activity('notifications',ha);if exists(select 1 from jsonb_array_elements(out->'items')where value->>'id'=notice_id::text)then raise exception 'Deleted comment notification retained';end if;
+ -- Own comments are queried directly, including after a thread's first 200 replies.
+ for i in 1..201 loop insert into social_private.comments(post,author,nonce,body,created_at)values(post_id,c,gen_random_uuid(),'Noise reply',now()-interval '1 day');end loop;
+ insert into social_private.comments(post,author,nonce,body)values(post_id,b,gen_random_uuid(),'My late reply')returning id into reply_id;
+ out:=public.social_activity('library',hb,'{"kind":"comments"}');
+ if not exists(select 1 from jsonb_array_elements(out->'comments')where value->>'id'=reply_id::text)then raise exception 'Late own comment missing';end if;
+ if exists(select 1 from jsonb_array_elements(out->'comments')where value->>'text'='Self reply')then raise exception 'Other author comment in collection';end if;
+ -- An old saved/authored post remains available outside the 150-post feed.
+ insert into social_private.posts(author,nonce,body,created_at)values(b,gen_random_uuid(),'Old saved library post',now()-interval '1 year')returning id into old_post;
+ for i in 1..160 loop insert into social_private.posts(author,nonce,body)values(c,gen_random_uuid(),'Recent feed filler');end loop;
+ insert into social_private.bookmarks(member,post)values(a,old_post);
+ if exists(select 1 from jsonb_array_elements(social_private.snapshot(a)->'posts')where value->>'id'=old_post::text)then raise exception 'Fixture old post unexpectedly in feed';end if;
+ out:=public.social_activity('library',ha,'{"kind":"saved"}');if not exists(select 1 from jsonb_array_elements(out->'posts')where value->>'id'=old_post::text)then raise exception 'Old saved post missing';end if;
+ out:=public.social_activity('library',hb,'{"kind":"posts"}');if not exists(select 1 from jsonb_array_elements(out->'posts')where value->>'id'=old_post::text)then raise exception 'Old own post missing';end if;
+ out:=public.social_activity('library',hc,'{"kind":"posts"}');if jsonb_array_length(out->'posts')<>50 or out->>'hasMore'is distinct from'true'then raise exception 'Collection page bound failed';end if;
+ out:=public.social_activity('library',hc,'{"kind":"posts","offset":150}');if jsonb_array_length(out->'posts')<>10 or out->>'hasMore'is distinct from'false'then raise exception 'Last collection page failed';end if;
+ insert into social_private.blocks(blocker,blocked)values(a,b);
+ out:=public.social_activity('library',ha,jsonb_build_object('kind','post','post_id',old_post));if jsonb_array_length(out->'posts')<>0 then raise exception 'Blocked single post exposed';end if;
+ delete from social_private.blocks where blocker=a and blocked=b;
+ out:=public.social_activity('notifications',ha);if not exists(select 1 from jsonb_array_elements(out->'items')where value->>'id'=announcement_id::text and value->>'read'='false')then raise exception 'Owner announcement missing';end if;
+ out:=public.social_activity('notification.read',ha,jsonb_build_object('id',announcement_id));
+ out:=public.social_activity('notifications',hb);if not exists(select 1 from jsonb_array_elements(out->'items')where value->>'id'=announcement_id::text and value->>'read'='false')then raise exception 'Announcement receipt leaked across members';end if;
+ out:=public.social_gateway('post.delete',ha,jsonb_build_object('post_id',post_id));
+ out:=public.social_activity('notifications',ha);if exists(select 1 from jsonb_array_elements(out->'items')where value->>'postID'=post_id::text)then raise exception 'Deleted post notifications retained';end if;
+ out:=public.social_gateway('account.delete',ha);if out?'error'then raise exception 'Account cleanup failed %',out;end if;
+ if exists(select 1 from social_private.notifications where recipient=a)or exists(select 1 from social_private.announcement_reads where member=a)then raise exception 'Deleted account retained activity';end if;
+end $$;
+reset role;
+select social_private.operator('announcements.withdraw',jsonb_build_object('id',current_setting('maroon.activity_qa_announcement'),'note','Rollback-only announcement withdrawal regression.'),'activity-qa');
+select 'PASS activity privacy, read ownership, reply delivery, milestone deduplication, deletion/block filtering, 200+ reply collections, old saved posts, pagination and owner announcements' as result;
+rollback;

@@ -1,0 +1,85 @@
+-- Service-role protocol assertions with synthetic fixtures; no state survives.
+begin;
+set local role service_role;
+do $$
+declare
+ ha text:=encode(extensions.gen_random_bytes(32),'hex');hb text:=encode(extensions.gen_random_bytes(32),'hex');hc text:=encode(extensions.gen_random_bytes(32),'hex');
+ a uuid;b uuid;c uuid;post_id uuid;other_post uuid;root_id uuid;child_id uuid;second_id uuid;secret_post uuid;secret_reply uuid;deep uuid;deep_parent uuid;nonce_id uuid:=gen_random_uuid();out jsonb;obj jsonb;snap jsonb;room_id text;i int;
+begin
+ if has_table_privilege('anon','social_private.comment_votes','SELECT')or has_table_privilege('authenticated','social_private.comment_votes','INSERT')or has_function_privilege('authenticated','social_private.karma(uuid)','EXECUTE')then raise exception 'Private replies API exposed';end if;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(ha,'reply_a_'||substr(ha,1,8),true,ha)returning id into a;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hb,'reply_b_'||substr(hb,1,8),true,hb)returning id into b;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hc,'reply_c_'||substr(hc,1,8),true,hc)returning id into c;
+ out:=public.social_gateway('post.create',ha,'{"text":"Reply protocol QA","anonymous":true}');post_id:=(out->>'resource_id')::uuid;
+ out:=public.social_gateway('post.create',ha,'{"text":"Named source QA","anonymous":false,"acceptsDM":false}');other_post:=(out->>'resource_id')::uuid;
+ out:=public.social_gateway('comment.create',hb,jsonb_build_object('post_id',post_id,'text','Parent from B'));root_id:=(out->>'resource_id')::uuid;
+ out:=public.social_gateway('comment.create',hc,jsonb_build_object('post_id',post_id,'parent_id',root_id,'text','Child from C','anonymous',false,'nonce',nonce_id));child_id:=(out->>'resource_id')::uuid;
+ if child_id is null then raise exception 'Nested reply failed %',out;end if;
+ out:=public.social_gateway('comment.create',hc,jsonb_build_object('post_id',post_id,'parent_id',root_id,'text','Child from C','anonymous',false,'nonce',nonce_id));if out->>'resource_id' is distinct from child_id::text then raise exception 'Reply retry not idempotent %',out;end if;
+ out:=public.social_gateway('comment.create',hc,jsonb_build_object('post_id',post_id,'text','Changed retry','nonce',nonce_id));if out->>'code' is distinct from 'conflict'then raise exception 'Nonce changed target/content %',out;end if;
+ out:=public.social_gateway('comment.create',hc,jsonb_build_object('post_id',other_post,'parent_id',root_id,'text','Cross-post parent'));if out->>'code' is distinct from 'forbidden'then raise exception 'Cross-post parent allowed %',out;end if;
+ out:=public.social_gateway('comment.vote',hb,jsonb_build_object('comment_id',root_id,'value',1));if out->>'code' is distinct from 'forbidden'then raise exception 'Self reply vote allowed';end if;
+ out:=public.social_gateway('post.vote',ha,jsonb_build_object('post_id',post_id,'value',1));if out->>'code' is distinct from 'forbidden'then raise exception 'Self post vote allowed';end if;
+ out:=public.social_gateway('comment.vote',hc,jsonb_build_object('comment_id',root_id,'value',1));out:=public.social_gateway('comment.vote',ha,jsonb_build_object('comment_id',root_id,'value',1));
+ out:=public.social_gateway('comment.vote',hc,jsonb_build_object('comment_id',root_id,'value',1));if social_private.karma(b)<>2 then raise exception 'Duplicate vote inflated or missed karma';end if;
+ out:=public.social_gateway('comment.vote',hc,jsonb_build_object('comment_id',root_id,'value',-1));if social_private.karma(b)<>0 then raise exception 'Vote direction did not apply net difference';end if;
+ out:=public.social_gateway('comment.vote',hc,jsonb_build_object('comment_id',root_id,'value',0));if social_private.karma(b)<>1 then raise exception 'Vote removal incorrect';end if;
+ out:=public.social_gateway('post.vote',hc,jsonb_build_object('post_id',post_id,'value',1));
+ out:=public.social_gateway('comment.vote',hc,jsonb_build_object('comment_id',root_id,'value',1));
+ out:=public.social_gateway('comment.vote',ha,jsonb_build_object('comment_id',child_id,'value',1));
+ if social_private.karma(a)<>1 or social_private.karma(b)<>2 or social_private.karma(c)<>1 then raise exception 'Own karma mismatch';end if;
+ -- Same author receives both post and reply votes.
+ out:=public.social_gateway('comment.create',ha,jsonb_build_object('post_id',post_id,'text','OP reply'));second_id:=(out->>'resource_id')::uuid;
+ out:=public.social_gateway('comment.vote',hb,jsonb_build_object('comment_id',second_id,'value',1));if social_private.karma(a)<>2 then raise exception 'Post+reply karma not combined';end if;
+ snap:=social_private.snapshot(a);if (snap->>'karma')::int<>2 then raise exception 'Own karma missing';end if;
+ select v into obj from jsonb_array_elements(snap->'posts')v where v->>'id'=post_id::text;
+ if obj::text like '%'||b::text||'%'or obj::text like '%'||c::text||'%'or obj::text like '%reply_b_%'or obj::text like '%reply_c_%'or obj::text like '%karma%'then raise exception 'Anonymous identity/karma leaked';end if;
+ select v into obj from jsonb_array_elements(obj->'comments')v where v->>'id'=child_id::text;
+ if obj->>'parentID' is distinct from root_id::text or obj->>'anonymous' is distinct from 'true'or (obj->>'score')::int<>1 then raise exception 'Parent/forced anonymity/vote projection incorrect %',obj;end if;
+ out:=public.social_gateway('comment.delete',ha,jsonb_build_object('comment_id',root_id));if out->>'code' is distinct from 'forbidden'then raise exception 'Foreign comment deletion allowed';end if;
+ out:=public.social_gateway('comment.delete',hb,jsonb_build_object('comment_id',root_id));if social_private.karma(b)<>0 then raise exception 'Deleted comment retained karma';end if;
+ if not exists(select 1 from social_private.comments where id=child_id and parent_id=root_id and not deleted)then raise exception 'Deleting parent destroyed child';end if;
+ out:=public.social_gateway('comment.vote',hc,jsonb_build_object('comment_id',root_id,'value',1));if out->>'code' is distinct from 'forbidden'then raise exception 'Deleted reply accepted vote';end if;
+ out:=public.social_gateway('comment.create',hc,jsonb_build_object('post_id',post_id,'parent_id',root_id,'text','Deleted parent'));if out->>'code' is distinct from 'forbidden'then raise exception 'Deleted parent accepted new reply';end if;
+ out:=public.social_gateway('comment.create',hb,jsonb_build_object('post_id',post_id,'text','Block context'));root_id:=(out->>'resource_id')::uuid;
+ out:=public.social_gateway('comment.vote',ha,jsonb_build_object('comment_id',root_id,'value',1));
+ insert into social_private.blocks(blocker,blocked)values(a,b);if social_private.karma(b)<>0 then raise exception 'Blocked pair retained vote karma';end if;
+ out:=public.social_gateway('comment.vote',ha,jsonb_build_object('comment_id',root_id,'value',1));if out->>'code' is distinct from 'forbidden'then raise exception 'Blocked reply accepted vote';end if;
+ out:=public.social_gateway('comment.create',ha,jsonb_build_object('post_id',post_id,'parent_id',root_id,'text','Blocked parent'));if out->>'code' is distinct from 'forbidden'then raise exception 'Blocked parent accepted reply';end if;
+ snap:=social_private.snapshot(a);select v into obj from jsonb_array_elements(snap->'posts')v where v->>'id'=post_id::text;
+ if exists(select 1 from jsonb_array_elements(obj->'comments')v where v->>'id'=root_id::text)then raise exception 'Blocked comment shown';end if;
+ delete from social_private.blocks where blocker=a and blocked=b;
+ -- Post opt-out remains respected, but an independent commenter can receive a request.
+ out:=public.social_gateway('dm.request',hc,jsonb_build_object('post_id',other_post));if out->>'code' is distinct from 'forbidden'then raise exception 'Post DM optout ignored';end if;
+ out:=public.social_gateway('comment.create',hb,jsonb_build_object('post_id',other_post,'text','Named independent reply','anonymous',false));root_id:=(out->>'resource_id')::uuid;
+ out:=public.social_gateway('dm.request',hc,jsonb_build_object('comment_id',root_id,'text','Private source request','anonymous',false));room_id:=out->>'resource_id';
+ if room_id is null or not exists(select 1 from social_private.rooms where id=room_id and anonymous and status='pending'and meta->>'source_comment'=root_id::text)then raise exception 'Comment DM not anonymous pending %',out;end if;
+ out:=public.social_gateway('dm.request',hc,jsonb_build_object('comment_id',root_id));if out->>'resource_id' is distinct from room_id then raise exception 'Comment DM retry duplicated room';end if;
+ out:=public.social_gateway('dm.request',hc,jsonb_build_object('comment_id',root_id,'username','reply_a_'||substr(ha,1,8)));if out->>'code' is distinct from 'invalid'then raise exception 'Ambiguous DM source accepted';end if;
+ out:=public.social_gateway('room.send',hc,jsonb_build_object('room_id',room_id,'text','Before consent'));if out->>'code' is distinct from 'forbidden'then raise exception 'Request skipped consent';end if;
+ out:=public.social_gateway('dm.accept',ha,jsonb_build_object('room_id',room_id));if out->>'code' is distinct from 'forbidden'then raise exception 'Outsider accepted source request';end if;
+ out:=public.social_gateway('dm.accept',hb,jsonb_build_object('room_id',room_id));if out?'error'then raise exception 'Recipient could not accept %',out;end if;
+ out:=public.social_gateway('room.send',hb,jsonb_build_object('room_id',room_id,'text','Accepted response'));
+ obj:=social_private.message_list(c,room_id);if obj::text like '%reply_b_%'or obj::text like '%reply_c_%'or not exists(select 1 from jsonb_array_elements(obj)v where v->>'author'='Them')or not exists(select 1 from jsonb_array_elements(obj)v where v->>'author'='You')then raise exception 'DM labels leaked identities %',obj;end if;
+ update social_private.posts set accepts_dm=true where id=other_post;
+ out:=public.social_gateway('dm.request',hc,jsonb_build_object('post_id',other_post,'anonymous',false));if not exists(select 1 from social_private.rooms where id=out->>'resource_id'and anonymous)then raise exception 'Named source post created named DM %',out;end if;
+ update social_private.members set banned=true where id=b;
+ out:=public.social_gateway('dm.request',ha,jsonb_build_object('comment_id',root_id));if out->>'code' is distinct from 'forbidden'then raise exception 'Suspended target accepted DM';end if;
+ update social_private.members set banned=false,nsfw_enabled=true where id=b;
+ out:=public.social_gateway('post.create',hb,'{"text":"Private NSFW QA","community":"NSFW"}');secret_post:=(out->>'resource_id')::uuid;
+ out:=public.social_gateway('comment.create',hb,jsonb_build_object('post_id',secret_post,'text','NSFW reply'));secret_reply:=(out->>'resource_id')::uuid;
+ out:=public.social_gateway('comment.vote',ha,jsonb_build_object('comment_id',secret_reply,'value',1));if out->>'code' is distinct from 'forbidden'then raise exception 'NSFW outsider voted';end if;
+ out:=public.social_gateway('dm.request',ha,jsonb_build_object('comment_id',secret_reply));if out->>'code' is distinct from 'forbidden'then raise exception 'NSFW outsider messaged hidden reply';end if;
+ -- A twenty-level chain is bounded, and the foreign key protects direct SQL too.
+ deep_parent:=null;
+ for i in 1..20 loop insert into social_private.comments(post,author,nonce,body,parent_id)values(other_post,c,gen_random_uuid(),'Depth fixture',deep_parent)returning id into deep;deep_parent:=deep;end loop;
+ out:=public.social_gateway('comment.create',ha,jsonb_build_object('post_id',other_post,'parent_id',deep,'text','Too deep'));if out->>'code' is distinct from 'invalid'then raise exception 'Unbounded nested depth %',out;end if;
+ begin insert into social_private.comments(post,author,nonce,body,parent_id)values(post_id,c,gen_random_uuid(),'Wrong post',deep);raise exception 'Foreign key accepted cross-post parent';exception when foreign_key_violation then null;end;
+ out:=public.account_controls('export',hc,'{"section":"preferences"}');if not(out->'data'?'comment_votes')then raise exception 'Own reply vote export missing';end if;
+ out:=public.account_controls('export',hc,'{"section":"replies"}');if not exists(select 1 from jsonb_array_elements(out->'data')v where v->>'id'=child_id::text and v->>'parent_id' is not null)then raise exception 'Parent missing from own data export';end if;
+ out:=public.social_gateway('post.delete',ha,jsonb_build_object('post_id',post_id));if social_private.karma(c)<>0 then raise exception 'Replies beneath deleted post retained karma';end if;
+ out:=public.social_gateway('account.delete',hb);if out?'error'then raise exception 'Reply author delete failed %',out;end if;
+ if exists(select 1 from social_private.comment_votes where member=b)or exists(select 1 from social_private.comments where author=b)then raise exception 'Deleted account retained private ownership/votes';end if;
+end $$;
+select 'PASS nested parent integrity, nonce retry, self-vote denial, vote net/karma, anonymous projection, deleted/blocked parent, source DM consent/privacy, NSFW gating, depth bound, export and account cleanup' result;
+rollback;

@@ -1,0 +1,158 @@
+import { Notification } from "../../src/view/notification"
+import { initDom } from "./dom"
+
+initDom()
+
+describe("Notification", () => {
+  let notification: Notification
+
+  beforeEach(() => {
+    jest.useFakeTimers()
+    notification = new Notification()
+  })
+
+  afterEach(() => {
+    jest.useRealTimers()
+  })
+
+  it("should show a message string (legacy support)", () => {
+    notification.show("Test Message")
+    const element = document.getElementById("notification")
+    expect(element?.innerHTML).toContain("Test Message")
+    expect(element?.classList.contains("type-Info")).toBe(true)
+  })
+
+  it("should show structured notification data", () => {
+    notification.show({
+      type: "Foul",
+      title: "FOUL",
+      subtext: "Wrong ball",
+      extra: "Ball in hand",
+    })
+    const element = document.getElementById("notification")
+    expect(element?.classList.contains("type-Foul")).toBe(true)
+    expect(element?.innerHTML).toContain("FOUL")
+    expect(element?.innerHTML).toContain("Wrong ball")
+    expect(element?.innerHTML).toContain("Ball in hand")
+  })
+
+  it("should render high breaks and actions inside the notification footer", () => {
+    notification.show({
+      type: "GameOver",
+      title: "YOU WON",
+      highBreaks: [
+        { score: 9, url: "https://example.com/9" },
+        { score: 7, url: "https://example.com/7" },
+        { score: 4, url: "https://example.com/4" },
+      ],
+      extra: `<button data-notification-action="clear">Dismiss</button>`,
+      duration: 0,
+    })
+
+    const element = document.getElementById("notification")
+    expect(element?.querySelectorAll(".notification-high-break")).toHaveLength(
+      3
+    )
+    expect(element?.querySelector(".notification-actions")).not.toBeNull()
+    expect(element?.querySelector(".notification-footer")).not.toBeNull()
+    expect(
+      (element?.querySelector(".notification-high-break") as HTMLButtonElement)
+        ?.dataset.notificationUploadUrl
+    ).toContain("https://example.com/9")
+  })
+
+  it("should only share once per banner", () => {
+    const onShare = jest.fn()
+    notification.shareHandler = onShare
+    notification.show({
+      type: "GameOver",
+      title: "YOU WON",
+      share: true,
+      duration: 0,
+    })
+
+    const button = document.querySelector(
+      ".notification-share"
+    ) as HTMLButtonElement
+    button.click()
+    button.click()
+
+    expect(onShare).toHaveBeenCalledTimes(1)
+  })
+
+  it("should clear a message", () => {
+    notification.show("Test Message")
+    notification.clear()
+    const element = document.getElementById("notification")
+    expect(element?.innerHTML).toBe("")
+  })
+
+  it("should clear a message after a duration", () => {
+    notification.show("Test Message", 1000)
+    const element = document.getElementById("notification")
+    expect(element?.innerHTML).toContain("Test Message")
+
+    jest.advanceTimersByTime(1000)
+
+    expect(element?.innerHTML).toBe("")
+  })
+
+  it("should clear existing timeout when showing a new message", () => {
+    notification.show("First Message", 1000)
+    notification.show("Second Message", 2000)
+
+    const element = document.getElementById("notification")
+
+    jest.advanceTimersByTime(1000)
+    expect(element?.innerHTML).toContain("Second Message")
+
+    jest.advanceTimersByTime(1000)
+    expect(element?.innerHTML).toBe("")
+  })
+
+  it("should not set a timeout if duration is 0", () => {
+    notification.show("Persistent Message", 0)
+    const element = document.getElementById("notification")
+
+    jest.advanceTimersByTime(10000)
+    expect(element?.innerHTML).toContain("Persistent Message")
+  })
+
+  it("should trigger custom action handlers", () => {
+    const onConfirm = jest.fn()
+    notification.show(
+      {
+        type: "Info",
+        title: "Confirm",
+        extra: `<button data-notification-action="confirm">Confirm</button>`,
+        duration: 0,
+      },
+      0,
+      { confirm: onConfirm }
+    )
+
+    const button = document.querySelector(
+      "[data-notification-action='confirm']"
+    ) as HTMLButtonElement
+    button.click()
+
+    expect(onConfirm).toHaveBeenCalledTimes(1)
+  })
+
+  it("should clear on built-in clear action", () => {
+    notification.show({
+      type: "Info",
+      title: "Dismiss me",
+      extra: `<button data-notification-action="clear">Dismiss</button>`,
+      duration: 0,
+    })
+
+    const button = document.querySelector(
+      "[data-notification-action='clear']"
+    ) as HTMLButtonElement
+    button.click()
+
+    const element = document.getElementById("notification")
+    expect(element?.innerHTML).toBe("")
+  })
+})

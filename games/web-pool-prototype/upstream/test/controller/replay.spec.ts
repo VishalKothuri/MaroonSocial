@@ -1,0 +1,383 @@
+import { expect } from "chai"
+import { Container } from "../../src/container/container"
+import { BreakEvent } from "../../src/events/breakevent"
+import { GameEvent } from "../../src/events/gameevent"
+import { Replay } from "../../src/controller/replay"
+import { PlaceBall } from "../../src/controller/placeball"
+import {
+  AbortEvent,
+  Controller,
+  HitEvent,
+  Input,
+  StationaryEvent,
+} from "../../src/controller/controller"
+import { Aim } from "../../src/controller/aim"
+import { End } from "../../src/controller/end"
+import { Session } from "../../src/network/client/session"
+import { canvas3d, initDom } from "../view/dom"
+import { Assets } from "../../src/view/assets"
+
+initDom()
+
+jest.useFakeTimers()
+jest.spyOn(globalThis, "setTimeout")
+
+describe("Controller Replay", () => {
+  let container: Container
+  let broadcastEvents: GameEvent[]
+  let replayController: Replay
+
+  const state = {
+    init: [
+      -11, 0, 10.727, 0.007, 11.721, 0.532, 11.683, -0.536, 12.632, -0.008,
+      12.672, -1.114, 12.677, 1.108, 13.613, 0.572, 13.593, -0.57, 14.547,
+      0.007,
+    ],
+    shots: [
+      {
+        type: "AIM",
+        offset: { x: -0.1, y: 0.1, z: 0 },
+        angle: 0,
+        power: 1,
+        pos: { x: -11, y: 0, z: 0 },
+      },
+    ],
+  }
+
+  beforeEach(function (done) {
+    const mockKeyboard = { getEvents: () => [] }
+    container = new Container({
+      element: canvas3d,
+      log: (_) => {},
+      assets: Assets.localAssets(),
+      ruletype: "nineball",
+      keyboard: mockKeyboard as any,
+      id: () => {},
+    })
+    container.isSinglePlayer = true
+    broadcastEvents = []
+    container.broadcast = (x) => broadcastEvents.push(x)
+    replayController = new Replay(container, state.init, state.shots, false, 0)
+    done()
+  })
+
+  it("controllerName", (done) => {
+    expect(new End(container).name).to.be.equals("End")
+    done()
+  })
+
+  it("BreakEvent takes Init to PlaceBall", (done) => {
+    container.eventQueue.push(new BreakEvent())
+    container.processEvents()
+    expect(container.controller).to.be.an.instanceof(PlaceBall)
+    done()
+  })
+
+  it("BreakEvent with state takes Init to Replay", (done) => {
+    container.eventQueue.push(new BreakEvent(state.init, state.shots))
+    container.processEvents()
+    expect(container.controller).to.be.an.instanceof(Replay)
+    done()
+  })
+
+  it("share button remains visible when transitioning from Replay to End", (done) => {
+    const share = document.getElementById("share") as HTMLButtonElement
+    expect(share.hidden).to.be.true
+    container.eventQueue.push(new BreakEvent(state.init, state.shots))
+    container.processEvents()
+    expect(container.controller).to.be.an.instanceof(Replay)
+    expect(share.hidden).to.be.false
+    container.eventQueue.push(new AbortEvent())
+    container.processEvents()
+    expect(container.controller).to.be.an.instanceof(End)
+    expect(share.hidden).to.be.false
+    done()
+  })
+
+  it("BreakEvent takes Aim to Replay", (done) => {
+    container.controller = new Aim(container)
+    container.eventQueue.push(new BreakEvent(state.init, state.shots))
+    container.processEvents()
+    expect(container.controller).to.be.an.instanceof(Replay)
+    done()
+  })
+
+  it("HitEvent takes Replay to Replay", (done) => {
+    const controller: Controller = replayController
+    const event: GameEvent = new HitEvent(container.table.serialise())
+    expect(event.applyToController(controller)).to.be.an.instanceof(Replay)
+    done()
+  })
+
+  it("Replay handles inputs", (done) => {
+    container.controller = replayController
+    container.inputQueue.push(
+      new Input(0.1, "KeyOUp"),
+      new Input(0.1, "KeyDUp")
+    )
+    container.processEvents()
+    expect(container.controller).to.be.an.instanceof(Replay)
+    done()
+  })
+
+  it("Stationary takes Replay to Replay", (done) => {
+    container.controller = replayController
+    container.table.cueball.setStationary()
+    container.eventQueue.push(new StationaryEvent())
+    container.processEvents()
+    expect(container.controller).to.be.an.instanceof(Replay)
+    done()
+  })
+
+  it("BreakEvent takes Replay to Replay", (done) => {
+    container.controller = new Replay(
+      container,
+      state.init,
+      state.shots,
+      false,
+      0
+    )
+    container.table.cueball.setStationary()
+    container.eventQueue.push(new BreakEvent(state.init, state.shots))
+    container.processEvents()
+    jest.advanceTimersByTime(1000)
+    expect(container.controller).to.be.an.instanceof(Replay)
+    done()
+  })
+
+  it("PlaceBall moves to Aim on spacebar", (done) => {
+    container.controller = new PlaceBall(container)
+    container.inputQueue.push(new Input(0.1, "SpaceUp"))
+    container.processEvents()
+    expect(container.controller).to.be.an.instanceof(Aim)
+    done()
+  })
+
+  it("PlaceBall handles inputs", (done) => {
+    container.controller = new PlaceBall(container)
+    container.inputQueue.push(new Input(0.1, "ArrowLeft"))
+    container.processEvents()
+    expect(container.controller).to.be.an.instanceof(PlaceBall)
+    container.inputQueue.push(new Input(0.1, "ArrowRight"))
+    container.processEvents()
+    expect(container.controller).to.be.an.instanceof(PlaceBall)
+    container.inputQueue.push(new Input(0.1, "movementXUp"))
+    container.processEvents()
+    container.inputQueue.push(new Input(0.1, "ShiftArrowLeft"))
+    container.processEvents()
+    expect(container.controller).to.be.an.instanceof(PlaceBall)
+    done()
+  })
+
+  it("Abort takes Replay to End", (done) => {
+    container.controller = replayController
+    container.eventQueue.push(new AbortEvent())
+    container.processEvents()
+    expect(container.controller).to.be.an.instanceof(End)
+    done()
+  })
+
+  it("Abort clears scheduled shot timer", (done) => {
+    jest.clearAllTimers()
+    // We use a longer delay to ensure the timer is still pending when we abort
+    const longDelayReplay = new Replay(
+      container,
+      state.init,
+      state.shots,
+      false,
+      1000
+    )
+    container.controller = longDelayReplay
+
+    container.eventQueue.push(new AbortEvent())
+    container.processEvents()
+    expect(container.controller).to.be.an.instanceof(End)
+
+    const queueLengthBefore = container.eventQueue.length
+
+    // Advance timers past the scheduled HitEvent (1000 * 1.5 = 1500ms)
+    jest.advanceTimersByTime(2000)
+
+    // If timer was not cleared, a HitEvent should have been pushed
+    expect(container.eventQueue.length).to.be.equal(
+      queueLengthBefore,
+      "A HitEvent was pushed after abort!"
+    )
+    done()
+  })
+
+  it("replay can process its scheduled HitEvent without crashing recorder", (done) => {
+    jest.clearAllTimers()
+    container.controller = new Replay(
+      container,
+      state.init,
+      state.shots,
+      false,
+      0
+    )
+
+    jest.runOnlyPendingTimers()
+    expect(container.eventQueue.length).to.be.greaterThan(0)
+
+    expect(() => container.processEvents()).to.not.throw()
+    expect(container.controller).to.be.an.instanceof(Replay)
+    done()
+  })
+
+  // Regression: Replay used to record the *live* `cue.aim` object as the
+  // recorded shot's event. Once the replay finished, `new Aim(container)`
+  // (e.g. via DrillReplay -> Aim, or the drill-panel's Retry handler) mutates
+  // `cue.aim.angle`/`.elevation`/`.i` in place via `aimAtNext`, which silently
+  // corrupted the just-recorded entry — losing the original shot's parameters
+  // for Retry / Shot Analysis. The replayed shot must be recorded as an
+  // independent copy.
+  it("recorded replay shot is independent of the live cue.aim afterwards", (done) => {
+    jest.clearAllTimers()
+    container.controller = new Replay(
+      container,
+      state.init,
+      state.shots,
+      false,
+      0
+    )
+
+    jest.runOnlyPendingTimers()
+    container.processEvents()
+
+    const recorded = container.recorder.entries[container.recorder.last()]
+      .event as any
+    expect(recorded).to.not.equal(container.table.cue!.aim)
+    expect(recorded.angle).to.equal(state.shots[0].angle)
+    expect(recorded.elevation).to.equal(0)
+    expect(recorded.power).to.equal(state.shots[0].power)
+
+    // Simulate what `new Aim(container)` does to the live aim afterwards.
+    container.table.cue!.aim.angle = 999
+    container.table.cue!.aim.elevation = 1234
+
+    expect(recorded.angle).to.equal(state.shots[0].angle)
+    expect(recorded.elevation).to.equal(0)
+    done()
+  })
+
+  it("pre-highlights active player before aim using SCORE.active", (done) => {
+    const replayState = {
+      init: state.init,
+      shots: [{ type: "SCORE", p1: 1, p2: 0, b: 0, active: 2 }, state.shots[0]],
+    }
+    container.controller = new Replay(
+      container,
+      replayState.init,
+      replayState.shots as any,
+      false,
+      1000
+    )
+    const p1 = document.getElementById("p1Score") as HTMLElement
+    const p2 = document.getElementById("p2Score") as HTMLElement
+    expect(p1.classList.contains("is-active")).to.be.false
+    expect(p2.classList.contains("is-active")).to.be.true
+    done()
+  })
+
+  it("keeps previous active player when SCORE.active is 0", (done) => {
+    const replayState = {
+      init: state.init,
+      shots: [
+        { type: "SCORE", p1: 1, p2: 0, b: 0, active: 2 },
+        { type: "SCORE", p1: 1, p2: 0, b: 0, active: 0 },
+        state.shots[0],
+      ],
+    }
+    container.controller = new Replay(
+      container,
+      replayState.init,
+      replayState.shots as any,
+      false,
+      1000
+    )
+    const p2 = document.getElementById("p2Score") as HTMLElement
+    expect(p2.classList.contains("is-active")).to.be.true
+    done()
+  })
+
+  it("starts in aimZ mode and alternates each shot with topView without flipping to aimView", (done) => {
+    jest.clearAllTimers()
+    const multiShotState = {
+      init: state.init,
+      shots: [
+        {
+          type: "AIM",
+          offset: { x: 0, y: 0, z: 0 },
+          angle: 0,
+          power: 1,
+          pos: { x: -11, y: 0, z: 0 },
+        },
+        {
+          type: "AIM",
+          offset: { x: 0, y: 0, z: 0 },
+          angle: 0,
+          power: 1,
+          pos: { x: -11, y: 0, z: 0 },
+        },
+        {
+          type: "AIM",
+          offset: { x: 0, y: 0, z: 0 },
+          angle: 0,
+          power: 1,
+          pos: { x: -11, y: 0, z: 0 },
+        },
+      ],
+    }
+
+    const camera = container.view.camera
+    const replay = new Replay(
+      container,
+      multiShotState.init,
+      multiShotState.shots as any,
+      false,
+      0
+    )
+
+    // First shot should start in aimzView
+    expect(camera.mode).to.equal(camera.aimzView)
+
+    // Run scheduled timer for 1st shot
+    jest.runOnlyPendingTimers()
+
+    // Trigger hit for 1st shot - camera must stay aimzView
+    replay.hit()
+    expect(camera.mode).to.equal(camera.aimzView)
+
+    // Process next shot (2nd shot) after stationary
+    replay.handleStationary(null as any)
+    expect(camera.mode).to.equal(camera.topView)
+
+    // Run scheduled timer for 2nd shot
+    jest.runOnlyPendingTimers()
+
+    // Trigger hit for 2nd shot - camera must stay topView and NOT flip to aimView
+    replay.hit()
+    expect(camera.mode).to.equal(camera.topView)
+
+    // Process next shot (3rd shot) after stationary
+    replay.handleStationary(null as any)
+    expect(camera.mode).to.equal(camera.aimzView)
+
+    done()
+  })
+
+  it("forces LOD to 4 in replay mode", (done) => {
+    const mockKeyboard = { getEvents: () => [] }
+    new Container({
+      element: canvas3d,
+      log: (_) => {},
+      assets: Assets.localAssets(),
+      ruletype: "nineball",
+      keyboard: mockKeyboard as any,
+      id: () => {},
+      replayMode: true,
+    })
+    expect(Session.getLod()).to.equal(4)
+    done()
+  })
+})

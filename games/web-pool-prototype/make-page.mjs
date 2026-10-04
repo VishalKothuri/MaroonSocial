@@ -1,0 +1,14 @@
+import {JSDOM} from 'jsdom';import {readFile,writeFile} from 'node:fs/promises';
+const dom=new JSDOM(await readFile('upstream/dist/index.html','utf8'));const main=dom.window.document.querySelector('main');
+for(const id of ['helpOverlay','botDebugOverlay','lobbyContainer','inputTextDiv','comment','diagram','share','concede','analysis','chromeless','help','ffwd','camera'])main.querySelector('#'+id)?.remove();
+main.querySelector('.chatarea')?.remove();main.querySelector('#cueHit').textContent='Take shot';main.querySelector('#cueHit').setAttribute('aria-label','Take shot');
+const head=['index','aiminputs','powerinput','notification','tray','chat','menu','wood'].map(x=>`<link rel="stylesheet" href="css/${x}.css">`).join('\n');
+await writeFile('web/index.html',`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#500000"><title>Maroon Social · Pool</title><meta name="description" content="Try Maroon Social’s browser pool physics preview. Local practice with spin, cushion response and a full 3D table.">${head}<link rel="stylesheet" href="preview.css"></head><body>
+<header class="brandbar"><a class="wordmark" href="/">MAROON<span>SOCIAL</span></a><div class="preview-pill">Pool · practice</div><nav aria-label="Pool actions"><button id="showInstructions" aria-label="How to play">?</button><button id="resetTable">New rack</button></nav></header>
+<section id="onlineBar" hidden><span id="onlineStatus" role="status"></span><button id="onlineAction">Find opponent</button><button id="resignGame" hidden>Resign</button><button id="newOpponent" hidden>Find another opponent</button></section>
+<div id="previewLoading" role="status">Loading your table<span class="loading-line"></span></div>
+<div id="previewFailure" role="alert" hidden><strong>The table couldn’t load.</strong><p>Check your connection and reload this page. A browser with WebGL is required.</p><a href="./">Reload table</a></div>
+${main.outerHTML}
+<footer class="sourcebar"><span>Place the cue ball, then aim · set power & spin · shoot</span><a href="source.html">Source & licenses</a></footer>
+<dialog id="instructions"><h2>Make your next shot</h2><p>At a new rack, place the cue ball on the felt and tap Place Ball. Then drag across the table to line up the cue. Use the power slider, then tap Take shot.</p><p>Tap the small cue ball to add backspin, topspin or sidespin. Your table stays overhead while you aim and shoot.</p><p>In your browser this is local practice. Open Pool inside Maroon Social to find an online opponent. Online shots, turns and results are checked by the server.</p><button id="closeInstructions">Got it</button></dialog>
+<script type="module" src="pool.js"></script></body></html>`);

@@ -1,0 +1,44 @@
+-- No real course data changes survive this transaction.
+begin;
+set local role service_role;
+do $$declare a text:=encode(extensions.gen_random_bytes(32),'hex');label text:=substr(gen_random_uuid()::text,1,8);r jsonb;me uuid;rid text:='AAMD 601-Fall 2026';att uuid;external_att uuid;owned_path text:=gen_random_uuid()::text||'.png';external_path text;begin
+ if course_private.term_open('Spring 2027','2026-12-01 05:59:59+00')then raise exception 'Spring opened before Chicago December 1';end if;
+ if not course_private.term_open('Spring 2027','2026-12-01 06:00:00+00')then raise exception 'Spring did not open on Chicago December 1';end if;
+ if course_private.term_open('Summer 2027','2027-05-01 04:59:59+00')or not course_private.term_open('Summer 2027','2027-05-01 05:00:00+00')then raise exception 'Summer opening timezone incorrect';end if;
+ if course_private.term_open('Fall 2027','2027-08-01 05:00:00+00')then raise exception 'Unknown official end allowed an open chat';end if;
+ if course_private.term_open('Fall 2026','2026-12-11 06:00:00+00')then raise exception 'Semester accessible at closing boundary';end if;
+ if (select purge_at from course_private.terms where term='Fall 2026')<>'2027-01-11 06:00:00+00'::timestamptz then raise exception 'Calendar month retention is incorrect';end if;
+ r:=public.social_gateway('register',a,jsonb_build_object('username','termqa_'||label,'adult',true,'network',a));
+ me:=social_private.require_member(a);
+ r:=public.social_gateway('course.join',a,'{"code":"CHEM 107","term":"Spring 2027"}');
+ if r->>'code'<>'closed'then raise exception 'Future class join not locked: %',r;end if;
+ if exists(select 1 from social_private.room_members where member=me)then raise exception 'Rejected join left membership';end if;
+ if exists(select 1 from social_private.rooms where id=rid)then raise exception 'Choose a different isolated test course';end if;
+ r:=public.social_gateway('course.join',a,'{"code":"AAMD 601","term":"Fall 2026"}');
+ if r->>'resource_id'<>rid then raise exception 'Open class rejected: %',r;end if;
+ r:=public.social_gateway('room.send',a,jsonb_build_object('room_id',rid,'text','Retention boundary fixture'));
+ if r?'error'then raise exception 'Open course send failed';end if;
+ insert into social_private.attachments(owner,room,kind,mime,size,path,ready)values(me,rid,'image','image/png',10,owned_path,true)returning id into att;
+ r:=public.social_external_media('create',a,jsonb_build_object('room_id',rid,'nonce',gen_random_uuid(),'reference',jsonb_build_object('provider','klipy','category','gifs','kind','gif','mime','image/gif','id','retention-qa','slug','retention-qa','title','Synthetic external reference','url','https://static.klipy.com/retention-test.gif','previewURL','https://static.klipy.com/retention-test.gif','size',100)));
+ external_att:=(r->>'attachment_id')::uuid;if external_att is null then raise exception 'External retention fixture failed %',r;end if;
+ select path into external_path from social_private.attachments where id=external_att;
+ update course_private.terms set closes_at=now()-interval '2 seconds',purge_at=now()+interval '1 month'where term='Fall 2026';
+ if social_private.can_read_room(me,rid)or social_private.can_message(me,rid)then raise exception 'Closed course remains readable/writable';end if;
+ r:=public.social_gateway('snapshot',a,'{}');
+ if exists(select 1 from jsonb_array_elements(r->'snapshot'->'conversations')x where x->>'id'=rid)then raise exception 'Snapshot leaked closed course';end if;
+ r:=public.social_gateway('room.send',a,jsonb_build_object('room_id',rid,'text','Denied'));
+ if not(r?'error')then raise exception 'Closed course send succeeded';end if;
+ r:=public.account_controls('export',a,'{"section":"messages"}');
+ if r::text like '%Retention boundary fixture%'then raise exception 'Closed chat escaped through export';end if;
+ perform public.course_lifecycle_maintenance(100);
+ if not exists(select 1 from social_private.rooms where id=rid and status='closed')then raise exception 'Closed room removed before retention deadline';end if;
+ update course_private.terms set purge_at=now()-interval '1 second'where term='Fall 2026';
+ -- The test transaction rolls back all rows and cleanup jobs, including existing courses.
+ perform public.course_lifecycle_maintenance(500);
+ if exists(select 1 from social_private.rooms where id=rid)or exists(select 1 from social_private.messages where room=rid)or exists(select 1 from social_private.attachments where id=att)then raise exception 'Expired chat children retained';end if;
+ if not exists(select 1 from social_private.storage_deletions where path=owned_path)then raise exception 'Private media cleanup not queued';end if;
+ if exists(select 1 from social_private.storage_deletions where path=external_path)then raise exception 'External provider media was queued for Storage deletion';end if;
+ if exists(select 1 from social_private.attachments where id=external_att)then raise exception 'External reference metadata retained after course purge';end if;
+end $$;
+select 'PASS course access boundaries, calendar-month purge, storage-only cleanup queue, external-reference metadata deletion without provider deletion' result;
+rollback;

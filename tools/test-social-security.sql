@@ -1,0 +1,55 @@
+-- Operator regression: every synthetic identity, verification and mutation rolls back.
+begin;
+do $$
+declare
+ ha text:=replace(gen_random_uuid()::text,'-','')||replace(gen_random_uuid()::text,'-','');
+ hb text:=replace(gen_random_uuid()::text,'-','')||replace(gen_random_uuid()::text,'-','');
+ aid uuid;bid uuid;oid uuid;activity text;room text;orgroom text;mid text;attachment uuid;out jsonb;visible jsonb;
+begin
+ if has_function_privilege('anon','public.social_gateway(text,text,jsonb)','EXECUTE') or has_function_privilege('authenticated','public.social_gateway(text,text,jsonb)','EXECUTE') or has_schema_privilege('anon','social_private','USAGE')or has_schema_privilege('authenticated','social_private','USAGE')then raise exception 'Private member boundary exposed';end if;
+ if exists(select 1 from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='social_private'and c.relkind='r'and not c.relrowsecurity)then raise exception 'Private table has no RLS';end if;
+ if(select public from storage.buckets where id='social-media')then raise exception 'Private media bucket public';end if;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(ha,'sqltest_a_'||substr(ha,1,8),true,ha)returning id into aid;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hb,'sqltest_b_'||substr(hb,1,8),true,hb)returning id into bid;
+ update social_private.members set banned=true where id=aid;
+ out:=public.social_gateway('snapshot',ha,'{}');if out->>'code'<>'forbidden'then raise exception 'Suspended member accepted';end if;
+ update social_private.members set banned=false,rate_count=600 where id=aid;
+ out:=public.social_gateway('snapshot',ha,'{}');if out->>'code'<>'rate_limit'then raise exception 'Quota missing';end if;
+ update social_private.members set rate_count=0 where id=aid;
+ out:=public.social_gateway('organization.apply',ha,jsonb_build_object('name','Synthetic SQL Org '||substr(ha,1,8),'about','Private application'));oid:=(out->>'resource_id')::uuid;
+ if oid is null then raise exception 'Org apply failed %',out;end if;
+ update social_private.organizations set status='verified'where id=oid;
+ out:=public.social_gateway('organization.publish',ha,jsonb_build_object('organization_id',oid,'title','Synthetic org event','kind','Organizations','place','MSC','starts',extract(epoch from now()+interval '1 day'),'capacity',8));activity:=out->>'resource_id';
+ if activity is null then raise exception 'Verified authorized publication failed %',out;end if;
+ out:=public.social_gateway('activity.join',hb,jsonb_build_object('activity_id',activity));if out?'error'then raise exception 'Org RSVP failed %',out;end if;
+ out:=public.social_gateway('room.send',ha,jsonb_build_object('room_id',activity,'text','Message from the organization'));mid:=out->>'resource_id';
+ out:=public.social_gateway('room.typing',ha,jsonb_build_object('room_id',activity,'typing',true));
+ visible:=social_private.snapshot(bid);
+ if visible::text like '%'||aid::text||'%'or visible::text like '%sqltest_a_%'then raise exception 'Org administrator identity leaked into participant snapshot';end if;
+ out:=public.social_gateway('activity.edit',ha,jsonb_build_object('activity_id',activity,'capacity',2,'approval_required',true,'place','Library','starts',extract(epoch from now()+interval '2 days')));if out?'error'then raise exception 'Activity edit failed %',out;end if;
+ if not exists(select 1 from social_private.activities where id=activity::uuid and capacity=2 and approval_required and place='Library')then raise exception 'Activity settings silently discarded';end if;
+ out:=public.social_gateway('activity.edit',ha,jsonb_build_object('activity_id',activity,'capacity',1));if out->>'code'<>'invalid'then raise exception 'Invalid activity capacity accepted';end if;
+ out:=public.social_gateway('organization.message',hb,jsonb_build_object('organization_id',oid,'text','Synthetic private organization inquiry'));orgroom:=out->>'resource_id';if orgroom is null then raise exception 'Organization request failed %',out;end if;
+ out:=public.social_gateway('dm.accept',ha,jsonb_build_object('room_id',orgroom));if out?'error'then raise exception 'Org request acceptance failed %',out;end if;
+ out:=public.social_gateway('room.send',ha,jsonb_build_object('room_id',orgroom,'text','Answer as the organization'));if out?'error'then raise exception 'Org answer failed %',out;end if;
+ visible:=social_private.snapshot(bid);if visible::text like '%sqltest_a_%'or visible::text like '%'||aid::text||'%'then raise exception 'Org DM leaked private administrator';end if;
+ out:=public.social_gateway('dm.request',hb,jsonb_build_object('username',(select username from social_private.members where id=aid),'text','Separate named context'));if out->>'resource_id'=orgroom then raise exception 'Org DM merged into named context';end if;
+ out:=public.social_gateway('report',hb,jsonb_build_object('target_type','organization','target_id',oid,'reason','Synthetic SQL report'));if out?'error'then raise exception 'Organization report failed %',out;end if;
+ update social_private.organizations set status='suspended'where id=oid;
+ out:=public.social_gateway('activity.edit',ha,jsonb_build_object('activity_id',activity,'title','Denied edit'));if out->>'code'<>'forbidden'then raise exception 'Suspended org still editing';end if;
+ out:=public.social_gateway('organization.update',ha,jsonb_build_object('organization_id',oid,'about','Denied edit'));if out->>'code'<>'forbidden'then raise exception 'Suspended org profile edit allowed';end if;
+ out:=public.social_gateway('room.send',ha,jsonb_build_object('room_id',orgroom,'text','Denied suspended message'));if out->>'code'<>'forbidden'then raise exception 'Suspended org can still message';end if;
+ visible:=social_private.snapshot(bid);if exists(select 1 from jsonb_array_elements(visible->'activities')x where x->>'id'=activity)then raise exception 'Suspended org promotion still published';end if;
+ out:=public.social_gateway('course.join',ha,'{"code":"TEST 999","title":"Synthetic regression","term":"Test term"}');room:=out->>'resource_id';
+ out:=public.social_gateway('course.join',hb,'{"code":"TEST 999","title":"Synthetic regression","term":"Test term"}');
+ out:=public.social_gateway('room.send',ha,jsonb_build_object('room_id',room,'text','Synthetic image'));mid:=out->>'resource_id';
+ insert into social_private.attachments(owner,room,message,kind,mime,size,path,ready)values(aid,room,mid::uuid,'image','image/png',1,'synthetic/'||ha,true)returning id into attachment;
+ out:=public.social_gateway('attachment.read',hb,jsonb_build_object('attachment_id',attachment));if out?'error'then raise exception 'Authorized shared-room media rejected';end if;
+ out:=public.social_gateway('block',hb,jsonb_build_object('target_type','message','target_id',mid));if out?'error'then raise exception 'Block sender failed %',out;end if;
+ out:=public.social_gateway('attachment.read',hb,jsonb_build_object('attachment_id',attachment));if out->>'code'<>'forbidden'then raise exception 'Blocked shared-room attachment still readable';end if;
+ visible:=social_private.snapshot(bid);if exists(select 1 from jsonb_array_elements(visible->'attachments')x where x->>'id'=attachment::text)then raise exception 'Blocked media still listed';end if;
+ out:=public.social_gateway('account.delete',ha,'{}');if out->'storage_paths'<>jsonb_build_array('synthetic/'||ha)then raise exception 'Deletion did not enqueue media';end if;
+ if not exists(select 1 from social_private.storage_deletions where path='synthetic/'||ha)then raise exception 'Durable deletion job missing';end if;
+end $$;
+select 'PASS: private schemas/RLS/storage, ban/quota, organization publication/byline/typing privacy/revocation, report, shared-room block/media, durable cleanup' as result;
+rollback;

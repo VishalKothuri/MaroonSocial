@@ -2,7 +2,13 @@ import Foundation
 
 public enum Community: String, Codable, CaseIterable, Identifiable {
   case campus = "Texas A&M"
+  case freshmen = "Freshmen"
+  case sophomores = "Sophomores"
+  case juniors = "Juniors"
+  case seniors = "Seniors"
+  case graduates = "Graduates"
   case nsfw = "NSFW"
+  public static var campusCommunities: [Community] { allCases.filter { $0 != .nsfw } }
   public var id: String { rawValue }
 }
 public struct Post: Identifiable, Codable, Equatable {
@@ -17,6 +23,12 @@ public struct Post: Identifiable, Codable, Equatable {
   public var created: Date
   public var saved: Bool
   public var acceptsDM: Bool
+  public var media: MediaAttachment? = nil
+  public var attachmentID: String? = nil
+  public var poll: PostPoll? = nil
+  public var linkURL: String? = nil
+  public var tags: [String]? = nil
+  public var deleted: Bool? = nil
   public init(
     id: String = UUID().uuidString, author: String, anonymous: Bool = true,
     community: Community = .campus, text: String, score: Int = 0, comments: [Comment] = [],
@@ -47,10 +59,35 @@ public struct Comment: Identifiable, Codable, Equatable {
   public var text: String
   public var anonymous: Bool
   public var created = Date.now
-  public init(author: String, text: String, anonymous: Bool = true) {
+  public var isOP: Bool? = nil
+  public var deleted: Bool? = nil
+  public var parentID: String? = nil
+  public var score = 0
+  public var vote = 0
+  public init(author: String, text: String, anonymous: Bool = true, parentID: String? = nil) {
     self.author = author
     self.text = text
     self.anonymous = anonymous
+    self.parentID = parentID
+  }
+  enum CodingKeys: String, CodingKey { case id, author, text, anonymous, created, isOP, deleted, parentID, score, vote }
+  public init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    id = try values.decode(String.self, forKey: .id)
+    author = try values.decode(String.self, forKey: .author)
+    text = try values.decode(String.self, forKey: .text)
+    anonymous = try values.decode(Bool.self, forKey: .anonymous)
+    created = try values.decode(Date.self, forKey: .created)
+    isOP = try values.decodeIfPresent(Bool.self, forKey: .isOP)
+    deleted = try values.decodeIfPresent(Bool.self, forKey: .deleted)
+    parentID = try values.decodeIfPresent(String.self, forKey: .parentID)
+    score = try values.decodeIfPresent(Int.self, forKey: .score) ?? 0
+    vote = try values.decodeIfPresent(Int.self, forKey: .vote) ?? 0
+  }
+  public mutating func setVote(_ newValue: Int) {
+    let next = newValue == vote ? 0 : max(-1, min(1, newValue))
+    score += next - vote
+    vote = next
   }
 }
 public struct Course: Identifiable, Codable, Equatable, Sendable {
@@ -77,11 +114,33 @@ public struct Course: Identifiable, Codable, Equatable, Sendable {
     Course("BIOL 111", "Introductory Biology I", icon: "leaf"),
   ]
 }
-public struct MediaAttachment: Identifiable, Codable, Equatable {
-  public enum Kind: String, Codable { case image, gif }
+public struct KlipyReference: Codable, Equatable, Sendable {
+  public var provider = "klipy"
+  public var id: String
+  public var slug: String
+  public var title: String
+  public var category: String
+  public var kind: String
+  public var mime: String
+  public var url: String
+  public var previewURL: String
+  public var size: Int
+  public init(id: String, slug: String, title: String, category: String, kind: String, mime: String, url: String, previewURL: String, size: Int) {
+    self.id = id; self.slug = slug; self.title = title; self.category = category; self.kind = kind
+    self.mime = mime; self.url = url; self.previewURL = previewURL; self.size = size
+  }
+}
+public struct MediaAttachment: Identifiable, Codable, Equatable, Sendable {
+  public enum Kind: String, Codable, Sendable { case image, gif, video }
   public var id = UUID().uuidString
   public var kind: Kind
   public var data: Data
+  public var klipy: KlipyReference? = nil
+  public var thumbnail: Data? = nil
+  public var duration: Double? = nil
+  public init(klipy: KlipyReference) {
+    self.klipy = klipy; self.kind = klipy.kind == "gif" ? .gif : .image; self.data = Data()
+  }
   public init(kind: Kind, data: Data) {
     self.kind = kind
     self.data = data
@@ -91,8 +150,8 @@ public enum MessageValidation: Error, LocalizedError {
   case empty, tooManyAttachments, tooLarge
   public var errorDescription: String? {
     switch self {
-    case .empty: return "Write a message or add an image or GIF."
-    case .tooManyAttachments: return "One image or GIF per message."
+    case .empty: return "Write a message or add a photo, GIF, or video."
+    case .tooManyAttachments: return "One attachment per message."
     case .tooLarge: return "Choose media smaller than 5 MB."
     }
   }
@@ -101,7 +160,7 @@ public enum MessageValidation: Error, LocalizedError {
     guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !media.isEmpty else {
       throw empty
     }
-    guard media.allSatisfy({ $0.data.count <= 5_000_000 }) else { throw tooLarge }
+    guard media.allSatisfy({ ($0.klipy?.size ?? $0.data.count) <= 5_000_000 }) else { throw tooLarge }
   }
 }
 public struct Message: Identifiable, Codable, Equatable {
@@ -110,6 +169,15 @@ public struct Message: Identifiable, Codable, Equatable {
   public var text: String
   public var media: MediaAttachment?
   public var game: String?
+  public var gameSessionID: String? = nil
+  public var avatar: String? = nil
+  public var memberKey: String? = nil
+  public var attachmentID: String? = nil
+  public var replyTo: String? = nil
+  public var reactions: [String: Int]? = nil
+  public var myReactions: [String]? = nil
+  public var deleted: Bool? = nil
+  public var sequence: Int? = nil
   public var created = Date.now
   public init(author: String, text: String, media: MediaAttachment? = nil, game: String? = nil) {
     self.author = author
@@ -166,6 +234,11 @@ public struct Activity: Identifiable, Codable, Equatable {
   public var details: String
   public var course: String?
   public var cancelled = false
+  public var participantCount: Int? = nil
+  public var waitlisted: Bool? = nil
+  public var membershipStatus: String? = nil
+  public var joinRequests: [String]? = nil
+  public var approvalRequired: Bool? = nil
   public init(
     title: String, kind: ActivityKind, host: String, place: String, starts: Date, capacity: Int,
     details: String, course: String? = nil

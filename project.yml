@@ -5,13 +5,16 @@ options:
     iOS: '18.0'
   xcodeVersion: '26.0'
 packages:
+  Supabase:
+    url: https://github.com/supabase/supabase-swift.git
+    exactVersion: 2.55.3
   MaroonCore:
     path: MaroonCore
 settings:
   base:
     SWIFT_VERSION: '5.0'
     TARGETED_DEVICE_FAMILY: '1'
-    DEVELOPMENT_TEAM: ''
+    DEVELOPMENT_TEAM: '259BRQX9UQ'
     CODE_SIGN_STYLE: Automatic
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     MARKETING_VERSION: '0.1.0'
@@ -24,18 +27,44 @@ targets:
       - path: MaroonSocial
     dependencies:
       - package: MaroonCore
+      - package: Supabase
+        product: Auth
+    entitlements:
+      path: MaroonSocial/MaroonSocial.entitlements
+      properties:
+        aps-environment: $(APS_ENVIRONMENT)
+    settings:
+      configs:
+        Debug:
+          APS_ENVIRONMENT: development
+          APNS_ENVIRONMENT: sandbox
+        Release:
+          APS_ENVIRONMENT: production
+          APNS_ENVIRONMENT: production
     info:
       path: MaroonSocial/Info.plist
       properties:
         CFBundleDisplayName: Maroon Social
-        UILaunchScreen: {}
+        UILaunchStoryboardName: CommunityLaunch
+        UIUserInterfaceStyle: Dark
+        APNSEnvironment: $(APNS_ENVIRONMENT)
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         NSLocationWhenInUseUsageDescription: Campus Tag uses your location only during a match you join.
         NSCameraUsageDescription: Add a photo or join a video conversation when you choose.
         NSMicrophoneUsageDescription: Join voice conversations when you choose.
-        NSPhotoLibraryUsageDescription: Choose one image or GIF to send in a message.
+        NSPhotoLibraryUsageDescription: Choose a photo, GIF, or short video to share.
         NSCalendarsWriteOnlyAccessUsageDescription: Save campus events you choose to your calendar.
         UIApplicationSupportsIndirectInputEvents: YES
+  MaroonSocialTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [MaroonSocialTests]
+    dependencies:
+      - target: MaroonSocial
+      - package: MaroonCore
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
   MaroonSocialUITests:
     type: bundle.ui-testing
     platform: iOS
@@ -51,4 +80,4 @@ schemes:
       targets:
         MaroonSocial: all
     test:
-      targets: [MaroonSocialUITests]
+      targets: [MaroonSocialTests, MaroonSocialUITests]

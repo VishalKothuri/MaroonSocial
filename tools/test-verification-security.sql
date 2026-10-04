@@ -1,0 +1,34 @@
+begin;
+do $$
+declare h text:=replace(gen_random_uuid()::text,'-','')||replace(gen_random_uuid()::text,'-','');h2 text:=replace(gen_random_uuid()::text,'-','')||replace(gen_random_uuid()::text,'-','');m uuid;m2 uuid;c uuid:=gen_random_uuid();out jsonb;i integer;expected text:=repeat('a',64);mail text:=repeat('b',64);
+begin
+ if has_function_privilege('anon','public.verification_gateway(text,text,jsonb)','EXECUTE')or has_function_privilege('authenticated','public.verification_gateway(text,text,jsonb)','EXECUTE')or has_schema_privilege('anon','verification_private','USAGE')then raise exception 'Verifier exposed';end if;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(h,'verifyqa_'||substr(h,1,8),true,h)returning id into m;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(h2,'verifyqa_'||substr(h2,1,8),true,h2)returning id into m2;
+ out:=public.verification_gateway('prepare',h,jsonb_build_object('domain','evil.tamu.edu','email_hash',mail,'code_hash',expected,'challenge_id',c,'network_hash',h));if out->>'code'<>'invalid'then raise exception 'Domain bypass';end if;
+ out:=public.verification_gateway('prepare',h,jsonb_build_object('domain','tamu.edu','email_hash',mail,'code_hash',expected,'challenge_id',c,'network_hash',h));if out?'error'then raise exception 'Prepare failed %',out;end if;
+ out:=public.verification_gateway('confirm',h,jsonb_build_object('challenge_id',c,'code_hash',expected));if out->>'code'<>'invalid_code'then raise exception 'Unsent code allowed';end if;
+ out:=public.verification_gateway('sent',h,jsonb_build_object('challenge_id',c));
+ out:=public.verification_gateway('confirm',h2,jsonb_build_object('challenge_id',c,'code_hash',expected));if out->>'code'<>'invalid_code'then raise exception 'Cross-account verification allowed';end if;
+ for i in 1..5 loop out:=public.verification_gateway('confirm',h,jsonb_build_object('challenge_id',c,'code_hash',repeat('c',64)));end loop;
+ if(select attempts from verification_private.challenges where id=c)<>5 then raise exception 'Wrong attempts rolled back';end if;
+ out:=public.verification_gateway('confirm',h,jsonb_build_object('challenge_id',c,'code_hash',expected));if out->>'code'<>'invalid_code'then raise exception 'Guess cap bypassed';end if;
+ out:=public.verification_gateway('prepare',h,jsonb_build_object('domain','tamu.edu','email_hash',mail,'code_hash',expected,'challenge_id',gen_random_uuid(),'network_hash',h));if out->>'code'<>'rate_limit'then raise exception 'Resend cooldown missing';end if;
+ update verification_private.sends set created_at=now()-interval '2 minutes'where member=m;
+ c:=gen_random_uuid();out:=public.verification_gateway('prepare',h,jsonb_build_object('domain','tamu.edu','email_hash',mail,'code_hash',expected,'challenge_id',c,'network_hash',h));out:=public.verification_gateway('sent',h,jsonb_build_object('challenge_id',c));
+ update verification_private.challenges set expires_at=now()-interval '1 second'where id=c;
+ out:=public.verification_gateway('confirm',h,jsonb_build_object('challenge_id',c,'code_hash',expected));if out->>'code'<>'invalid_code'then raise exception 'Expired code accepted';end if;
+ update verification_private.challenges set expires_at=now()+interval '1 minute'where id=c;
+ update verification_private.settings set require_verified=true;
+ out:=public.social_gateway('post.create',h,jsonb_build_object('text','Must be denied'));if out->>'code'<>'verification_required'then raise exception 'Unverified write allowed in enforced mode';end if;
+ out:=public.social_gateway('snapshot',h,'{}');if jsonb_array_length(out->'snapshot'->'posts')<>0 then raise exception 'Unverified content read';end if;
+ out:=public.verification_gateway('confirm',h,jsonb_build_object('challenge_id',c,'code_hash',expected));if out->>'verified'<>'true'then raise exception 'Correct verification failed %',out;end if;
+ if(select code_hash from verification_private.challenges where id=c)is not null then raise exception 'Used code retained';end if;
+ out:=public.verification_gateway('confirm',h,jsonb_build_object('challenge_id',c,'code_hash',expected));if out->>'code'<>'invalid_code'then raise exception 'Replay accepted';end if;
+ if social_private.require_member(h)<>m then raise exception 'Verified member denied';end if;
+ update verification_private.memberships set expires_at=now()-interval '1 second'where member=m;
+ out:=public.social_gateway('post.create',h,jsonb_build_object('text','Expired grant denied'));if out->>'code'<>'verification_required'then raise exception 'Expired grant accepted';end if;
+ out:=public.social_gateway('account.delete',h,'{}');if exists(select 1 from verification_private.memberships where member=m)or exists(select 1 from verification_private.challenges where member=m)then raise exception 'Deletion retained verifier membership';end if;
+end $$;
+select 'PASS exact domain/private grants, sent-only/account binding, five persistent guesses, cooldown/expiry/replay, enforcement/redaction/renewal and deletion' as result;
+rollback;

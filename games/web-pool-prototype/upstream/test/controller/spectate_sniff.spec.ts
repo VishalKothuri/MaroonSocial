@@ -1,0 +1,85 @@
+import { expect } from "chai"
+import { Container } from "../../src/container/container"
+import { Ball } from "../../src/model/ball"
+import { Spectate } from "../../src/controller/spectate"
+import { Assets } from "../../src/view/assets"
+import { initDom } from "../view/dom"
+import { Session } from "../../src/network/client/session"
+import { MessageRelay } from "../../src/network/client/messagerelay"
+import { BeginEvent } from "../../src/events/beginevent"
+import { WatchEvent } from "../../src/events/watchevent"
+import { EventUtil } from "../../src/events/eventutil"
+
+initDom()
+
+describe("Spectate Name Sniffing", () => {
+  let container: Container
+  let messageRelay: MessageRelay
+  let capturedCallback: (message: string) => void
+
+  beforeEach(() => {
+    Ball.id = 0
+    // Initialize as spectator
+    Session.init("spectator-client", "Spectator", "test-table", true)
+
+    container = new Container({
+      element: undefined,
+      log: (_) => {},
+      assets: Assets.localAssets(),
+      ruletype: "nineball",
+    })
+    container.isSinglePlayer = false
+
+    messageRelay = {
+      subscribe: (channel, callback) => {
+        capturedCallback = callback
+      },
+      publish: () => {},
+    }
+  })
+
+  it("should sniff names from BEGIN and WATCHAIM events", () => {
+    const spectate = new Spectate(container, messageRelay, "test-table")
+    expect(spectate).to.not.be.null
+    const session = Session.getInstance()
+
+    // Simulate BEGIN event from P2 (Peter) - broadcast by the non-first player
+    const beginEvent = new BeginEvent()
+    beginEvent.clientId = "p2-id"
+    beginEvent.playername = "Peter"
+    capturedCallback(EventUtil.serialise(beginEvent))
+
+    expect(session.spectatedP2Name).to.equal("Peter")
+    expect(session.spectatedP1Name).to.be.undefined
+
+    // Simulate WATCHAIM event from P1 (Yvette) - first WatchEvent is from the first player
+    const watchEvent = new WatchEvent({})
+    watchEvent.clientId = "p1-id"
+    watchEvent.playername = "Yvette"
+    capturedCallback(EventUtil.serialise(watchEvent))
+
+    expect(session.spectatedP1Name).to.equal("Yvette")
+
+    const names = session.orderedNamesForHud()
+    expect(names.p1Name).to.equal("Yvette")
+    expect(names.p2Name).to.equal("Peter")
+  })
+
+  it("should not override names once set", () => {
+    const spectate = new Spectate(container, messageRelay, "test-table")
+    expect(spectate).to.not.be.null
+    const session = Session.getInstance()
+
+    const begin1 = new BeginEvent()
+    begin1.clientId = "p2-id"
+    begin1.playername = "Peter"
+    capturedCallback(EventUtil.serialise(begin1))
+
+    const begin2 = new BeginEvent()
+    begin2.clientId = "other-id"
+    begin2.playername = "Imposter"
+    capturedCallback(EventUtil.serialise(begin2))
+
+    expect(session.spectatedP2Name).to.equal("Peter")
+  })
+})

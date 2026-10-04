@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<!-- Simulator-only. Pins the pre-DEVELOPMENT_TEAM application identifier so the
+     iPhone 17 Pro Max simulator's original account credential (keychain group
+     FAKETEAMID.app.maroonsocial.MaroonSocial) stays readable. Never use for devices. -->
+<key>application-identifier</key><string>FAKETEAMID.app.maroonsocial.MaroonSocial</string>
+<key>aps-environment</key><string>$(APS_ENVIRONMENT)</string>
+</dict></plist>

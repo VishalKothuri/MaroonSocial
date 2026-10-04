@@ -1,33 +1,47 @@
 # Maroon Social
 
-An iPhone-first SwiftUI app for a TAMU-only social community. This repository contains the first runnable development build and the earlier research/design specifications.
+An iPhone-first SwiftUI app for a TAMU-only social community. This repository contains the connected development app and its architecture and feature specifications.
 
-**Current build:** local social preview + real public campus data from Supabase. Student enrollment is closed. It is not a production anonymous network yet.
+**Current build (October 4, 2026):** shared posts, conversations, classes, activities, private groups and compressed photo/GIF/video media backed by Supabase; authoritative online games; private multiplayer Campus Tag; campus/sports feeds; and username-and-interests introductions with explicit mutual acceptance before text/video. Anonymous random text/voice matching has been removed. Email/TAMU delivery and paid ads are paused by the owner. APNs implementation awaits its restricted signing key; direct calls use no paid relay and can fail on restrictive networks. Do not present this development build as a verified student network. See [current feature status](FEATURE-STATUS.md) and [test evidence](TESTING.md).
 
 ## Run
 
 Open `MaroonSocial.xcodeproj`, choose the **MaroonSocial** scheme and an iPhone simulator, then Run. The project targets iOS 18 or later. Tested with Xcode 26.6 and the iPhone 17 Pro simulator on iOS 26.5. No signing team is needed for the simulator.
 
-Enter a preview username and confirm 18+ to explore. Sample posts and activities are labeled. Social changes are saved only on the device. Campus events come from official A&M feeds through the connected Supabase project.
+Enter a username and confirm 18+ to connect. Normal launches never seed sample posts. The old `preview-state.json` is preserved; only account preferences migrate, while shared content comes from the server and is cached in `social-cache.json`. UI test fixtures use a separate file. Meet people uses a separate visible username and at most six interests; both participants must remain active and accept the connection. Direct media requires explicit consent because it can expose a network address to the peer; Wi-Fi does not guarantee that restrictive-network connections will succeed.
 
 ```sh
 swift test --package-path MaroonCore
 xcodebuild -project MaroonSocial.xcodeproj -scheme MaroonSocial \
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
-  CODE_SIGNING_ALLOWED=NO test
+  CODE_SIGN_IDENTITY=- test
 ```
+
+**Keep simulator signing enabled.** An unsigned build cannot securely store the account credential in Keychain. Normal Xcode Run uses ad-hoc simulator signing; no paid developer account is required. If the Mac keyboard stops typing in Simulator, use I/O → Keyboard → Connect Hardware Keyboard and Toggle Software Keyboard.
 
 `project.yml` is the XcodeGen source. Run `xcodegen generate` after adding source files if regenerating the checked-in project.
 
 ## Working in this build
 
-- Community: anonymous/named posts, replies, vote switching, saves, local hide/report actions, separate post-origin conversations, and an opt-in non-explicit 18+ community.
-- Classes: course + semester membership, one room per course, username-based chats.
-- Inbox: request acceptance/decline, text, one image **or** animated GIF per message, 5 MB attachment limit, local game invitations.
-- Explore: create/join/leave hangouts, study groups, recreation and gaming plans; capacity checks; local activity chats.
-- Games: native SceneKit models, a physics pool practice table, cup-pong aiming practice, and local chess with legal moves/check/checkmate, castling, en passant and automatic queen promotion. Online game state is not connected. Chess does not yet implement repetition or insufficient-material draws.
-- Campus Tag: foreground-only compass practice and an explicit stop control. It does not track other people or upload location.
-- Campus: official A&M/Rec calendar, saved events, iPhone Calendar export, source links, route catalog and bus-stop links to Maps.
+- **Appearance and startup:** charcoal surfaces, warm off-white text and official A&M maroon (#500000) fills, readable cream icons and maroon enabled switches throughout the app. Both wordmark words are present from launch; every letter fills maroon before settling back to white, without an underline. Pull artwork follows the first drag pixels below the header. A shared ten-second request gate blocks duplicate network refreshes while preserving gesture feedback. Reduce Motion keeps the artwork steady. Connection failures show Retry and, when available, Open saved content.
+- **Community:** Texas A&M is the default main feed, alongside Freshmen, Sophomores, Juniors, Seniors and Graduates. Compact New/Hot feeds with bounded horizontal swipes: left moves New to Hot, right returns Hot to New, and outward swipes stay on the homepage. Anonymous or named posts, nested replies with parent context and OP indicators, post/comment vote switching, caller-private karma, bookmarks, deletion, reports, blocks and explicit 18+ opt-in. A sticky inline composer expands in place. Feed/navigation/tab bars collapse while scrolling down and return while scrolling up; editing keeps controls available and Reduce Motion is honored. Source-post and source-reply DMs stay anonymous, display You/Them and cannot switch identity.
+- **Classes:** 10,182 official 2026–27 course codes with local search and participation ordering. The first join creates the shared course/semester room; browsing creates none. Three rolling slots open at Chicago midnight: Spring on December 1 of the prior year, Summer May 1, Fall August 1. Access ends at midnight after the official final exam date, including cached native chats; purge is due one calendar month later. Future terms remain visibly locked until their opening date and verified calendar are available. A daily official parser refreshes dates, preserving existing dates on failure or ambiguity. Course membership is self-selected. See `tools/pull-courses.py` for catalog refresh and the lifecycle details below.
+- **Messaging:** separate Messages, Requests and Groups with unread badges and an aggregate Inbox tab badge; named username requests or fixed-anonymous source-post/source-reply requests, accept/decline/block, text, replies, reactions, typing expiry, unread state, one compressed photo/GIF/video per message, room muting, and persistent game invitations. Private group invitations require acceptance; owners can remove members, revoke invitations or transfer ownership.
+- **Media:** recorded video imports up to 60 seconds/100 MB are transcoded to H.264/AAC at 720p or 480p, with a hard 5 MB output limit and explicit native playback. Photo/GIF compression, participant-authorized upload and fetch, bounded real decoding, metadata stripping, private Storage, size/type limits, and revoked access after blocking/leaving. GIF playback can be paused. Posts and chats include a meme composer with a chosen photo or original color template, editable top/bottom captions, all-caps control and preview. It exports a fresh JPEG up to 1,200 px and 5 MB with source location metadata removed. Connected KLIPY pickers provide trending/search, paging, attribution and share reporting; posts/messages store validated provider references, with bounded media fetched from KLIPY rather than uploaded to app Storage. Provider result order and supplied ad cards are preserved; the provider test banner has been rendered in the live picker. Paid fill and earnings remain unverified, and the DEBUG placement preview is a separate fixture. This is not an automated content-classification service.
+- **Drafts:** account-scoped drafts restore text, structured fields and bounded media after relaunch for posts, chats, message requests, replies, groups, memes, plans and organization promotions. Explicit discard clears them. The durable message outbox sends idempotently while foregrounded and preserves failed items for retry/cancel; it does not promise sending while the app is closed.
+- **Profile and collections:** tap the avatar/username row in account settings to edit and save the account username. My posts, My comments and Saved posts load private server collections in 50-entry pages, including older content outside the homepage feed. Opening a post retains its collection context while shared data refreshes. Account avatars remain preset; this does not add a photo-avatar editor.
+- **Notifications:** the homepage bell beside profile opens a compact inbox with an unread badge, comments on your posts, replies to your comments, one-time post upvote milestones and owner announcements. Open a notification to view its post, or mark displayed items as read. Announcements are published and withdrawn through the audited private operator tool. This is a foreground in-app inbox; APNs/background delivery remains unconfigured.
+- **Account controls:** named friend requests and acceptance, context-preserving block lists, unblock, private JSON export, and account deletion that recovers after a lost network acknowledgement. Custom Supabase Auth personal-email code login/recovery, linking an existing device account, session refresh and logout are implemented with Keychain session storage. Its delivery gate remains off. TAMU mailbox verification is a separate implemented flow whose delivery and enrollment enforcement also remain off until a sender is configured and verified.
+- **Communities:** discoverable campus interest chats and private invite-code groups, explicit named membership, owner moderation and reporting. A shared three-step setup covers Group details (name, icon, purpose and visibility), Your identity (group alias and icon), and optional Invitations by account username. Group covers and per-room photo avatars can be privately uploaded, replaced or removed. Back preserves the draft; a fixed footer keeps the current action above the keyboard. Accepted members can choose a specific opponent for a game; other members see only its invitation card.
+- **Navigation:** the five bottom tabs select connected screens with horizontal slide transitions. On the homepage, swipes stay within New/Hot; swipes from the other root screens move between adjacent tabs. The bottom navigation bar translates off and back onto the bottom of the screen as feed controls collapse and return. Text entry, horizontal date strips, pushed screens and game gestures keep their own controls; Reduce Motion uses reduced transitions.
+- **Haptics:** short selection, impact and outcome cues support major navigation, composition, matchmaking, random chat, campus events, GIF/meme selection and game actions. Haptic feedback in Settings → Interaction is enabled by default and remembers its setting on this device. The switch mutes custom app and game cues; standard iOS control feedback remains governed by iOS. Typing, polling, computer chess turns and online replay updates do not add custom cues. Random-chat and campus-event outcomes stay silent after leaving the relevant screen.
+- **Activities:** shared study/hangout/recreation/gaming plans, editing, capacity, waitlists, optional host approval, roster, cancellation, and linked chat. Study plans support two to eight weekly occurrences at the same College Station wall-clock time and host cancellation of future meetings. Organization applications, private administrator tools, verified publishing gates, following, and organization DMs are implemented.
+- **Games:** new pool matches use the isolated, GPL-licensed tailuge/billiards web engine, hosted on Vercel and embedded in the app with a short-lived pool-only credential. Flat portrait aiming, authoritative turns/replay, invitations, persistence, resign and explicit rematch acceptance are implemented. Historical pool games retain their original rules. Cup pong uses revised cannon-es physics; online chess uses chess.js, and native local chess includes an optional computer. See [rules, dependencies and tests](games/README.md).
+- **Campus Tag:** private invitation-code lobbies, explicit location consent, roles/readiness, timed rounds, boundary, coarse direction/distance hints, team/lobby chat, mutual catch confirmation, results/statistics, explicit rematch consent, a persistent active-session banner, and report/block. Backgrounding pauses participation with a bounded resume window; leaving ends access. Exact coordinates stay server-side and expire; they are never returned to other players.
+- **Calls and Meet people:** a visible username/interests grid, profile requests, explicit recipient acceptance and a mutual foreground handshake before text/video. Continue in Inbox preserves the lobby identities. Existing accepted-room calls and explicitly joined group calls remain available; anonymous post/reply DMs are unchanged. Synthetic media tests verify decoded frames, not physical camera quality or all-network reachability.
+- **Campus:** upcoming agenda defaults to actual available events; day/category filters and recovery, saved events, Calendar export, official source links, searchable current bus routes/stops and Maps links. Live bus positions and dining use official pages. Official game-day chats display score/status data, official tracker links and matched Kalshi market prices with attribution; no in-app ball coordinates or calibrated winning-probability claim.
+
+See [verification evidence and reproduction](TESTING.md). A working interface is not proof of production readiness; launch dependencies are listed below.
 
 ## Connected Supabase project
 
@@ -40,23 +54,45 @@ Project: **Maroon Social** (`myxbghfbapbfffkpndwo`, us-east-1).
 - `refresh-campus`: JWT-verified Edge Function; upstream requests are bounded to once per 55 minutes. All database writes use its server-side credential.
 - `maroon-campus-hourly`: hourly Supabase Cron job at minute 17. Vault stores its project URL and public invocation token. No billing plan was changed.
 - Feeds are normalized to the next 31 days. Unneeded fields such as event contact emails are discarded. A last-known snapshot is preserved on upstream failure.
-- Bus feeds work from the development machine but currently fail from the hosted Edge Function. The initial 33-route / 221-stop snapshot is preserved with a separate timestamp and an in-app notice.
+- Bus feeds currently fail from the hosted Edge Function. The native client refreshes routes/stops directly from the official endpoint and retains a timestamped cached fallback on failure.
 
 To recreate the backend, apply `supabase/migrations`, deploy `supabase/functions/refresh-campus`, configure the two documented Vault values, and update the public client configuration. The deployed migration history may use platform-generated timestamps; local SQL records the same operations.
 
 `python3 tools/pull-campus.py` refreshes the bundled fallback from the official public feeds. It does not upload anything. Hosted refresh is handled by the Edge Function.
 
+## Discovery and calls backend
+
+The old `random-chat` endpoint is retired with HTTP 410. Discovery uses the authenticated social account, a separate visible lobby username, up to six interests, short foreground presence leases, expiring requests and a two-party acknowledgement before a connection becomes active. Private schemas and server-only RPCs enforce participant, block and suspension checks.
+
+Browser pairing issues a one-hour discovery-only credential; the full account token never enters the website. Leaving or backgrounding tears down media and connection presence. Group calls are explicitly joined and bounded to four participants and twenty minutes. Account blocks are enforced, but device accounts are not proof of enrollment or bans that survive an unrelated replacement identity.
+
+No paid TURN service is enabled. Direct calls require explicit consent and may fail on restrictive networks. See [discovery/calls/push operations](supabase/DISCOVERY-CALLS-PUSH.md) and [test coverage](TESTING.md). The web client is published at [Maroon Social](https://maroon-social-web.vercel.app); the isolated game host is [Pool](https://maroon-social-games.vercel.app).
+
+## Shared social backend
+
+Shared social endpoints accept either a Keychain-held 256-bit device credential (stored only as a hash on the server) or a verified Supabase Auth session linked to that same private member. Invalid bearer sessions never fall back to a supplied device credential. Personal-email login/recovery is implemented through the native Supabase Auth SDK and the `auth-account` bridge, but its delivery gate is off. It does not grant TAMU verification. Participant checks and contextual projections run through server-only RPCs in non-exposed, RLS-enabled schemas. The public project key cannot read private tables. Private media is decoded and sanitized before private Storage upload. Full account credentials and service-role keys never enter the game WebView; the hosted pool receives only its short-lived pool scope.
+
+The personal library and activity inbox are deployed through the authenticated `social` Edge Function and service-only `social_activity` RPC. Migration `20261004062228_activity_notifications_library.sql` adds private notification/read records, comment and milestone events, and operator-only announcements. Transactional security checks and a two-account HTTP run passed collection access, anonymous notification privacy, read ownership, milestone deduplication and block/deletion cleanup; see [the backend evidence and exact limits](TESTING.md#profile-collections-and-notification-backend). No public sample announcement was published.
+
+Open screens refresh shared state while foregrounded. The current client uses bounded polling, not a persistent Realtime socket. Sandbox push registration, a private delivery queue, mute filtering and deep-link routing are implemented, but delivery remains inactive until the restricted APNs signing key is installed. This must be load-tested and improved before opening to a large campus audience.
+
+## Course semester lifecycle
+
+[CourseTerms.json](MaroonSocial/Resources/CourseTerms.json) supplies the bundled verified dates and locked placeholders. The authenticated `courses` endpoint returns the same metadata with a server clock; native deadlines use elapsed time and retain verified dates for offline use. The Spring, Summer and Fall slots advance independently after closing, and an unpublished year cannot open merely because its opening date has arrived.
+
+End dates come from the [official general-campus academic calendar](https://catalog.tamu.edu/undergraduate/academic-calendar/). The current source has no separate overall term-end row, so the recorded basis is the last final exam day; Summer uses the latest final across Term I, Term II and the 10-week session. Verified dates currently extend through Summer 2027. Fall 2027 and 2028 placeholders stay locked until published dates are parsed. The daily parser excludes professional-program and Qatar calendars, rejects incomplete/ambiguous terms, and preserves stored dates on upstream failure.
+
+Closing is enforced on every server access without waiting for cleanup. Native expiry removes cached class conversations, messages, attachment references and unread metadata. One calendar month after closing, rooms/messages and private media become due for deletion. The existing hourly worker processes bounded batches and retries Storage deletion; physical deletion can lag the due date during worker failures or a backlog. Backup and platform-log retention are separate. No course room needs its own worker, and an empty room does not outlive its semester retention policy.
+
 ## Still required before real enrollment
 
-- An email sender domain and delivery service. No email is collected by this preview.
-- Final approved TAMU domain allowlist and what qualifies as a current student. Owning a TAMU mailbox alone also includes some non-students.
-- Identity/credential design that meets the desired operator-unlinkability and persistent-ban goals. No promise of cryptographic anonymity has been implemented. A plain email hash would not meet that goal.
-- Authenticated social API, private media storage, moderation delivery, ban enforcement, account recovery and deletion, push notifications and multiplayer synchronization.
-- Verified organization publishing and private administrator authorization.
-- Random matching, WebRTC signaling, TURN, abuse controls, and an approved distribution path. The screen is a locked entry point, not a working call service.
-- Multiplayer Tag lobbies, agreed catch rules, boundaries and temporary location handling.
-- Dining menus/hours: the provider blocks automated requests; the app links to the official site instead of inventing menu data.
-- Licensed live sports scores. Game-chat timing logic exists, but the current official athletics calendar feed is empty.
+- Configure the email sender and verify actual delivered-code sign-in/recovery before enabling the Supabase Auth delivery gate. Separately configure TAMU mailbox challenge delivery and settle the current-student policy before requiring it; mailbox ownership alone is not enrollment proof.
+- Review the stronger operator-unlinkability design and the privacy of enrollment/recovery processing. No cryptographic-anonymity or end-to-end-encryption guarantee is made. The architecture’s blind-issuance proposal remains an unevaluated proposal, not shipped security.
+- Assign actual moderators and organization reviewers, adopt retention/appeals policy, and operate the review process. Report persistence and suspension controls alone do not create a staffed response service.
+- Install the restricted APNs key, then validate background delivery and notification privacy on a physical device. The native routing, sandbox-only worker and queue are implemented; a simulator pass is not real APNs delivery.
+- Validate physical camera/microphone, compass/location behavior and calls across campus/cellular networks. Paid TURN is deliberately off under the owner's cost constraint; direct calls can fail on restrictive networks.
+- Obtain permitted structured dining data and licensed in-app ball-tracking coordinates. Official sports scores/tracker links and matched Kalshi market prices are implemented; market prices are not presented as calibrated winning probabilities. No menu, ball position or live arrival is fabricated.
+- Load/security testing, distribution signing and operational monitoring before real enrollment. The user requested simulator testing for this iteration.
 
 ## Cost approach
 

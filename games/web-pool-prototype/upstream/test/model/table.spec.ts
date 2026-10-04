@@ -1,0 +1,253 @@
+import { expect } from "chai"
+import { Ball, State } from "../../src/model/ball"
+import { TableGeometry } from "../../src/view/tablegeometry"
+import { Table } from "../../src/model/table"
+import { Vector3 } from "three"
+import { zero } from "../../src/utils/three-utils"
+import { Rack } from "../../src/utils/rack"
+import { R } from "../../src/model/physics/constants"
+import { PocketGeometry } from "../../src/view/pocketgeometry"
+import { Collision } from "../../src/model/physics/collision"
+import { ShotStartUtils } from "../../src/utils/shotstart"
+
+const t = 0.01
+
+describe("Table", () => {
+  beforeEach(function (done) {
+    Ball.id = 0
+    done()
+  })
+
+  it("updates when all stationary", (done) => {
+    const a = new Ball(zero)
+    const b = new Ball(new Vector3(1, 0, 0))
+    const c = new Ball(new Vector3(2, 0, 0))
+    const table = new Table([a, b, c])
+    expect(table.prepareAdvanceAll(t)).to.be.true
+    expect(table.allStationary()).to.be.true
+    done()
+  })
+
+  it("updates when single ball stationary", (done) => {
+    const table = new Table([new Ball(zero)])
+    expect(table.prepareAdvanceAll(t)).to.be.true
+    expect(table.allStationary()).to.be.true
+    done()
+  })
+
+  it("halt all", (done) => {
+    const table = new Table(Rack.diamond())
+    table.balls[0].vel.x = 10 * R
+    expect(table.prepareAdvanceAll(t)).to.be.true
+    table.halt()
+    expect(table.allStationary()).to.be.true
+    done()
+  })
+
+  it("overlap balls thows exception", (done) => {
+    const a = new Ball(zero)
+    a.vel.x = 1
+    a.state = State.Sliding
+    const b = new Ball(new Vector3(R * 0.9, 0, 0))
+    const table = new Table([a, b])
+    // advance() now calls reportDepthExceeded() (console.error) before the
+    // throw; silence it so non-silent test runs stay clean.
+    const spy = jest.spyOn(console, "error").mockImplementation(() => {})
+    try {
+      expect(() => {
+        table.advance(t)
+      }).to.throw("Depth exceeded resolving collisions")
+    } finally {
+      spy.mockRestore()
+    }
+    done()
+  })
+
+  it("a momentum transferes to c", (done) => {
+    const a = new Ball(zero)
+    a.vel.x = 100 * R
+    a.state = State.Sliding
+    const b = new Ball(new Vector3(2 * R, 0, 0))
+    const c = new Ball(new Vector3(4 * R, 0, 0))
+    const table = new Table([a, b, c])
+    expect(table.allStationary()).to.be.false
+    expect(table.prepareAdvanceAll(t)).to.be.false
+    table.advance(t)
+    expect(c.vel.x).to.be.closeTo(100 * R, 10 * R)
+    expect(table.prepareAdvanceAll(t)).to.be.true
+    done()
+  })
+
+  it("c moves by transfering momentum through b and a after bounce", (done) => {
+    const a = new Ball(new Vector3(-TableGeometry.tableX, 0, 0))
+    const b = new Ball(new Vector3(-TableGeometry.tableX + 2.01 * R, 0, 0))
+    const c = new Ball(new Vector3(-TableGeometry.tableX + 4.02 * R, 0, 0))
+    a.vel.x = -100 * R
+    a.state = State.Sliding
+    const table = new Table([a, b, c])
+    expect(table.prepareAdvanceAll(t)).to.be.false
+    table.advance(t)
+    expect(c.vel.x).to.be.above(0)
+    done()
+  })
+
+  it("a pots b", (done) => {
+    const edge =
+      PocketGeometry.pockets.pocketS.pocket.pos.y +
+      PocketGeometry.middleRadius +
+      0.01 * R
+    const a = new Ball(new Vector3(0, edge + R * 2, 0))
+    const b = new Ball(new Vector3(0, edge, 0))
+    a.vel.y = -18 * R
+    a.state = State.Sliding
+    const table = new Table([a, b])
+    expect(Collision.willCollide(a, b, t)).to.be.true
+    const s = table.prepareAdvanceAll(t)
+    expect(s).to.be.false
+    table.advance(t)
+    expect(b.onTable()).to.be.false
+    expect(b.isFalling()).to.be.true
+    b.rvel.x = 0.1
+    const maxiter = 10
+    let i = 0
+    while (i++ < maxiter && b.state != State.InPocket) {
+      table.advance(10 * t)
+    }
+    expect(b.isFalling()).to.be.false
+    expect(b.state).to.be.equal(State.InPocket)
+    expect(table.inPockets()).to.be.equal(1)
+
+    done()
+  })
+
+  it("three cushion table has no pocket", (done) => {
+    const a = new Ball(new Vector3(0, TableGeometry.tableY - 0.01 * R, 0))
+    const b = new Ball(zero)
+    a.vel.y = 8 * R
+    a.state = State.Sliding
+    const table = new Table([a, b])
+    TableGeometry.hasPockets = false
+    const s = table.prepareAdvanceAll(t)
+    expect(s).to.be.false
+    table.advance(t)
+    expect(b.onTable()).to.be.true
+    done()
+  })
+
+  it("collides with knuckle", (done) => {
+    const a = new Ball(
+      new Vector3(
+        PocketGeometry.middleKnuckleInset - 0.1 * R,
+        TableGeometry.tableY,
+        0
+      )
+    )
+    const b = new Ball(new Vector3())
+    a.vel.y = 10 * R
+    a.state = State.Sliding
+    const table = new Table([a, b])
+    expect(table.prepareAdvanceAll(t)).to.be.false
+    table.advance(t)
+    expect(a.vel.x).to.be.below(0)
+    done()
+  })
+
+  it("serialise/deserialise", (done) => {
+    const a = new Ball(new Vector3(-TableGeometry.tableX, 0, 0))
+    const b = new Ball(new Vector3(-TableGeometry.tableX + 1, 0, 0))
+    const c = new Ball(new Vector3(-TableGeometry.tableX + 2, 0, 0))
+    a.vel.x = -1
+    const table = new Table([a, b, c])
+    const data = JSON.stringify(table.serialise())
+    const obj = JSON.parse(data)
+    const table2 = Table.fromSerialised(obj)
+    expect(table2.balls).to.have.lengthOf(3)
+    done()
+  })
+
+  it("serialise/updateFromDeserialise", (done) => {
+    const a = new Ball(new Vector3(0, 0, 0))
+    const b = new Ball(new Vector3(1, 0, 0))
+    const c = new Ball(new Vector3(2, 0, 0))
+    a.vel.x = -1
+    const table = new Table([a, b, c])
+    const data = JSON.stringify(table.serialise())
+    table.cueball.pos.x = 4
+    const obj = JSON.parse(data)
+    table.updateFromSerialised(obj)
+    expect(table.cueball.pos.x).to.be.equal(0)
+    done()
+  })
+
+  it("starts stationary", (done) => {
+    const table = new Table(Rack.diamond())
+    expect(table.allStationary()).to.be.true
+    done()
+  })
+
+  it("shortSerialise", (done) => {
+    const table = new Table(Rack.diamond())
+    expect(table.shortSerialise()).to.be.length((9 + 1) * 2)
+    done()
+  })
+
+  it("hit() captures shot start conditions (delegates to ShotStartUtils)", (done) => {
+    const table = new Table(Rack.diamond())
+    table.cue.aim.angle = 0.42
+    table.cue.aim.power = 1.7
+    table.cue.aim.offset.set(0.05, -0.08, 0)
+    table.cue.aim.elevation = 0.3
+    const expectedBalls = table.shortSerialise()
+    table.hit()
+    expect(table.shotStartConditions).to.not.be.undefined
+    const c = table.shotStartConditions!
+    expect(c.balls).to.deep.equal(expectedBalls)
+    expect(c.cueBallId).to.equal(0)
+    expect(c.angle).to.closeTo(0.42, 1e-9)
+    expect(c.power).to.closeTo(1.7, 1e-9)
+    expect(c.offsetX).to.closeTo(0.05, 1e-9)
+    expect(c.offsetY).to.closeTo(-0.08, 1e-9)
+    expect(c.elevation).to.closeTo(0.3, 1e-9)
+    done()
+  })
+
+  it("advance() reports initial conditions on depth-exceeded throw", (done) => {
+    const a = new Ball(zero)
+    a.vel.x = 1
+    a.state = State.Sliding
+    const b = new Ball(new Vector3(R * 0.9, 0, 0))
+    const table = new Table([a, b])
+    // Populate the snapshot so reportDepthExceeded has data to print.
+    table.shotStartConditions = ShotStartUtils.capture(table, {
+      cueBallId: 0,
+      angle: 0,
+      power: 1,
+    })
+    const spy = jest.spyOn(console, "error").mockImplementation(() => {})
+    try {
+      expect(() => {
+        table.advance(t)
+      }).to.throw("Depth exceeded resolving collisions")
+      expect(spy.mock.calls).to.not.be.empty
+      const msg = spy.mock.calls[0][0] as string
+      expect(msg).to.contain("Recreation link")
+    } finally {
+      spy.mockRestore()
+    }
+    done()
+  })
+
+  it("serialiseHit uses live cueball position for aim", (done) => {
+    const table = new Table(Rack.diamond())
+    table.cue.aim.pos.set(-0.7205, 0, 0)
+    table.cueball.pos.set(-0.7204999923706055, 0.123456789, 0)
+
+    const hit = table.serialiseHit()
+
+    expect(hit.aim.pos.x).to.equal(table.cueball.pos.x)
+    expect(hit.aim.pos.y).to.equal(table.cueball.pos.y)
+    expect(hit.aim.pos.z).to.equal(table.cueball.pos.z)
+    expect(hit.aim.pos.x).not.to.be.closeTo(-0.7205, 1e-9)
+    done()
+  })
+})

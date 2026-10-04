@@ -1,0 +1,47 @@
+begin;set local role service_role;
+do $$
+declare ha text:=encode(extensions.gen_random_bytes(32),'hex');hb text:=encode(extensions.gen_random_bytes(32),'hex');hc text:=encode(extensions.gen_random_bytes(32),'hex');a uuid;b uuid;c uuid;rid text;g uuid;anonymous_game uuid;v jsonb;j push_private.jobs;oldjob push_private.jobs;sid uuid;state_value jsonb:='{"kind":"pool","rules":"maroon-web-pool-3.0.0","turn":0,"shots":0,"winner":null}';
+begin
+ if has_function_privilege('anon','push_private.on_web_pool_game()','execute')or has_function_privilege('authenticated','push_private.route(push_private.jobs)','execute')then raise exception 'Pool notification internals exposed';end if;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(ha,'pp_a_'||substr(ha,1,8),true,ha)returning id into a;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hb,'pp_b_'||substr(hb,1,8),true,hb)returning id into b;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hc,'pp_c_'||substr(hc,1,8),true,hc)returning id into c;
+ insert into push_private.preferences(member)values(a),(b),(c);
+ insert into social_private.rooms(kind,title,status)values('dm','Synthetic pool notification room','active')returning id into rid;
+ insert into social_private.room_members(room,member,status)values(rid,a,'accepted'),(rid,b,'accepted');
+ v:=public.web_pool_social('invite',ha,jsonb_build_object('room',rid,'nonce',gen_random_uuid(),'state',state_value));g:=(v->'game'->>'id')::uuid;if g is null then raise exception 'Invite failed %',v;end if;
+ select *into j from push_private.jobs where reference=g and recipient=b and kind='game_invite';
+ if j.id is null or not push_private.deliverable(j)then raise exception 'Pool invitation not deliverable';end if;
+ v:=public.push_devices('resolve',hb,jsonb_build_object('kind','game_invite','reference',g));
+ if v->>'gameID'is distinct from g::text or v->>'roomID'is distinct from rid then raise exception 'Pool invitation route failed %',v;end if;
+ v:=public.push_devices('resolve',hc,jsonb_build_object('kind','game_invite','reference',g));if v->>'code'is distinct from 'unavailable'then raise exception 'Outsider notification route';end if;
+ update social_private.room_members set muted_until=now()+interval '1 hour'where member=b and room=rid;if push_private.deliverable(j)then raise exception 'Muted pool invitation delivered';end if;update social_private.room_members set muted_until=null where member=b and room=rid;
+ oldjob:=j;v:=public.web_pool_social('accept',hb,jsonb_build_object('id',g));if v?'error'then raise exception 'Accept %',v;end if;
+ if push_private.deliverable(oldjob)then raise exception 'Accepted invitation still delivered';end if;
+ select *into j from push_private.jobs where reference=g and kind='game_turn'and recipient=a;
+ if j.id is null or not push_private.deliverable(j)then raise exception 'Accepted first turn missing';end if;
+ perform public.push_devices('read',ha,jsonb_build_object('id',j.id));select *into j from push_private.jobs where id=j.id;if push_private.deliverable(j)then raise exception 'Foreground read did not suppress pending push';end if;
+ update web_pool_private.games set version=version+1,state=state||'{"turn":1,"shots":1}'::jsonb where id=g;
+ select *into j from push_private.jobs where reference=g and kind='game_turn'and recipient=b order by revision desc limit 1;
+ if not push_private.deliverable(j)then raise exception 'New turn missing';end if;
+ oldjob:=j;update web_pool_private.games set version=version+1,state=state||'{"turn":0,"shots":2}'::jsonb where id=g;
+ if push_private.deliverable(oldjob)then raise exception 'Stale version delivered';end if;
+ delete from social_private.room_members where room=rid and member=b;if push_private.route(oldjob)is not null then raise exception 'Revoked membership retained route';end if;insert into social_private.room_members(room,member,status)values(rid,b,'accepted');
+ -- A queue match has no chat room, but still needs an authorized game destination.
+ insert into web_pool_private.games(a,b,state)values(a,b,state_value)returning id into anonymous_game;
+ select *into j from push_private.jobs where reference=anonymous_game and recipient=a and kind='game_turn';
+ if j.id is null or not push_private.deliverable(j)then raise exception 'Roomless pool turn not deliverable';end if;
+ v:=public.push_devices('resolve',ha,jsonb_build_object('kind','game_turn','reference',anonymous_game));
+ if v->>'gameID'is distinct from anonymous_game::text or v->'roomID'is distinct from 'null'::jsonb or v::text like '%'||b::text||'%'then raise exception 'Roomless route missing or leaked identity %',v;end if;
+ v:=public.push_devices('inbox',ha);if not exists(select 1 from jsonb_array_elements(v->'items')x where x->>'gameID'=anonymous_game::text and x->'roomID'='null'::jsonb)then raise exception 'Roomless turn absent from foreground inbox %',v;end if;
+ update push_private.preferences set games=false where member=a;if push_private.deliverable(j)then raise exception 'Disabled game preference ignored';end if;update push_private.preferences set games=true where member=a;
+ insert into social_private.blocks(blocker,blocked)values(a,b);if push_private.deliverable(j)or push_private.route(j)is not null then raise exception 'Blocked pool participant retained notification';end if;delete from social_private.blocks where blocker=a and blocked=b;
+ update social_private.members set banned=true where id=b;if push_private.deliverable(j)or push_private.route(j)is not null then raise exception 'Suspended pool participant retained notification';end if;update social_private.members set banned=false where id=b;
+ update web_pool_private.games set status='finished',version=version+1 where id=anonymous_game;if push_private.deliverable(j)then raise exception 'Finished turn delivered';end if;
+ v:=public.web_pool_social('rematch',ha,jsonb_build_object('id',anonymous_game,'nonce',gen_random_uuid(),'state',state_value));sid:=(v->'game'->>'id')::uuid;
+ select *into j from push_private.jobs where reference=sid and recipient=b and kind='game_invite';if j.id is null or not push_private.deliverable(j)then raise exception 'Roomless rematch invitation missing';end if;
+ update web_pool_private.games set expires_at=now()-interval '1 second'where id=sid;if push_private.deliverable(j)then raise exception 'Expired rematch delivered';end if;
+ delete from social_private.members where id=b;if push_private.route(j)is not null then raise exception 'Deleted player retained route';end if;
+end $$;
+select 'PASS pool3 notifications: invite, accepted turn, read/mute, stale revision, revoked room, roomless game route/inbox, preferences, block/ban, rematch expiry and deletion' result;
+rollback;
