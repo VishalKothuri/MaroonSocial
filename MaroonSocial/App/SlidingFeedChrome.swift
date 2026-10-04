@@ -270,9 +270,14 @@ extension View {
   private let probes = NSHashTable<UIViewController>.weakObjects()
   private struct Compensation {
     weak var controller: UIViewController?
-    var inset: CGFloat
+    var applied: CGFloat
+    var original: CGFloat
   }
+  /// The one transient offset that keeps a screen steady during a transition.
   private var compensation: Compensation?
+  /// Standing offsets while the bar is hidden: a pushed screen must never keep
+  /// the bar's inset once the bar is gone, whatever UIKit or SwiftUI left there.
+  private var corrections: [Compensation] = []
   private var generation = 0
   private var applying = false
 
@@ -294,6 +299,12 @@ extension View {
     if let coordinator, coordinator.isCancelled { return }
     guard let destination = Self.destination(in: tabs, coordinator: coordinator) else { return }
     let hidden = wantsHidden(stack: destination.navigation.viewControllers, top: destination.top)
+    if tabs.isTabBarHidden == hidden {
+      // Nothing to move. A screen that appeared above a hidden bar still needs
+      // its layout checked, since only transitions apply the offset below.
+      if settling, hidden { correctHiddenLayout(of: destination.top, in: tabs) }
+      return
+    }
     apply(hidden: hidden, in: tabs, coordinator: coordinator, arriving: destination.top, departing: destination.departing)
   }
 
@@ -349,7 +360,7 @@ extension View {
     SlidingFeedTabBar.Coordinator.yieldToNavigation(in: tabs)
     settleCompensation()
     let animated = coordinator?.isAnimated == true && !UIAccessibility.isReduceMotionEnabled
-    guard animated, let coordinator else { commit(hidden: hidden, in: tabs); return }
+    guard animated, let coordinator else { commit(hidden: hidden, in: tabs, entry: arriving); return }
     var distance: CGFloat = 0
     if hidden {
       // UIKit keeps its bar until the push lands, so the departing root keeps
@@ -370,9 +381,10 @@ extension View {
           bar.transform = .identity
           self.settleCompensation()
           tabs.view.layoutIfNeeded()
+          if !context.isCancelled { self.correctHiddenLayout(of: arriving, in: tabs) }
         }
       })
-      if !queued { commit(hidden: true, in: tabs) }
+      if !queued { commit(hidden: true, in: tabs, entry: arriving) }
     } else {
       // Restore UIKit's real bar first so the destination root regains its
       // inset from the first frame; the departing screen keeps its layout
@@ -395,19 +407,22 @@ extension View {
           if context.isCancelled, !tabs.isTabBarHidden { tabs.setTabBarHidden(true, animated: false) }
           bar.transform = .identity
           self.settleCompensation()
+          if !context.isCancelled { self.releaseCorrections() }
           tabs.view.layoutIfNeeded()
         }
       })
-      if !queued { commit(hidden: false, in: tabs) }
+      if !queued { commit(hidden: false, in: tabs, entry: nil) }
     }
   }
 
-  private func commit(hidden: Bool, in tabs: UITabBarController) {
+  private func commit(hidden: Bool, in tabs: UITabBarController, entry: UIViewController?) {
     UIView.performWithoutAnimation {
       tabs.tabBar.transform = .identity
       if tabs.isTabBarHidden != hidden { tabs.setTabBarHidden(hidden, animated: false) }
       settleCompensation()
+      if !hidden { releaseCorrections() }
       tabs.view.layoutIfNeeded()
+      if hidden { correctHiddenLayout(of: entry, in: tabs) }
     }
   }
 
@@ -415,13 +430,37 @@ extension View {
   /// committed visibility says otherwise, so its layout never jumps mid-slide.
   private func compensate(_ controller: UIViewController, by inset: CGFloat) {
     guard abs(inset) > 0.5 else { return }
-    controller.additionalSafeAreaInsets.bottom += inset
-    compensation = Compensation(controller: controller, inset: inset)
+    let original = controller.additionalSafeAreaInsets.bottom
+    controller.additionalSafeAreaInsets.bottom = original + inset
+    compensation = Compensation(controller: controller, applied: original + inset, original: original)
   }
+  /// Undo exactly our own write. If something else changed the inset since,
+  /// leave that value alone rather than shifting it by our amount.
   private func settleCompensation() {
     guard let pending = compensation else { return }
     compensation = nil
-    pending.controller?.additionalSafeAreaInsets.bottom -= pending.inset
+    restore(pending)
+  }
+  private func restore(_ entry: Compensation) {
+    guard let controller = entry.controller, abs(controller.additionalSafeAreaInsets.bottom - entry.applied) < 0.5 else { return }
+    controller.additionalSafeAreaInsets.bottom = entry.original
+  }
+  /// With the bar committed hidden, the on-screen pushed screen must sit on the
+  /// device's own bottom inset. Cancel any bar-height inset that remains.
+  private func correctHiddenLayout(of entry: UIViewController?, in tabs: UITabBarController) {
+    guard let entry, entry.isViewLoaded, let window = entry.view.window, tabs.isTabBarHidden else { return }
+    let excess = entry.view.safeAreaInsets.bottom - window.safeAreaInsets.bottom
+    guard excess > 1 else { return }
+    let original = entry.additionalSafeAreaInsets.bottom
+    entry.additionalSafeAreaInsets.bottom = original - excess
+    corrections.removeAll { $0.controller == nil || $0.controller === entry }
+    corrections.append(Compensation(controller: entry, applied: original - excess, original: original))
+    entry.view.layoutIfNeeded()
+  }
+  private func releaseCorrections() {
+    let pending = corrections
+    corrections = []
+    for entry in pending { restore(entry) }
   }
 
   private static func contentInset(in tabs: UITabBarController) -> CGFloat {

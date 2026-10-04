@@ -414,6 +414,60 @@ import UIKit
       "The arriving screen is laid out without the bar from its first frame: \(arrivingInsets)")
     XCTAssertTrue(rootInsets.allSatisfy { abs($0 - rootInset) < 1 },
       "The departing root keeps its layout while the bar is still UIKit-visible: \(rootInsets)")
+    XCTAssertEqual(hiddenInset, window.safeAreaInsets.bottom, accuracy: 1,
+      "Once the bar is gone the pushed screen sits on the device's own bottom inset, not the bar's")
+  }
+
+  func testAForeignSafeAreaWriteDuringThePushCannotLeaveTheBarInsetBehind() async throws {
+    guard !UIAccessibility.isReduceMotionEnabled else { throw XCTSkip("Reduced Motion intentionally skips the slide") }
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+    let originalWindow = scene.windows.first(where: \.isKeyWindow)
+    let tabs = UITabBarController()
+    let navigation = makeTabbedStack(tabs)
+    let window = UIWindow(windowScene: scene); window.rootViewController = tabs; window.makeKeyAndVisible()
+    defer { window.isHidden = true; originalWindow?.makeKey() }
+    tabs.view.layoutIfNeeded()
+    try await Task.sleep(for: .milliseconds(100))
+    let rootInset = navigation.viewControllers[0].view.safeAreaInsets.bottom
+    let screen = pushedScreen()
+    navigation.pushViewController(screen, animated: true)
+    try await Task.sleep(for: .milliseconds(80))
+    // A hosting controller may rewrite its own additionalSafeAreaInsets while it
+    // appears. Our transient offset must be undone absolutely, never relatively.
+    screen.additionalSafeAreaInsets.bottom = 0
+    try await Task.sleep(for: .milliseconds(700))
+    XCTAssertTrue(tabs.isTabBarHidden)
+    XCTAssertEqual(screen.view.safeAreaInsets.bottom, window.safeAreaInsets.bottom, accuracy: 1,
+      "The pushed screen must not keep a bar-height gap after the bar is hidden")
+    navigation.popViewController(animated: false)
+    navigation.view.layoutIfNeeded()
+    try await Task.sleep(for: .milliseconds(150))
+    XCTAssertFalse(tabs.isTabBarHidden)
+    XCTAssertEqual(navigation.viewControllers[0].view.safeAreaInsets.bottom, rootInset, accuracy: 1)
+  }
+
+  func testAScreenAppearingAboveAHiddenBarIsLaidOutOnTheDeviceInset() {
+    let tabs = RecordingTabs()
+    let navigation = makeTabbedStack(tabs)
+    let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 402, height: 874))
+    window.rootViewController = tabs; window.makeKeyAndVisible()
+    defer { window.isHidden = true }
+    tabs.view.layoutIfNeeded(); settle()
+    navigation.pushViewController(pushedScreen(), animated: false)
+    navigation.view.layoutIfNeeded(); settle()
+    XCTAssertTrue(tabs.isTabBarHidden)
+    // A second hiding screen never moves the bar, so its layout is checked when
+    // it settles: any leftover bottom inset beyond the device's own is removed.
+    let above = pushedScreen()
+    above.additionalSafeAreaInsets.bottom = 49
+    navigation.pushViewController(above, animated: false)
+    navigation.view.layoutIfNeeded(); settle()
+    XCTAssertTrue(tabs.isTabBarHidden)
+    XCTAssertEqual(tabs.requests.count, 1)
+    XCTAssertEqual(above.view.safeAreaInsets.bottom, window.safeAreaInsets.bottom, accuracy: 1)
+    navigation.popToRootViewController(animated: false)
+    navigation.view.layoutIfNeeded(); settle()
+    XCTAssertFalse(tabs.isTabBarHidden)
   }
 
   func testACancelledInteractivePopRestoresTheHiddenBarAndTheScreenLayout() async throws {
