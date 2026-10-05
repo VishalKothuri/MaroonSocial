@@ -1121,6 +1121,8 @@ extension AppStore {
     state.draftOwner = UUID().uuidString
     compositions.reset(owner: state.draftOwner!)
     GroupPhotoCache.shared.clear()
+    // Identity changes already wipe it; fixture deletions and sign-outs must not leave media behind either.
+    social.media.wipe()
     busy = false; syncing = false; creatingPost = false; drainingOutbox = false; sendingQueuedID = nil
     connected = false; connectionError = nil; nsfwEnabled = false; karma = 0; tab = 0
     ownPostIDs = []; ownCommentIDs = []; ownMessageIDs = []

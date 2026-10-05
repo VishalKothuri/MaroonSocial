@@ -3,6 +3,7 @@ import { wakePushWorker } from '../_shared/push-wake.ts';
 import { socialIdentity, SocialAuthError, authFailure, authBridge, sha256 } from '../_shared/social-auth.ts';
 import { Image, GIF } from 'jsr:@matmen/imagescript@1.3.1';
 import { sanitizeVideo, VideoMediaError } from '../_shared/video-media.ts';
+import { mediaStore, newMediaPath, groupByBackend, MediaStoreError, type MediaRead } from '../_shared/media-store.ts';
 // A device credential is server-authenticated; it does not assert university enrollment.
 const base = Deno.env.get('SUPABASE_URL')!;
 const secret = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -10,6 +11,11 @@ const headers = {'Content-Type':'application/json','Cache-Control':'no-store'};
 const respond=(value:unknown,status=200)=>new Response(JSON.stringify(value),{status,headers});
 const sha=async(value:string)=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value)))).map(v=>v.toString(16).padStart(2,'0')).join('');
 const authHeaders={'apikey':secret,'Authorization':'Bearer '+secret};
+// Supabase Storage unless MEDIA_BACKEND=r2 with complete R2 credentials (see _shared/media-store.ts).
+const store=mediaStore();
+// A URL-capable store answers with {url,expires}; Supabase Storage keeps today's inline media_data.
+const mediaReply=(media:MediaRead)=>'url' in media?{url:media.url,expires:media.expires}:{media_data:encodeBase64(media.bytes)};
+async function readMedia(path:string,mime:string,missing:string){try{return await store.read(path,{mime})}catch(error){if(error instanceof MediaStoreError&&error.kind==='not_found')throw new ClientError(missing,'not_found',404);if(error instanceof MediaStoreError)console.error('social_media_read_failed',error.kind);throw error}}
 const activityActions=new Set(['notifications','notification.read','notifications.read_all','library']);
 // Private administrator access: client action -> organization_access RPC action, forwarding only documented input keys.
 const organizationActions:Record<string,string>={'organization.admins':'get','organization.invitations':'incoming','organization.invite':'invite','organization.revoke':'revoke','organization.remove':'remove','organization.leave':'leave','organization.accept':'accept','organization.decline':'decline'};
@@ -90,10 +96,10 @@ Deno.serve(async req=>{
   if(action==='attachment.upload'){
    await rpc('attachment.authorize',hash,payload);
    const file=payload.kind==='video'?sanitizeVideo(payload.data):await sanitize(payload.data);
-   const path=crypto.randomUUID()+(({ 'image/png':'.png','image/jpeg':'.jpg','image/gif':'.gif','video/mp4':'.mp4'} as Record<string,string>)[file.mime]??'.img');
+   // Post media may be served from the CDN; room/DM media stays behind presigned or authenticated reads.
+   const path=newMediaPath(({ 'image/png':'.png','image/jpeg':'.jpg','image/gif':'.gif','video/mp4':'.mp4'} as Record<string,string>)[file.mime]??'.img',payload.post_id!=null?'public':'private');
    const reserved=await rpc('attachment.reserve',hash,{room_id:payload.room_id,post_id:payload.post_id,path,kind:file.kind,mime:file.mime,size:file.bytes.length,feed_community:payload.feed_community});
-   const uploaded=await fetch(base+'/storage/v1/object/social-media/'+path,{method:'POST',headers:{...authHeaders,'Content-Type':file.mime,'x-upsert':'false'},body:new Uint8Array(file.bytes).buffer,signal:AbortSignal.timeout(18000)});
-   if(!uploaded.ok)throw new ClientError('Your attachment could not upload. Please retry.','upload_failed',503);
+   try{await store.put(path,file.bytes,file.mime)}catch{throw new ClientError('Your attachment could not upload. Please retry.','upload_failed',503)}
    const result=await rpc('attachment.commit',hash,{attachment_id:reserved.attachment_id,feed_community:payload.feed_community});
    return respond(result);
   }
@@ -104,25 +110,22 @@ Deno.serve(async req=>{
    if(name==='publish'){
     const file=await sanitize(String(input.data??''));
     if(file.kind!=='image')throw new ClientError('Share a still image as a meme.');
+    // shared_memes.path is CHECK-constrained to a bare <uuid>.<ext>, so memes stay on Supabase Storage until a migration relaxes it.
     const path=crypto.randomUUID()+(file.mime==='image/png'?'.png':'.jpg');
-    const uploaded=await fetch(base+'/storage/v1/object/social-media/'+path,{method:'POST',headers:{...authHeaders,'Content-Type':file.mime,'x-upsert':'false'},body:new Uint8Array(file.bytes).buffer,signal:AbortSignal.timeout(18000)});
-    if(!uploaded.ok)throw new ClientError('Your meme could not upload. Please retry.','upload_failed',503);
+    try{await store.put(path,file.bytes,file.mime)}catch{throw new ClientError('Your meme could not upload. Please retry.','upload_failed',503)}
     try{return respond(await rpc('publish',hash,{path,mime:file.mime,size:file.bytes.length,width:file.width,height:file.height,title:typeof input.title==='string'?input.title.slice(0,80):''},'social_memes'));}
-    catch(error){try{await fetch(base+'/storage/v1/object/social-media',{method:'DELETE',headers:{...authHeaders,'Content-Type':'application/json'},body:JSON.stringify({prefixes:[path]}),signal:AbortSignal.timeout(5000)})}catch{console.error('shared_meme_cleanup_pending')}throw error;}
+    catch(error){try{await store.remove([path],{timeoutMs:5000})}catch{console.error('shared_meme_cleanup_pending')}throw error;}
    }
    const result=await rpc(name,hash,input,'social_memes');
    if(name!=='read')return respond(result);
-   const media=await fetch(base+'/storage/v1/object/authenticated/social-media/'+result.path,{headers:authHeaders,signal:AbortSignal.timeout(18000)});
-   if(!media.ok)throw new ClientError('This meme is no longer available.','not_found',404);
-   return respond({meme_id:result.meme_id,mime:result.mime,media_data:encodeBase64(new Uint8Array(await media.arrayBuffer()))});
+   const media=await readMedia(result.path,result.mime,'This meme is no longer available.');
+   return respond({meme_id:result.meme_id,mime:result.mime,...mediaReply(media)});
   }
   if(action==='attachment.read'){
    const allowed=await rpc('read',hash,payload,'social_external_media');
    if(allowed.external_media)return respond({attachment_id:allowed.attachment_id,external_media:allowed.external_media});
-   const media=await fetch(base+'/storage/v1/object/authenticated/social-media/'+allowed.path,{headers:authHeaders,signal:AbortSignal.timeout(18000)});
-   if(!media.ok)throw new ClientError('This attachment is no longer available.','not_found',404);
-   const bytes=new Uint8Array(await media.arrayBuffer());
-   return respond({attachment_id:allowed.attachment_id,mime:allowed.mime,media_data:encodeBase64(bytes)});
+   const media=await readMedia(allowed.path,allowed.mime,'This attachment is no longer available.');
+   return respond({attachment_id:allowed.attachment_id,mime:allowed.mime,...mediaReply(media)});
   }
   const result=await rpc(action,hash,payload);
   if(['comment.create','comment.vote','post.vote','dm.request','room.send','group.invite','organization.message','organization.publish'].includes(action))wakePushWorker();
@@ -134,12 +137,12 @@ Deno.serve(async req=>{
   if(action==='account.delete'){
    try{await cleanupDeletedAuthUsers(2)}catch{console.error('auth_user_cleanup_pending')}
    const paths=result.storage_paths??[];delete result.storage_paths;
-   if(paths.length){
+   // Each backend is removed and acknowledged on its own; anything unacknowledged stays queued for the worker.
+   for(const group of Object.values(groupByBackend(paths)))if(group.length){
     try{
-     const removed=await fetch(base+'/storage/v1/object/social-media',{method:'DELETE',headers:{...authHeaders,'Content-Type':'application/json'},body:JSON.stringify({prefixes:paths}),signal:AbortSignal.timeout(18000)});
-     if(!removed.ok)console.error('social_media_cleanup_pending',removed.status);
-     else await fetch(base+'/rest/v1/rpc/social_media_cleanup_complete',{method:'POST',headers:{...authHeaders,'Content-Type':'application/json'},body:JSON.stringify({p_paths:paths}),signal:AbortSignal.timeout(5000)});
-    }catch{console.error('social_media_cleanup_pending')}
+     await store.remove(group);
+     await fetch(base+'/rest/v1/rpc/social_media_cleanup_complete',{method:'POST',headers:{...authHeaders,'Content-Type':'application/json'},body:JSON.stringify({p_paths:group}),signal:AbortSignal.timeout(5000)});
+    }catch(error){if(error instanceof MediaStoreError&&error.status)console.error('social_media_cleanup_pending',error.status);else console.error('social_media_cleanup_pending')}
    }
   }
   if(action==='register')result.token=token;

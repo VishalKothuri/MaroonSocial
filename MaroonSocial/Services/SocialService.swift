@@ -145,12 +145,15 @@ struct SocialResponse: Decodable {
   var mediaData: String?
   var externalMedia: KlipyReference?
   var mime: String?
+  /// Set instead of `media_data` when the media store hands out a URL (R2 presigned GET or CDN).
+  var url: URL?
+  var expires: Double?
   // Filled by the authenticated transport for active navigation scopes. These
   // are separate from the feed so discovering old posts cannot expand it.
   var tagPages: [SocialTagPage]? = nil
   var libraryPages: [SocialLibraryPage]? = nil
   enum CodingKeys: String, CodingKey {
-    case snapshot, token, mime
+    case snapshot, token, mime, url, expires
     case resourceID = "resource_id", attachmentID = "attachment_id", mediaData = "media_data", externalMedia = "external_media"
   }
 }
@@ -189,7 +192,11 @@ struct SocialServiceError: Error, Decodable, LocalizedError {
   private let credentials: SocialCredentialStore
   private let transport: Transport?
   let auth: EmailAuthService?
-  private var identityGeneration = 0
+  /// On-device attachment cache; wiped whenever the identity changes.
+  let media: MediaStore
+  /// GET for store-issued media URLs. Injectable for tests.
+  var mediaDownloader: (URL) async throws -> (data: Data, mime: String?) = { try await MediaDownload.fetch($0) }
+  private var identityGeneration = 0 { didSet { media.wipe() } }
   var identityRevision: Int { identityGeneration }
   var hasStoredCredential: Bool { token != nil || auth?.signedIn == true }
   var usesEmailSession: Bool { token == nil && auth?.signedIn == true }
@@ -204,10 +211,12 @@ struct SocialServiceError: Error, Decodable, LocalizedError {
     return decoder
   }()
 
-  init(credentials: SocialCredentialStore? = nil, auth: EmailAuthService? = nil, transport: Transport? = nil) {
+  init(credentials: SocialCredentialStore? = nil, auth: EmailAuthService? = nil, transport: Transport? = nil, media: MediaStore? = nil) {
     let credentials = credentials ?? .keychain
     self.credentials = credentials
     self.transport = transport
+    // Injected transports (tests) never share the app's on-disk cache.
+    self.media = media ?? (transport == nil ? .shared : .temporary())
     self.auth = auth
     token = credentials.read()
   }
@@ -382,11 +391,38 @@ struct SocialServiceError: Error, Decodable, LocalizedError {
     return id
   }
   func attachment(_ id: String) async throws -> Data { try await attachmentContent(id).data }
+  /// Cache first (memory, then disk); a miss loads once from the network and is stored.
   func attachmentContent(_ id: String) async throws -> (data: Data, isKlipy: Bool, mime: String?) {
-    let response = try await perform("attachment.read", payload: ["attachment_id": id])
-    if let reference = response.externalMedia { return (try await KlipyNetwork.media(reference), true, reference.mime) }
-    guard let value = response.mediaData, let data = Data(base64Encoded: value) else { throw URLError(.cannotDecodeRawData) }
-    return (data, false, response.mime)
+    let content = try await media.content(id) { [weak self] id in
+      guard let self else { throw CancellationError() }
+      return try await self.fetchAttachment(id)
+    }
+    return (content.data, content.isKlipy, content.mime)
+  }
+  /// Warms the cache for the next feed rows.
+  func prefetchAttachments(_ ids: [String]) {
+    media.prefetch(ids: ids) { [weak self] id in
+      guard let self else { throw CancellationError() }
+      return try await self.fetchAttachment(id)
+    }
+  }
+  /// Media reads do not mutate anything, so they skip the serial mutation queue (a screen of
+  /// attachments must not delay a vote); the identity epoch still cancels them on account switch.
+  private func fetchAttachment(_ id: String) async throws -> MediaContent {
+    let epoch = identityGeneration
+    let data = try await raw("social", action: "attachment.read", payload: ["attachment_id": id], authenticated: true)
+    // A 5 MB attachment is ~6.7 MB of JSON and base64: parse it off the main actor (prefetch runs this while scrolling).
+    let reply = try await Task.detached(priority: Task.currentPriority) { try AttachmentReply.decode(data) }.value
+    let content: MediaContent
+    switch reply {
+    case .external(let reference): content = MediaContent(data: try await KlipyNetwork.media(reference), mime: reference.mime, isKlipy: true)
+    case .url(let url, let mime):
+      let download = try await mediaDownloader(url)
+      content = MediaContent(data: download.data, mime: mime ?? download.mime)
+    case .bytes(let bytes, let mime): content = MediaContent(data: bytes, mime: mime)
+    }
+    guard epoch == identityGeneration else { throw CancellationError() }
+    return content
   }
   func clearCredentialAfterDeletion() {
     identityGeneration += 1
@@ -556,5 +592,27 @@ private enum SocialCredential {
     SecItemDelete(query as CFDictionary)
     SecItemDelete(deletionQuery as CFDictionary)
     clearLinkPending()
+  }
+}
+
+/// `attachment.read`'s answer: a KLIPY reference, a store-issued URL, or inline base64 bytes.
+/// Decoded with no actor isolation so the JSON and base64 work never runs on the main thread.
+enum AttachmentReply: Sendable {
+  case external(KlipyReference)
+  case url(URL, mime: String?)
+  case bytes(Data, mime: String?)
+  private struct Body: Decodable {
+    var mediaData: String?
+    var externalMedia: KlipyReference?
+    var mime: String?
+    var url: URL?
+    enum CodingKeys: String, CodingKey { case mime, url, mediaData = "media_data", externalMedia = "external_media" }
+  }
+  static func decode(_ data: Data) throws -> AttachmentReply {
+    let body = try JSONDecoder().decode(Body.self, from: data)
+    if let reference = body.externalMedia { return .external(reference) }
+    if let url = body.url { return .url(url, mime: body.mime) }
+    guard let value = body.mediaData, let bytes = Data(base64Encoded: value) else { throw URLError(.cannotDecodeRawData) }
+    return .bytes(bytes, mime: body.mime)
   }
 }

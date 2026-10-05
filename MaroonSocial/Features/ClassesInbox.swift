@@ -561,19 +561,31 @@ struct RemoteMedia: View {
   var layout: Layout = .fill
   /// Width cap for the feed layout; quote cards pass a smaller one.
   var maxWidth: CGFloat = MediaGeometry.feedMaxWidth
-  @State private var data: Data?
+  /// Loaded content, tagged with its id so a reused row never shows another attachment.
+  @State private var loaded: (id: String, content: MediaContent)?
   @State private var failed = false
-  @State private var isKlipy = false
-  @State private var isVideo = false
   @State private var retry = 0
+  /// Loads restarted because a cache clear or account switch cancelled the shared load (bounded).
+  @State private var restarts = 0
   @State private var paused = false
+  /// Read through the media cache: a memory or disk hit renders on the first pass, with no spinner.
+  private var content: MediaContent? {
+    if let loaded, loaded.id == attachmentID { return loaded.content }
+    return store.social.media.peek(attachmentID)
+  }
   var body: some View {
+    let content = content
+    let data = content?.data
+    let isKlipy = content?.isKlipy ?? false
+    let isVideo = content?.mime == "video/mp4"
     Group {
       if let data, isVideo {
         if layout == .feed { VideoAttachmentView(data: data).postMedia(ratio: MediaGeometry.ratio(of: data), maxWidth: maxWidth) } else { VideoAttachmentView(data: data) }
       }
       else if let data {
-        let picture = AnimatedMedia(data: data, paused: paused).overlay(alignment: .bottomLeading) { if isKlipy { Text("KLIPY").font(.caption2.bold()).padding(5).background(Palette.paper.opacity(0.9), in: RoundedRectangle(cornerRadius: 5)).padding(6) } }
+        let id = attachmentID, media = store.social.media
+        // The frame decoded the last time this attachment was shown is drawn until this view's own decode lands.
+        let picture = AnimatedMedia(data: data, paused: paused, placeholder: media.firstFrame(id), onFirstFrame: { media.rememberFrame($0, for: id) }).overlay(alignment: .bottomLeading) { if isKlipy { Text("KLIPY").font(.caption2.bold()).padding(5).background(Palette.paper.opacity(0.9), in: RoundedRectangle(cornerRadius: 5)).padding(6) } }
           .overlay(alignment: .bottomTrailing) {
             if String(data: data.prefix(6), encoding: .ascii)?.hasPrefix("GIF") == true {
               Button { paused.toggle() } label: { Image(systemName: paused ? "play.circle.fill" : "pause.circle.fill").font(.title2).padding(8).background(.ultraThinMaterial, in: Circle()) }.accessibilityLabel(paused ? "Play GIF" : "Pause GIF")
@@ -583,9 +595,26 @@ struct RemoteMedia: View {
         else { picture.frame(minHeight: 160).clipShape(RoundedRectangle(cornerRadius: 12)) }
       }
       else if failed { Button("Reload attachment") { retry += 1 }.font(.caption).padding(20) }
+      else if let frame = store.social.media.firstFrame(attachmentID) {
+        // Bytes were evicted from memory but the decoded first frame survived: show it while disk reads.
+        let picture = Image(uiImage: frame).resizable().scaledToFill()
+        if layout == .feed { picture.postMedia(ratio: frame.size.height > 0 ? frame.size.width / frame.size.height : nil, maxWidth: maxWidth) }
+        else { picture.frame(minHeight: 160).clipShape(RoundedRectangle(cornerRadius: 12)) }
+      }
       else if layout == .feed { ProgressView().frame(width: min(180, maxWidth), height: 120 * min(180, maxWidth) / 180).background(Palette.elevated.opacity(0.4), in: RoundedRectangle(cornerRadius: 14, style: .continuous)).frame(maxWidth: .infinity, alignment: .leading) }
       else { ProgressView().frame(height: 120) }
-    }.task(id: "\(attachmentID)-\(retry)") { do { let result = try await store.social.attachmentContent(attachmentID); try Task.checkCancellation(); data = result.data; isKlipy = result.isKlipy; isVideo = result.mime == "video/mp4"; failed = false } catch { failed = true } }
+    }.task(id: "\(attachmentID)-\(retry)") {
+      let id = attachmentID
+      if loaded?.id == id { return }
+      if let hit = store.social.media.peek(id) { loaded = (id, hit); failed = false; return }
+      do {
+        let result = try await store.social.attachmentContent(id); try Task.checkCancellation()
+        loaded = (id, MediaContent(data: result.data, mime: result.mime, isKlipy: result.isKlipy)); failed = false; restarts = 0
+      } catch is CancellationError where !Task.isCancelled && restarts < 3 {
+        // "Clear media cache" or an account switch cancelled the shared load, not this view: load again.
+        restarts += 1; retry += 1
+      } catch { if !Task.isCancelled { failed = true } }
+    }
   }
 }
 
@@ -625,6 +654,10 @@ extension MediaAttachment {
 struct AnimatedMedia: UIViewRepresentable {
   let data: Data
   var paused = false
+  /// Drawn while `data` decodes (the cached first frame of the same media), so a re-created row never blanks.
+  var placeholder: UIImage? = nil
+  /// Receives the decoded first frame, so it can be reused the next time this media appears.
+  var onFirstFrame: ((UIImage) -> Void)? = nil
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   final class MediaImageView: UIImageView {
     private let unavailable = UILabel()
@@ -650,12 +683,12 @@ struct AnimatedMedia: UIViewRepresentable {
     private var wantsAnimation = false
     private var playing = false
     static let animationKey = "maroonGIFFrames"
-    func display(_ data: Data, in view: UIImageView, animate: Bool) {
+    func display(_ data: Data, in view: UIImageView, animate: Bool, placeholder: UIImage? = nil, onFirstFrame: ((UIImage) -> Void)? = nil) {
       wantsAnimation = animate
       guard displayedData != data else { apply(to: view); return }
       displayedData = data; revision += 1; let expected = revision
       decodeTask?.cancel(); prepared = nil; firstFrame = nil; playing = false
-      view.layer.removeAnimation(forKey: Self.animationKey); view.image = nil
+      view.layer.removeAnimation(forKey: Self.animationKey); view.image = placeholder
       (view as? MediaImageView)?.resetStatus()
       decodeTask = Task { [weak self, weak view] in
         let worker = Task.detached(priority: .userInitiated) { try MediaCompression.displayFrames(data) }
@@ -664,6 +697,7 @@ struct AnimatedMedia: UIViewRepresentable {
           guard !Task.isCancelled, let self, let view, self.revision == expected else { return }
           self.prepared = decoded; self.firstFrame = decoded.frames.first.map { UIImage(cgImage: $0) }
           view.image = self.firstFrame; self.apply(to: view)
+          if let frame = self.firstFrame { onFirstFrame?(frame) }
         } catch {
           guard !Task.isCancelled, let self, let view, self.revision == expected else { return }
           do {
@@ -719,7 +753,7 @@ struct AnimatedMedia: UIViewRepresentable {
     return CGSize(width: width, height: max(1, height))
   }
   func updateUIView(_ view: UIImageView, context: Context) {
-    context.coordinator.display(data, in: view, animate: !paused && !reduceMotion)
+    context.coordinator.display(data, in: view, animate: !paused && !reduceMotion, placeholder: placeholder, onFirstFrame: onFirstFrame)
   }
   static func dismantleUIView(_ view: UIImageView, coordinator: Coordinator) { coordinator.stop(view) }
 

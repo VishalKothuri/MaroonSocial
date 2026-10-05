@@ -24,9 +24,14 @@ supabase secrets set NAME=value --project-ref myxbghfbapbfffkpndwo
 | `R2_ACCESS_KEY_ID` | R2 → Manage API tokens → create token with Object Read & Write on the bucket | R2 storage | Same as above |
 | `R2_SECRET_ACCESS_KEY` | Shown once with the token above | R2 storage | Same as above |
 | `R2_BUCKET` | The bucket name you create in R2 | R2 storage | Same as above |
-| `R2_PUBLIC_BASE_URL` (optional) | The custom domain you attach to the bucket, e.g. `https://media.<your domain>` | CDN delivery for post media | Media is served through short-lived signed URLs without the CDN |
+| `R2_PRIVATE_BUCKET` (optional) | A second R2 bucket for chat and DM media; never attach a custom domain to it | Chat and DM media on R2 | Chat and DM media stays on Supabase Storage |
+| `R2_PUBLIC_BASE_URL` (optional) | The custom domain you attach to `R2_BUCKET` only, e.g. `https://media.<your domain>` | CDN delivery for post media | Post media is served through 24-hour signed URLs without the CDN |
+| `R2_CDN_ZONE_ID` (with the CDN) | Cloudflare dashboard → the domain's zone id | Purging deleted post media from the CDN | CDN URLs are not issued |
+| `R2_CDN_PURGE_TOKEN` (with the CDN) | Cloudflare API token with only Zone → Cache Purge on that zone | Purging deleted post media from the CDN | CDN URLs are not issued |
 | `REALTIME_JWT_SECRET` | Supabase dashboard → Project Settings → API → JWT secret (or an imported signing key) | Realtime pokes for chats, inbox and game-day chat | Chats and inbox keep polling every few seconds |
 | `CF_REALTIME_APP_ID`, `CF_REALTIME_APP_SECRET` (later) | Cloudflare Realtime → SFU app | SFU for group calls | Group calls keep the current path |
+
+Order for R2: apply the revocation migration, set the four `R2_*` credentials (and `R2_PRIVATE_BUCKET` if chats should use R2), then `MEDIA_BACKEND=r2`, and redeploy the functions. The CDN comes last: zone id and purge token first, then `R2_PUBLIC_BASE_URL`. Switching `MEDIA_BACKEND` back off is safe because every object records its backend in its path.
 
 Dashboard-only setup (no secret): create the R2 bucket, attach the custom domain, add a Cache Rule "Eligible for cache / respect origin" on that hostname, and enable Smart Tiered Cache. After Realtime is confirmed working, turn off Realtime "Allow public access" in Supabase.
 
@@ -38,6 +43,8 @@ Schema changes are applied by the owner. These migration files are in `supabase/
 |---|---|---|
 | `20261005160000_feed_sync_incremental.sql` | Incremental feed (only new or changed posts every few seconds), 30-post pages with infinite scroll, "Load earlier replies", per-chat message catch-up | Apply together with the next file, in this order |
 | `20261005170000_feed_sync_review_fixes.sql` | Review fixes for the file above: no change clock that could link anonymous posts to accounts, per-member resync instead, message edits/reactions/unsends in the catch-up, input range checks | `python3 tools/test-feed-sync.py`, then `psql … -f tools/test-feed-sync-security.sql` |
+
+| `20261005190000_r2_media_revocation.sql` | Deleted posts and attachments queue their R2 objects for deletion and CDN purge. Apply it before setting `MEDIA_BACKEND=r2` | `psql … -f tools/test-r2-media-revocation.sql` |
 
 Apply the two feed-sync files back to back and never the first one alone: on its own it would publish a raw change clock that the second file removes.
 

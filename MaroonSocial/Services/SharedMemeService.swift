@@ -35,10 +35,12 @@ struct SharedMeme: Identifiable, Equatable, Decodable {
     var memeID: String
     enum CodingKeys: String, CodingKey { case memeID = "meme_id" }
   }
+  /// Inline bytes from Supabase Storage, or a URL when the media store issues one.
   struct Content: Decodable {
     var mime: String?
-    var mediaData: String
-    enum CodingKeys: String, CodingKey { case mime, mediaData = "media_data" }
+    var mediaData: String?
+    var url: URL?
+    enum CodingKeys: String, CodingKey { case mime, mediaData = "media_data", url }
   }
   static let pageSize = 24
   static let maximumBytes = 5_000_000
@@ -57,6 +59,8 @@ struct SharedMeme: Identifiable, Equatable, Decodable {
     else { transport = { action, payload in try await social.sendData(endpoint: "social", action: action, payload: payload) } }
   }
   init(transport: @escaping Transport) { self.transport = transport }
+  /// GET for store-issued meme URLs. Injectable for tests.
+  @ObservationIgnored var downloader: (URL) async throws -> Data = { try await MediaDownload.fetch($0).data }
 
   func cancel() { generation += 1; loading = false }
   func load(query: String, more: Bool = false) async {
@@ -92,7 +96,11 @@ struct SharedMeme: Identifiable, Equatable, Decodable {
   func media(for meme: SharedMeme) async throws -> Data {
     if let cached = cache[meme.id] { return cached }
     let content = try JSONDecoder().decode(Content.self, from: try await transport("meme.read", ["meme_id": meme.id]))
-    guard let bytes = Data(base64Encoded: content.mediaData), !bytes.isEmpty, bytes.count <= Self.maximumBytes else {
+    let downloaded: Data?
+    if let encoded = content.mediaData { downloaded = Data(base64Encoded: encoded) }
+    else if let url = content.url { downloaded = try? await downloader(url) }
+    else { downloaded = nil }
+    guard let bytes = downloaded, !bytes.isEmpty, bytes.count <= Self.maximumBytes else {
       throw SharedMemeFailure(message: "This meme is no longer available.")
     }
     try KlipyNetwork.validateMedia(bytes)

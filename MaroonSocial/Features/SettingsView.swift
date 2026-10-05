@@ -6,6 +6,7 @@ struct SettingsView: View {
   @Environment(\.dismiss) private var dismiss
   @State private var deleting = false
   @State private var haptics = AppHaptics.shared
+  @State private var mediaCacheCleared = false
   var body: some View {
     @Bindable var haptics = haptics
     NavigationStack {
@@ -49,6 +50,9 @@ struct SettingsView: View {
         Section("People & privacy") {
           NavigationLink("Connections and requests") { ConnectionsView(social: store.social).appHapticOnOpen() }
           NavigationLink("Blocked accounts and data export") { PrivacyControlsView(social: store.social).appHapticOnOpen() }
+          Button { Task { await store.social.media.wipeAndWait(); mediaCacheCleared = true; AppHaptics.shared.play(.success) } } label: {
+            LabeledContent("Clear media cache") { if mediaCacheCleared { Text("Cleared") } }
+          }.accessibilityIdentifier("clearMediaCache").accessibilityHint("Removes downloaded photos and videos from this device. They load again when viewed.")
           Text("Anonymous posts, anonymous replies and post-origin conversations do not show your username to other members. Posts and replies you publish by name, named classes and activities use your account username. Each group uses the alias and avatar you choose for that group.").font(.subheadline)
           Text("Messages and reports are stored on the service and are not end-to-end encrypted. Login credentials are stored securely on this device. Personal email recovery becomes available after email delivery is configured and you link your account. Verify your TAMU mailbox from the account section when email delivery is available.").font(.subheadline)
           Text("Reports are saved for review. This development service does not have a staffed emergency response team.").font(.caption).foregroundStyle(.secondary)

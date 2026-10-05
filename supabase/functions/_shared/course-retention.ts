@@ -1,8 +1,11 @@
 import { refreshCourseCalendar, type CourseCalendarDB } from './course-calendar.ts';
+import { groupByBackend, isValidR2Path, R2Store, type MediaStore } from './media-store.ts';
 
 interface RetentionOptions {
   fetcher?: typeof fetch;
   storage?: {origin: string; serviceKey: string};
+  /** R2 objects (`r2/...` paths). Defaults to the env-configured store; null when R2 is not configured. */
+  r2?: MediaStore | null;
 }
 const generatedMediaPath = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.(?:jpg|png|gif|mp4)$/i;
 
@@ -23,20 +26,40 @@ export async function maintainCourseChats(db: CourseCalendarDB, options: Retenti
     const response = await db('rpc/course_media_cleanup_batch', {method: 'POST', body: JSON.stringify({p_limit: 100})});
     if (!response.ok) throw new Error('Course media cleanup pending');
     const paths: unknown = await response.json();
-    if (!Array.isArray(paths) || paths.length > 100 || !paths.every(path => typeof path === 'string' && generatedMediaPath.test(path))) throw new Error('Invalid cleanup batch');
+    if (!Array.isArray(paths) || paths.length > 100 || !paths.every(path => typeof path === 'string' && (generatedMediaPath.test(path) || isValidR2Path(path)))) throw new Error('Invalid cleanup batch');
     if (paths.length === 0) break;
-    const secret = options.storage?.serviceKey ?? Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-    const origin = options.storage?.origin ?? Deno.env.get('SUPABASE_URL');
-    if (!secret || !origin) throw new Error('Course media cleanup configuration unavailable');
-    const deleted = await fetcher(origin + '/storage/v1/object/social-media', {
-      method: 'DELETE', headers: {apikey: secret, Authorization: 'Bearer ' + secret, 'Content-Type': 'application/json'},
-      body: JSON.stringify({prefixes: paths}), signal: AbortSignal.timeout(20000),
-    });
-    // Storage's bulk-delete endpoint returns 200 when complete. A 202/204 or
-    // failed/ambiguous response must retain the queue for an idempotent retry.
-    if (deleted.status !== 200) throw new Error('Course media cleanup pending');
-    const acknowledged = await db('rpc/social_media_cleanup_complete', {method: 'POST', body: JSON.stringify({p_paths: paths})});
+    const groups = groupByBackend(paths as string[]);
+    const done: string[] = [];
+    if (groups.r2.length) {
+      // R2 objects are removed only when credentials exist (they remain after a switch back).
+      // Without them the paths stay queued and Supabase paths in the same batch still drain.
+      const r2 = options.r2 === undefined ? R2Store.fromEnv() : options.r2;
+      if (!r2) console.error('r2_media_cleanup_unconfigured', groups.r2.length);
+      else {
+        try { await r2.remove(groups.r2); done.push(...groups.r2); }
+        catch { console.error('r2_media_cleanup_pending'); }
+      }
+    }
+    if (groups.supabase.length) {
+      const secret = options.storage?.serviceKey ?? Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+      const origin = options.storage?.origin ?? Deno.env.get('SUPABASE_URL');
+      if (!secret || !origin) throw new Error('Course media cleanup configuration unavailable');
+      const deleted = await fetcher(origin + '/storage/v1/object/social-media', {
+        method: 'DELETE', headers: {apikey: secret, Authorization: 'Bearer ' + secret, 'Content-Type': 'application/json'},
+        body: JSON.stringify({prefixes: groups.supabase}), signal: AbortSignal.timeout(20000),
+      });
+      // Storage's bulk-delete endpoint returns 200 when complete. A 202/204 or
+      // failed/ambiguous response must retain the queue for an idempotent retry.
+      if (deleted.status !== 200) {
+        if (done.length) await db('rpc/social_media_cleanup_complete', {method: 'POST', body: JSON.stringify({p_paths: done})});
+        throw new Error('Course media cleanup pending');
+    }
+    done.push(...groups.supabase);
+    }
+    if (!done.length) break;
+    const acknowledged = await db('rpc/social_media_cleanup_complete', {method: 'POST', body: JSON.stringify({p_paths: done})});
     if (!acknowledged.ok) throw new Error('Course media acknowledgement pending');
-    if (paths.length < 100) break;
+    // Anything left (unconfigured or failed R2 removal) would come back first; stop instead of spinning.
+    if (paths.length < 100 || done.length < paths.length) break;
   }
 }

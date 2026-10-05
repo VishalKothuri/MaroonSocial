@@ -23,6 +23,15 @@ struct CommunityView: View {
   @State private var showSearch = false
   @State private var conversationID: String?
   @State private var refreshPresentation = RefreshPresentation.idle
+  /// As a row appears, warm the media cache for the next ~10 posts (their own and quoted media).
+  private func prefetchMedia(after post: Post) {
+    guard !store.fixtureMode else { return }
+    let list = posts
+    guard let index = list.firstIndex(where: { $0.id == post.id }) else { return }
+    let upcoming = list[(index + 1)..<min(list.count, index + 11)]
+    let ids = upcoming.flatMap { [$0.attachmentID, $0.quote?.unavailable == true ? nil : $0.quote?.attachmentID].compactMap { $0 } }
+    if !ids.isEmpty { store.social.prefetchAttachments(ids) }
+  }
   private var posts: [Post] {
     let feed = store.state.posts.filter { (store.feedPostIDs?.contains($0.id) ?? true) && $0.community == community }
       .sorted { $0.created > $1.created }
@@ -120,7 +129,10 @@ struct CommunityView: View {
             // Keep the flexible empty state outside the lazy row cache. A
             // filter can remove every row while the feed is scrolled down.
             LazyVStack(spacing: 0) {
-              ForEach(posts) { PostCard(post: $0, onConversationCreated: { conversationID = $0 }, onRepost: { store.quoteRequest = $0 }) }
+              ForEach(posts) { post in
+                PostCard(post: post, onConversationCreated: { conversationID = $0 }, onRepost: { store.quoteRequest = $0 })
+                  .onAppear { prefetchMedia(after: post) }
+              }
               if sort == "Hot" {
                 if store.fillingFeed { ProgressView().controlSize(.small).frame(maxWidth: .infinity, minHeight: 56).accessibilityLabel("Loading more posts") }
               } else if store.feedHasMore && community == store.feedCommunity {
