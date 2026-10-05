@@ -14,7 +14,8 @@ const activityActions=new Set(['notifications','notification.read','notification
 // Private administrator access: client action -> organization_access RPC action, forwarding only documented input keys.
 const organizationActions:Record<string,string>={'organization.admins':'get','organization.invitations':'incoming','organization.invite':'invite','organization.revoke':'revoke','organization.remove':'remove','organization.leave':'leave','organization.accept':'accept','organization.decline':'decline'};
 const organizationInputs:Record<string,string[]>={get:['organization_id'],incoming:[],invite:['organization_id','username','kind','nonce'],revoke:['organization_id','invitation_id'],remove:['organization_id','administrator_key'],leave:['organization_id'],accept:['invitation_id'],decline:['invitation_id']};
-const clientActions=new Set([...activityActions,...Object.keys(organizationActions),'snapshot','profile.update','community.join','community.leave','posts.tag','post.create','post.delete','post.vote','poll.vote','post.save','post.attach','comment.create','comment.delete','comment.vote','course.join','course.leave','activity.create','activity.join','activity.leave','activity.cancel','activity.edit','activity.approve','dm.request','dm.accept','dm.decline','room.send','room.delete','room.react','room.read','room.typing','room.leave','group.create','group.invite','group.accept','group.decline','group.remove','group.transfer','group.leave','join_sports','sports.join','save_event','organization.apply','organization.follow','organization.update','organization.publish','organization.message','report','block','account.delete','attachment.upload','attachment.read','attachment.external']);
+const memeActions:Record<string,string[]>={'meme.publish':['data','title'],'meme.list':['page','query'],'meme.read':['meme_id'],'meme.report':['meme_id','reason'],'meme.remove':['meme_id']};
+const clientActions=new Set([...activityActions,...Object.keys(organizationActions),...Object.keys(memeActions),'snapshot','profile.update','community.join','community.leave','posts.tag','post.create','post.delete','post.vote','poll.vote','post.save','post.attach','comment.create','comment.delete','comment.vote','course.join','course.leave','activity.create','activity.join','activity.leave','activity.cancel','activity.edit','activity.approve','dm.request','dm.accept','dm.decline','room.send','room.delete','room.react','room.read','room.typing','room.leave','group.create','group.invite','group.accept','group.decline','group.remove','group.transfer','group.leave','join_sports','sports.join','save_event','organization.apply','organization.follow','organization.update','organization.publish','organization.message','report','block','account.delete','attachment.upload','attachment.read','attachment.external']);
 class ClientError extends Error {constructor(message:string,public code='invalid',public status=400){super(message)}}
 async function rpc(action:string,hash:string,input:Record<string,unknown>,name='social_gateway'){
  const response=await fetch(base+'/rest/v1/rpc/'+name,{method:'POST',headers:{...authHeaders,'Content-Type':'application/json'},body:JSON.stringify({p_action:action,p_hash:hash,p_input:input}),signal:AbortSignal.timeout(18000)});
@@ -95,6 +96,25 @@ Deno.serve(async req=>{
    if(!uploaded.ok)throw new ClientError('Your attachment could not upload. Please retry.','upload_failed',503);
    const result=await rpc('attachment.commit',hash,{attachment_id:reserved.attachment_id,feed_community:payload.feed_community});
    return respond(result);
+  }
+  if(Object.hasOwn(memeActions,action)){
+   // Shared memes: our own private bucket (KLIPY has no upload API). Only documented keys are forwarded.
+   const input:Record<string,unknown>={};for(const key of memeActions[action])if(payload[key]!==undefined)input[key]=payload[key];
+   const name=action.slice('meme.'.length);
+   if(name==='publish'){
+    const file=await sanitize(String(input.data??''));
+    if(file.kind!=='image')throw new ClientError('Share a still image as a meme.');
+    const path=crypto.randomUUID()+(file.mime==='image/png'?'.png':'.jpg');
+    const uploaded=await fetch(base+'/storage/v1/object/social-media/'+path,{method:'POST',headers:{...authHeaders,'Content-Type':file.mime,'x-upsert':'false'},body:new Uint8Array(file.bytes).buffer,signal:AbortSignal.timeout(18000)});
+    if(!uploaded.ok)throw new ClientError('Your meme could not upload. Please retry.','upload_failed',503);
+    try{return respond(await rpc('publish',hash,{path,mime:file.mime,size:file.bytes.length,width:file.width,height:file.height,title:typeof input.title==='string'?input.title.slice(0,80):''},'social_memes'));}
+    catch(error){try{await fetch(base+'/storage/v1/object/social-media',{method:'DELETE',headers:{...authHeaders,'Content-Type':'application/json'},body:JSON.stringify({prefixes:[path]}),signal:AbortSignal.timeout(5000)})}catch{console.error('shared_meme_cleanup_pending')}throw error;}
+   }
+   const result=await rpc(name,hash,input,'social_memes');
+   if(name!=='read')return respond(result);
+   const media=await fetch(base+'/storage/v1/object/authenticated/social-media/'+result.path,{headers:authHeaders,signal:AbortSignal.timeout(18000)});
+   if(!media.ok)throw new ClientError('This meme is no longer available.','not_found',404);
+   return respond({meme_id:result.meme_id,mime:result.mime,media_data:encodeBase64(new Uint8Array(await media.arrayBuffer()))});
   }
   if(action==='attachment.read'){
    const allowed=await rpc('read',hash,payload,'social_external_media');
