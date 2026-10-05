@@ -320,6 +320,7 @@ extension View {
   func navigationDidShow(_ navigation: UINavigationController, shown: UIViewController) {
     guard let tabs = Self.tabBarController(above: navigation), tabs.view.window != nil else { return }
     let hidden = wantsHidden(stack: navigation.viewControllers, top: shown)
+    if !hidden, !tabs.isTabBarHidden, motionView == nil { refreshCachedPicture(in: tabs) }
     Self.log.info("didShow hidden=\(hidden) committed=\(tabs.isTabBarHidden) inset=\(Double(shown.view.safeAreaInsets.bottom)) device=\(Double(tabs.view.window?.safeAreaInsets.bottom ?? -1))")
     if tabs.isTabBarHidden == hidden { if hidden { correctHiddenLayout(of: shown, in: tabs) }; return }
     apply(hidden: hidden, in: tabs, coordinator: nil, arriving: shown, departing: nil)
@@ -446,6 +447,10 @@ extension View {
     clearMotion(in: tabs)
     let animated = coordinator?.isAnimated == true && !UIAccessibility.isReduceMotionEnabled && bar.window != nil
     guard animated, let coordinator else {
+      // A push that arrives without a transition (for example a conversation
+      // pushed while its request sheet dismisses) still needs the bar's
+      // picture later, when the user comes back with an animated pop.
+      if hidden, let picture = Self.picture(of: bar, in: tabs) { cachedBarSnapshot = picture.view; cachedBarFrame = picture.frame }
       Self.log.info("commit without motion hidden=\(hidden)")
       commit(hidden: hidden, in: tabs, entry: arriving); return
     }
@@ -556,6 +561,13 @@ extension View {
     // The real bar must never stay transparent, whatever interrupts the slide.
     DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { finish() }
     Self.log.info("\(hidden ? "hide" : "show") motion started distance=\(Double(distance)) interactive=\(interactive) settled=\(settled) animationsEnabledOnEntry=\(animationsWereEnabled)")
+  }
+
+  /// Keep the picture current while the bar rests on screen, so the next push
+  /// or pop has a fresh copy even if the push itself cannot animate.
+  private func refreshCachedPicture(in tabs: UITabBarController) {
+    guard tabs.tabBar.alpha > 0.99, let picture = Self.picture(of: tabs.tabBar, in: tabs) else { return }
+    cachedBarSnapshot = picture.view; cachedBarFrame = picture.frame
   }
 
   /// Remove an in-flight slide and give the real bar its appearance back.

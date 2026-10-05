@@ -30,7 +30,7 @@ struct GameLobbyView: View {
             .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
         }
         if matching.searching {
-          LoadingWordmark(animating: true, size: 24).frame(height: 56).accessibilityLabel("Searching for a player")
+          BlinkingWordmark(size: 40).frame(maxWidth: .infinity).padding(.vertical, 6).accessibilityLabel("Searching for a player")
           Button("Cancel search") {
             AppHaptics.shared.play(.impact)
             Task { await matching.cancel(using: store.social) }

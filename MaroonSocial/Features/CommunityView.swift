@@ -77,7 +77,7 @@ struct CommunityView: View {
         }.id(community).transaction { $0.animation = nil }.accessibilityIdentifier("communityPicker").disabled(compose)
         if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 0) }
         HStack(spacing: 8) {
-          CompactSelector(options: ["New", "Hot"], selection: Binding(get: { sort }, set: chooseSort))
+          CompactSelector(options: ["New", "Hot"], selection: Binding(get: { sort }, set: chooseSort), compact: true)
           if dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 0) }
           Button { AppHaptics.shared.play(.impact); savedOnly.toggle() } label: {
           Image(systemName: savedOnly ? "bookmark.fill" : "bookmark").frame(width: 44, height: 44)
@@ -236,8 +236,8 @@ struct PostCard: View {
           NavigationLink { PostDetailView(id: post.id).appHapticOnOpen().toolbar(.visible, for: .navigationBar) } label: { bodyText }.buttonStyle(.plain)
         } else { bodyText }
       }
-      if let attachmentID = post.attachmentID { RemoteMedia(attachmentID: attachmentID).frame(maxHeight: 280) }
-      else if let media = post.media { AttachmentPreview(media: media).frame(maxHeight: 280) }
+      if let attachmentID = post.attachmentID { RemoteMedia(attachmentID: attachmentID, layout: .feed) }
+      else if let media = post.media { AttachmentPreview(media: media).postMedia(ratio: media.aspectRatio) }
       PostExtrasView(post: post)
       (dynamicTypeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4)) : AnyLayout(HStackLayout(spacing: 8))) {
         HStack(spacing: 12) {
@@ -282,7 +282,7 @@ struct PostCard: View {
         .scaleEffect(post.vote == value && !reduceMotion ? 1.06 : 1)
         .animation(reduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.58), value: post.vote)
     }.buttonStyle(ControlPressStyle()).accessibilityLabel(label).accessibilityAddTraits(post.vote == value ? .isSelected : [])
-      .disabled(store.owns(post) || post.deleted == true)
+      .disabled(post.deleted == true)
   }
   private var bodyText: some View {
     Text(post.text).font(navigates ? .body : .title3.weight(.medium)).lineSpacing(navigates ? 3 : 5).multilineTextAlignment(.leading)

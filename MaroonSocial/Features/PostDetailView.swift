@@ -88,10 +88,10 @@ struct PostDetailView: View {
                 }.accessibilityLabel("Reply to post instead")
               }.id(replyTarget)
             }
-            if post?.anonymous == true {
-              Label("Replying anonymously", systemImage: "eye.slash").font(.caption).foregroundStyle(.secondary)
+            if let post, post.anonymous, store.owns(post) {
+              Label("Replying anonymously as the post author", systemImage: "eye.slash").font(.caption).foregroundStyle(.secondary)
             } else {
-              Toggle("Reply anonymously", isOn: $anonymous).font(.caption)
+              PublicIdentityToggle(title: "Reply anonymously", anonymous: $anonymous, identifier: "replyAnonymous").font(.caption)
             }
             HStack(alignment: .bottom, spacing: 8) {
               TextField(replyTarget == nil ? "Reply to the post…" : "Reply to this comment…", text: $reply, axis: .vertical)
@@ -232,7 +232,7 @@ private struct ThreadReplyRow: View {
       Image(systemName: icon).font(.system(size: 16, weight: .bold)).frame(width: 36, height: 36)
         .background(comment.vote == value ? Palette.maroon : .clear, in: RoundedRectangle(cornerRadius: 10))
         .frame(width: 44, height: 44)
-    }.buttonStyle(ControlPressStyle()).disabled(mine)
+    }.buttonStyle(ControlPressStyle()).disabled(comment.deleted == true)
       .accessibilityLabel(label).accessibilityIdentifier("\(value == 1 ? "upvote" : "downvote")Comment-\(comment.id)")
       .accessibilityAddTraits(comment.vote == value ? .isSelected : [])
   }

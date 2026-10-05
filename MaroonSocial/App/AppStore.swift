@@ -15,6 +15,8 @@ struct LocalState: Codable {
   var hiddenPosts: Set<String> = []
   var savedEvents: Set<String> = []
   var reports: [String] = []
+  /// Set once the member has confirmed the username that named posts and replies carry.
+  var publicNameConfirmed: Bool? = nil
 }
 
 @Observable @MainActor final class AppStore {
@@ -193,7 +195,7 @@ struct LocalState: Codable {
     if !save() { state = previous }
   }
   func vote(_ id: String, _ value: Int) {
-    guard let post = state.posts.first(where: { $0.id == id }), !owns(post), post.deleted != true else { return }
+    guard let post = state.posts.first(where: { $0.id == id }), post.deleted != true else { return }
     if !fixtureMode { Task { _ = await mutate("post.vote", ["post_id": id, "value": state.posts.first { $0.id == id }?.vote == value ? 0 : value]) }; return }
     guard let i = state.posts.firstIndex(where: { $0.id == id }) else { return }
     let previous = state.posts[i]
@@ -499,7 +501,7 @@ extension AppStore {
     return result
   }
   @discardableResult func perform(_ action: String, _ payload: [String: Any] = [:]) async -> SocialResponse? {
-    guard !fixtureMode else { return nil }
+    guard !fixtureMode else { return fixturePerform(action, payload) }
     let owner = compositions.owner
     busy = true
     defer { if compositions.owner == owner { busy = false } }
@@ -514,6 +516,34 @@ extension AppStore {
   }
   @discardableResult func mutate(_ action: String, _ payload: [String: Any] = [:]) async -> Bool {
     await perform(action, payload) != nil
+  }
+  /// Fixture journeys exercise the navigation that follows a server answer
+  /// without a network: a post-originated request and a game-day room are
+  /// created locally with the same identifiers and metadata the gateway returns.
+  private func fixturePerform(_ action: String, _ payload: [String: Any]) -> SocialResponse? {
+    switch action {
+    case "dm.request":
+      guard let text = payload["text"] as? String, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+      let id = "fixture-request-" + UUID().uuidString
+      var message = Message(author: state.username, text: text); message.sequence = 1
+      state.conversations.insert(Conversation(id: id, title: "Anonymous conversation", subtitle: "Request sent", messages: [message], request: false, anonymous: true), at: 0)
+      var meta = SocialConversationMeta(id: id, kind: "dm", status: "pending", role: "member", canSend: false, unread: 0, lastRead: 1, pendingOutgoing: true)
+      if let postID = payload["post_id"] as? String, let origin = state.posts.first(where: { $0.id == postID }) {
+        meta.sourcePost = SourcePostContext(postID: postID, excerpt: String(origin.text.prefix(140)))
+      }
+      conversationMeta[id] = meta; _ = save()
+      var response = SocialResponse(); response.resourceID = id; return response
+    case "join_sports":
+      guard let eventID = payload["event_id"] as? String, let event = campus.events.first(where: { $0.id == eventID }) else { return nil }
+      let id = "sports:" + eventID
+      if !state.conversations.contains(where: { $0.id == id }) {
+        state.conversations.insert(Conversation(id: id, title: event.title, subtitle: "Shared sports conversation", messages: [], request: false, anonymous: false), at: 0)
+      }
+      conversationMeta[id] = SocialConversationMeta(id: id, kind: "sports", status: "active", role: "member", canSend: true, unread: 0, lastRead: 0, pendingOutgoing: false)
+      _ = save()
+      var response = SocialResponse(); response.resourceID = id; return response
+    default: return nil
+    }
   }
   @discardableResult func finishEmailLogin(username: String, adult: Bool, linkExisting: Bool) async -> Bool {
     guard !busy else { return false }
@@ -587,6 +617,7 @@ extension AppStore {
     defer { if compositions.owner == owner { creatingPost = false } }
     if fixtureMode {
       var post = Post(author: state.username, anonymous: anonymous, community: community, text: features.text, acceptsDM: acceptsDM)
+      post.setVote(1)  // Your own post starts with your upvote, like the server's.
       post.media = media; post.linkURL = features.linkURL; post.tags = features.tags.isEmpty ? nil : features.tags
       if let draft = features.poll {
         post.poll = PostPoll(question: draft.question, options: draft.options.map { PostPollOption(text: $0) }, endsAt: .now.addingTimeInterval(Double(draft.durationHours) * 3600))
@@ -678,7 +709,10 @@ extension AppStore {
       if let parentID {
         guard let parent = state.posts[index].comments.first(where: { $0.id == parentID }), parent.deleted != true else { return false }
       }
-      let comment = Comment(author: state.username, text: body, anonymous: anonymous || state.posts[index].anonymous, parentID: parentID)
+      // Only the author of an anonymous post is held anonymous in its thread.
+      let post = state.posts[index]
+      var comment = Comment(author: state.username, text: body, anonymous: anonymous || (post.anonymous && owns(post)), parentID: parentID)
+      comment.setVote(1)
       state.posts[index].comments.append(comment)
       if save() { return true }; state.posts[index].comments.removeAll { $0.id == comment.id }; return false
     }
@@ -696,7 +730,7 @@ extension AppStore {
           let commentIndex = state.posts[postIndex].comments.firstIndex(where: { $0.id == id }),
           state.posts[postIndex].deleted != true else { return }
     let comment = state.posts[postIndex].comments[commentIndex]
-    guard comment.deleted != true, !owns(comment), (-1...1).contains(value) else { return }
+    guard comment.deleted != true, (-1...1).contains(value) else { return }
     if !fixtureMode {
       Task { _ = await mutate("comment.vote", ["comment_id": id, "value": comment.vote == value ? 0 : value]) }
       return
@@ -705,6 +739,28 @@ extension AppStore {
     if !save() { state.posts[postIndex].comments[commentIndex] = comment }
   }
   func owns(_ comment: Comment) -> Bool { fixtureMode ? comment.author == state.username : ownCommentIDs.contains(comment.id) }
+  /// Changes the account username (already normalized and valid). Preview state renames
+  /// its name-keyed ownership markers; the server keeps anonymous posts anonymous.
+  func updateUsername(_ normalized: String) async -> Bool {
+    guard AccountUsernameRules.valid(normalized) else { return false }
+    guard normalized != state.username else { return true }
+    if fixtureMode {
+      let previous = state.username
+      state.username = normalized
+      for index in state.posts.indices {
+        if state.posts[index].author == previous { state.posts[index].author = normalized }
+        for reply in state.posts[index].comments.indices where state.posts[index].comments[reply].author == previous {
+          state.posts[index].comments[reply].author = normalized
+        }
+      }
+      if save() { return true }
+      state.username = previous; return false
+    }
+    return await mutate("profile.update", ["username": normalized])
+  }
+  /// Named posting is allowed once the member has confirmed the username it will carry.
+  var publicNameConfirmed: Bool { state.publicNameConfirmed == true }
+  func confirmPublicName() { state.publicNameConfirmed = true; save() }
   func sendMessage(roomID: String, text: String, media: MediaAttachment?, replyTo: String? = nil, nonce: String) async -> Bool {
     guard canAccessConversation(roomID), state.conversations.contains(where: { $0.id == roomID && !$0.request }), conversationMeta[roomID]?.canSend != false else { notice = "This conversation is closed."; return false }
     if fixtureMode { return send(roomID, text: text, media: media) }

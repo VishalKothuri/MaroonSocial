@@ -94,7 +94,7 @@ struct InlinePostComposer: View {
     HStack(alignment: expanded ? VerticalAlignment.top : .center, spacing: 4) {
       attachmentMenu
       if expanded { postEditor } else { expandButton }
-      if expanded { sendButton }
+      if expanded { VStack(spacing: 0) { closeButton; sendButton } }
     }
     .padding(.horizontal, 9)
     .foregroundStyle(Palette.onAccent)
@@ -141,6 +141,12 @@ struct InlinePostComposer: View {
         .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
         .contentShape(Rectangle())
     }.buttonStyle(.plain).accessibilityLabel("Create post")
+  }
+  /// Folds the composer away and keeps the draft; Cancel in the footer discards it.
+  private var closeButton: some View {
+    Button { AppHaptics.shared.play(.impact); close() } label: {
+      Image(systemName: "xmark").font(.system(size: 15, weight: .bold)).frame(width: 44, height: 40)
+    }.buttonStyle(.plain).accessibilityLabel("Close composer").accessibilityIdentifier("closePostComposer")
   }
   private var sendButton: some View {
     Button(action: send) {
@@ -259,7 +265,7 @@ struct InlinePostComposer: View {
     let layout = dynamicTypeSize.isAccessibilitySize
       ? AnyLayout(VStackLayout(spacing: 4)) : AnyLayout(HStackLayout(spacing: 18))
     return layout {
-      Toggle("Anonymous", isOn: $anonymous).accessibilityIdentifier("postAnonymous")
+      PublicIdentityToggle(title: "Anonymous", anonymous: $anonymous, identifier: "postAnonymous")
       Toggle("Accept DMs", isOn: $acceptsDM).accessibilityIdentifier("postAcceptDMs")
     }.font(.caption.weight(.medium)).toggleStyle(SwitchToggleStyle(tint: Palette.maroon))
   }

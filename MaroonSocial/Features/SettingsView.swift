@@ -112,18 +112,7 @@ struct AccountProfileView: View {
     guard !saving, !store.busy, AccountUsernameRules.valid(username), normalized != store.state.username else { return }
     saving = true; error = nil
     defer { saving = false }
-    if store.fixtureMode {
-      let previous = store.state.username
-      store.state.username = normalized
-      // The preview's ownership markers use names, unlike real server IDs.
-      for index in store.state.posts.indices {
-        if store.state.posts[index].author == previous { store.state.posts[index].author = normalized }
-        for reply in store.state.posts[index].comments.indices where store.state.posts[index].comments[reply].author == previous {
-          store.state.posts[index].comments[reply].author = normalized
-        }
-      }
-      if store.save() { AppHaptics.shared.play(.success); focused = false; dismiss() } else { AppHaptics.shared.play(.error); error = store.notice }
-    } else if await store.mutate("profile.update", ["username": normalized]) { AppHaptics.shared.play(.success); focused = false; dismiss() }
+    if await store.updateUsername(normalized) { AppHaptics.shared.play(.success); focused = false; dismiss() }
     else { AppHaptics.shared.play(.error); error = store.notice ?? "Your username could not save. Please try again." }
   }
 }

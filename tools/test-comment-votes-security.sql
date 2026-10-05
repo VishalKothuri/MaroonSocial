@@ -18,8 +18,20 @@ begin
  out:=public.social_gateway('comment.create',hc,jsonb_build_object('post_id',post_id,'parent_id',root_id,'text','Child from C','anonymous',false,'nonce',nonce_id));if out->>'resource_id' is distinct from child_id::text then raise exception 'Reply retry not idempotent %',out;end if;
  out:=public.social_gateway('comment.create',hc,jsonb_build_object('post_id',post_id,'text','Changed retry','nonce',nonce_id));if out->>'code' is distinct from 'conflict'then raise exception 'Nonce changed target/content %',out;end if;
  out:=public.social_gateway('comment.create',hc,jsonb_build_object('post_id',other_post,'parent_id',root_id,'text','Cross-post parent'));if out->>'code' is distinct from 'forbidden'then raise exception 'Cross-post parent allowed %',out;end if;
- out:=public.social_gateway('comment.vote',hb,jsonb_build_object('comment_id',root_id,'value',1));if out->>'code' is distinct from 'forbidden'then raise exception 'Self reply vote allowed';end if;
- out:=public.social_gateway('post.vote',ha,jsonb_build_object('post_id',post_id,'value',1));if out->>'code' is distinct from 'forbidden'then raise exception 'Self post vote allowed';end if;
+ -- Every post and reply starts with its author's upvote; the author may withdraw and restore it, and karma never counts it.
+ if social_private.post_score(post_id)<>1 or social_private.comment_score(root_id)<>1 or social_private.karma(a)<>0 or social_private.karma(b)<>0 then raise exception 'Author starting upvote missing or counted as karma';end if;
+ out:=public.social_gateway('comment.vote',hb,jsonb_build_object('comment_id',root_id,'value',0));if out?'error'or social_private.comment_score(root_id)<>0 then raise exception 'Author could not withdraw own reply vote %',out;end if;
+ out:=public.social_gateway('comment.vote',hb,jsonb_build_object('comment_id',root_id,'value',1));if out?'error'or social_private.comment_score(root_id)<>1 then raise exception 'Author could not restore own reply vote %',out;end if;
+ out:=public.social_gateway('post.vote',ha,jsonb_build_object('post_id',post_id,'value',0));if out?'error'or social_private.post_score(post_id)<>0 then raise exception 'Author could not withdraw own post vote %',out;end if;
+ out:=public.social_gateway('post.vote',ha,jsonb_build_object('post_id',post_id,'value',1));if out?'error'or social_private.post_score(post_id)<>1 or social_private.karma(a)<>0 then raise exception 'Author could not restore own post vote %',out;end if;
+ snap:=social_private.snapshot(a);select v into obj from jsonb_array_elements(snap->'posts')v where v->>'id'=post_id::text;
+ if (obj->>'vote')::int<>1 or (obj->>'score')::int<>1 then raise exception 'Own starting upvote not projected %',obj;end if;
+ select v into obj from jsonb_array_elements(obj->'comments')v where v->>'id'=root_id::text;
+ if (obj->>'score')::int<>1 then raise exception 'Reply starting upvote not scored %',obj;end if;
+ snap:=social_private.snapshot(b);select v into obj from jsonb_array_elements(snap->'posts')v where v->>'id'=post_id::text;
+ select v into obj from jsonb_array_elements(obj->'comments')v where v->>'id'=root_id::text;
+ if (obj->>'vote')::int<>1 then raise exception 'Own reply vote not projected to its author %',obj;end if;
+ if exists(select 1 from social_private.notifications where recipient=a and kind='upvotes')then raise exception 'Author starting upvote raised a milestone notification';end if;
  out:=public.social_gateway('comment.vote',hc,jsonb_build_object('comment_id',root_id,'value',1));out:=public.social_gateway('comment.vote',ha,jsonb_build_object('comment_id',root_id,'value',1));
  out:=public.social_gateway('comment.vote',hc,jsonb_build_object('comment_id',root_id,'value',1));if social_private.karma(b)<>2 then raise exception 'Duplicate vote inflated or missed karma';end if;
  out:=public.social_gateway('comment.vote',hc,jsonb_build_object('comment_id',root_id,'value',-1));if social_private.karma(b)<>0 then raise exception 'Vote direction did not apply net difference';end if;
@@ -35,7 +47,10 @@ begin
  select v into obj from jsonb_array_elements(snap->'posts')v where v->>'id'=post_id::text;
  if obj::text like '%'||b::text||'%'or obj::text like '%'||c::text||'%'or obj::text like '%reply_b_%'or obj::text like '%reply_c_%'or obj::text like '%karma%'then raise exception 'Anonymous identity/karma leaked';end if;
  select v into obj from jsonb_array_elements(obj->'comments')v where v->>'id'=child_id::text;
- if obj->>'parentID' is distinct from root_id::text or obj->>'anonymous' is distinct from 'true'or (obj->>'score')::int<>1 then raise exception 'Parent/forced anonymity/vote projection incorrect %',obj;end if;
+ if obj->>'parentID' is distinct from root_id::text or obj->>'anonymous' is distinct from 'false'or (obj->>'score')::int<>2 then raise exception 'Parent/named reply/vote projection incorrect %',obj;end if;
+ -- The author of an anonymous post stays anonymous in its own thread even when asking for a named reply.
+ out:=public.social_gateway('comment.create',ha,jsonb_build_object('post_id',post_id,'text','OP named attempt','anonymous',false));
+ if not exists(select 1 from social_private.comments where id=(out->>'resource_id')::uuid and anonymous)then raise exception 'Anonymous post author was unmasked by a named reply';end if;
  out:=public.social_gateway('comment.delete',ha,jsonb_build_object('comment_id',root_id));if out->>'code' is distinct from 'forbidden'then raise exception 'Foreign comment deletion allowed';end if;
  out:=public.social_gateway('comment.delete',hb,jsonb_build_object('comment_id',root_id));if social_private.karma(b)<>0 then raise exception 'Deleted comment retained karma';end if;
  if not exists(select 1 from social_private.comments where id=child_id and parent_id=root_id and not deleted)then raise exception 'Deleting parent destroyed child';end if;
@@ -81,5 +96,5 @@ begin
  out:=public.social_gateway('account.delete',hb);if out?'error'then raise exception 'Reply author delete failed %',out;end if;
  if exists(select 1 from social_private.comment_votes where member=b)or exists(select 1 from social_private.comments where author=b)then raise exception 'Deleted account retained private ownership/votes';end if;
 end $$;
-select 'PASS nested parent integrity, nonce retry, self-vote denial, vote net/karma, anonymous projection, deleted/blocked parent, source DM consent/privacy, NSFW gating, depth bound, export and account cleanup' result;
+select 'PASS nested parent integrity, nonce retry, author starting upvote and self-vote toggling without karma, vote net/karma, named replies with the anonymous OP held anonymous, deleted/blocked parent, source DM consent/privacy, NSFW gating, depth bound, export and account cleanup' result;
 rollback;

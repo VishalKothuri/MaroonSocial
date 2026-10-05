@@ -254,6 +254,12 @@ struct ChatView: View {
   private var chat: Conversation? { store.canAccessConversation(id) ? store.state.conversations.first { $0.id == id } : nil }
   private var meta: SocialConversationMeta? { store.conversationMeta[id] }
   private var origin: SourcePostContext? { meta?.kind == "dm" ? meta?.sourcePost : nil }
+  /// Game-day rooms are keyed by their calendar event ("sports:<event id>").
+  private var gameEvent: CampusEvent? {
+    guard meta?.kind == "sports", id.hasPrefix("sports:") else { return nil }
+    let eventID = String(id.dropFirst("sports:".count))
+    return store.campus.events.first { $0.id == eventID }
+  }
   private var pendingGroup: Bool { meta?.kind == "group" && chat?.request == true }
   private var canSend: Bool { !pendingGroup && chat != nil && (meta?.canSend ?? (chat?.request == false)) }
   private var draftSnapshot: MessageDraftSnapshot<PhotosPickerItem> {
@@ -327,6 +333,7 @@ struct ChatView: View {
     }.appBackground().navigationTitle(chat?.anonymous == true ? "Anonymous chat" : chat?.title ?? "Conversation").navigationBarTitleDisplayMode(.inline).hidesTabBarWhenPushed()
       .safeAreaInset(edge: .top) {
         VStack(spacing: 0) {
+          if let gameEvent { GameChatHeader(event: gameEvent) }
           if let origin {
             SourcePostTag(context: origin, fullWidth: true) { sourcePost = SourcePostDestination(id: $0) }
               .padding(.horizontal, 16).padding(.vertical, 9).background(Palette.surface).overlay(alignment: .bottom) { Divider() }
@@ -530,8 +537,10 @@ struct GroupManageView: View {
 }
 
 struct RemoteMedia: View {
+  enum Layout { case fill, feed }
   @Environment(AppStore.self) private var store
   let attachmentID: String
+  var layout: Layout = .fill
   @State private var data: Data?
   @State private var failed = false
   @State private var isKlipy = false
@@ -540,19 +549,55 @@ struct RemoteMedia: View {
   @State private var paused = false
   var body: some View {
     Group {
-      if let data, isVideo { VideoAttachmentView(data: data) }
+      if let data, isVideo {
+        if layout == .feed { VideoAttachmentView(data: data).postMedia(ratio: MediaGeometry.ratio(of: data)) } else { VideoAttachmentView(data: data) }
+      }
       else if let data {
-        AnimatedMedia(data: data, paused: paused).overlay(alignment: .bottomLeading) { if isKlipy { Text("KLIPY").font(.caption2.bold()).padding(5).background(Palette.paper.opacity(0.9), in: RoundedRectangle(cornerRadius: 5)).padding(6) } }.frame(minHeight: 160).clipShape(RoundedRectangle(cornerRadius: 12))
+        let picture = AnimatedMedia(data: data, paused: paused).overlay(alignment: .bottomLeading) { if isKlipy { Text("KLIPY").font(.caption2.bold()).padding(5).background(Palette.paper.opacity(0.9), in: RoundedRectangle(cornerRadius: 5)).padding(6) } }
           .overlay(alignment: .bottomTrailing) {
             if String(data: data.prefix(6), encoding: .ascii)?.hasPrefix("GIF") == true {
               Button { paused.toggle() } label: { Image(systemName: paused ? "play.circle.fill" : "pause.circle.fill").font(.title2).padding(8).background(.ultraThinMaterial, in: Circle()) }.accessibilityLabel(paused ? "Play GIF" : "Pause GIF")
             }
           }
+        if layout == .feed { picture.postMedia(ratio: MediaGeometry.ratio(of: data)) }
+        else { picture.frame(minHeight: 160).clipShape(RoundedRectangle(cornerRadius: 12)) }
       }
       else if failed { Button("Reload attachment") { retry += 1 }.font(.caption).padding(20) }
+      else if layout == .feed { ProgressView().frame(width: 180, height: 120).background(Palette.elevated.opacity(0.4), in: RoundedRectangle(cornerRadius: 14, style: .continuous)).frame(maxWidth: .infinity, alignment: .leading) }
       else { ProgressView().frame(height: 120) }
     }.task(id: "\(attachmentID)-\(retry)") { do { let result = try await store.social.attachmentContent(attachmentID); try Task.checkCancellation(); data = result.data; isKlipy = result.isKlipy; isVideo = result.mime == "video/mp4"; failed = false } catch { failed = true } }
   }
+}
+
+/// Feed pictures keep their own shape: sized to the image, capped, left-aligned
+/// under the text with rounded corners, instead of a centered full-width box.
+enum MediaGeometry {
+  static let feedMaxWidth: CGFloat = 300
+  static let feedMaxHeight: CGFloat = 260
+  static let cornerRadius: CGFloat = 14
+  /// Width ÷ height read from the container metadata only; nothing is decoded.
+  static func ratio(of data: Data) -> CGFloat? {
+    guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+          let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+          let width = properties[kCGImagePropertyPixelWidth] as? CGFloat, let height = properties[kCGImagePropertyPixelHeight] as? CGFloat,
+          width > 0, height > 0 else { return nil }
+    return width / height
+  }
+}
+extension View {
+  /// An exact box in the picture's own proportions (so the rounded clip hugs the
+  /// picture), capped at 300×260 points and pinned to the leading edge.
+  func postMedia(ratio: CGFloat?) -> some View {
+    let proportion = max(0.5, min(ratio ?? 4 / 3, 2.4))
+    let width = min(MediaGeometry.feedMaxWidth, MediaGeometry.feedMaxHeight * proportion)
+    return frame(width: width, height: width / proportion)
+      .clipShape(RoundedRectangle(cornerRadius: MediaGeometry.cornerRadius, style: .continuous))
+      .frame(maxWidth: .infinity, alignment: .leading)
+  }
+}
+extension MediaAttachment {
+  /// Local drafts and preview fixtures: the poster for video, the first frame otherwise.
+  var aspectRatio: CGFloat? { MediaGeometry.ratio(of: kind == .video ? (thumbnail ?? data) : data) }
 }
 
 struct AnimatedMedia: UIViewRepresentable {

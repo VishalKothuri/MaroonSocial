@@ -88,9 +88,6 @@ struct LoadingWordmark: View {
     mark.foregroundStyle(Palette.ink)
       .overlay(alignment: .leading) {
         mark.foregroundStyle(Palette.maroon)
-          // A fine light edge keeps the thin serif letters legible without
-          // changing their maroon interior or hiding the initial white mark.
-          .shadow(color: Palette.ink.opacity(0.55), radius: 0.5)
           .mask(alignment: .leading) {
             Rectangle().frame(width: 320 * size / 43 * fill)
           }
@@ -140,6 +137,8 @@ struct CompactSelector: View {
   let options: [String]
   @Binding var selection: String
   var expands = false
+  /// Pill-sized (matches `Pill`): a 32pt capsule inside the same 44pt tap target.
+  var compact = false
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
   @Namespace private var highlight
@@ -149,18 +148,44 @@ struct CompactSelector: View {
     layout {
       ForEach(options, id: \.self) { option in
         Button { selection = option } label: {
-          Text(option).font(.subheadline.weight(.semibold))
+          Text(option).font(compact ? .system(size: 12, weight: .semibold) : .subheadline.weight(.semibold))
             .foregroundStyle(selection == option ? Palette.ink : Palette.secondary)
-            .padding(.horizontal, 12).padding(.vertical, 4).frame(maxWidth: expands ? .infinity : nil, minHeight: 44)
+            .padding(.horizontal, compact ? 11 : 12).padding(.vertical, compact ? 6 : 4)
+            .frame(maxWidth: expands ? .infinity : nil, minHeight: compact ? 28 : 44)
             .background {
               if selection == option {
                 Capsule().fill(Palette.maroon).matchedGeometryEffect(id: "selection", in: highlight)
               }
-            }.contentShape(Capsule())
+            }
+            .frame(minHeight: 44).contentShape(Capsule())
         }.buttonStyle(.plain).accessibilityAddTraits(selection == option ? .isSelected : [])
       }
-    }.padding(3).background(Palette.surface, in: Capsule())
+    }.padding(.horizontal, compact ? 2 : 3).padding(.vertical, compact ? 0 : 3)
+      .background {
+        Capsule().fill(Palette.surface)
+          .overlay(Capsule().strokeBorder(Palette.border, lineWidth: compact ? 0.75 : 0))
+          .frame(height: compact ? 32 : nil)
+      }
       .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.86), value: selection)
+  }
+}
+
+/// Matchmaking wait: the whole wordmark breathes between white and maroon.
+/// No fill mask and no edge halo, so the thin serif letters stay crisp.
+struct BlinkingWordmark: View {
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  var size: CGFloat = 43
+  @State private var maroon = false
+  var body: some View {
+    Image("LaunchWordmark").resizable().renderingMode(.template)
+      .frame(width: 320 * size / 43, height: 56 * size / 43)
+      .foregroundStyle(maroon ? Palette.maroon : Palette.ink)
+      .onAppear {
+        guard !reduceMotion else { maroon = true; return }
+        withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) { maroon = true }
+      }
+      .accessibilityElement(children: .ignore).accessibilityLabel("Maroon Social, searching")
+      .accessibilityIdentifier("blinkingWordmark")
   }
 }
 

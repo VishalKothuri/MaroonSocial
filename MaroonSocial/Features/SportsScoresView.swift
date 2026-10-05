@@ -113,3 +113,61 @@ private struct SportsScoreCard: View {
     }
   }
 }
+
+/// Compact scoreboard pinned above a game-day chat: the official score once it
+/// is published, the status until then, and the official play-by-play. It
+/// refreshes every minute while the chat is open; the feed only carries final
+/// scores, so a game in progress shows "In progress" rather than a live count.
+struct GameChatHeader: View {
+  @Environment(AppStore.self) private var store
+  @Environment(\.scenePhase) private var scenePhase
+  let event: CampusEvent
+  @State private var service: SportsService?
+  private var game: SportsGame? { service?.snapshot.flatMap { $0.game(for: event) } }
+  private var live: Bool { event.canOpenSportsChat(at: .now) && event.starts <= .now }
+  var body: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      HStack(spacing: 8) {
+        Circle().fill(live ? Color.red : Palette.secondary).frame(width: 7, height: 7)
+        Text(game?.sport ?? "Game day").font(.caption.bold())
+        Spacer()
+        Text(statusLine).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+      }
+      HStack(alignment: .firstTextBaseline, spacing: 10) {
+        Text("Texas A&M").font(.subheadline.weight(.semibold)).lineLimit(1)
+        Text(score(game?.aggieScore)).font(.title3.bold()).monospacedDigit()
+        Text("–").foregroundStyle(.secondary)
+        Text(score(game?.opponentScore)).font(.title3.bold()).monospacedDigit()
+        Text(game?.opponent ?? opponentName).font(.subheadline.weight(.semibold)).lineLimit(1)
+        Spacer(minLength: 8)
+        if let tracker = game?.tracker { Link("Play-by-play ↗", destination: tracker).font(.caption.bold()) }
+      }
+    }.padding(.horizontal, 16).padding(.vertical, 10).frame(maxWidth: .infinity, alignment: .leading)
+      .background(Palette.surface).overlay(alignment: .bottom) { Divider() }
+      .accessibilityElement(children: .combine).accessibilityIdentifier("gameChatHeader")
+      .task {
+        if service == nil { service = SportsService(social: store.social) }
+        await service?.refresh()
+        while !Task.isCancelled {
+          do { try await Task.sleep(for: .seconds(60)) } catch { break }
+          if scenePhase == .active { await service?.refresh() }
+        }
+      }
+  }
+  private var statusLine: String {
+    if let game, game.status != "scheduled" { return game.statusText }
+    if event.starts > .now { return "Starts " + event.starts.formatted(date: .omitted, time: .shortened) }
+    return "In progress · official score posts at the final"
+  }
+  /// "Texas A&M University Football vs Arkansas" → "Arkansas" when athletics has no matching record yet.
+  private var opponentName: String {
+    for separator in [" vs. ", " vs ", " at "] {
+      if let range = event.title.range(of: separator) { return String(event.title[range.upperBound...]).trimmingCharacters(in: .whitespaces) }
+    }
+    return "Opponent"
+  }
+  private func score(_ value: Double?) -> String {
+    guard let game, game.hasScore, let value else { return "—" }
+    return value.formatted(.number.precision(.fractionLength(0...2)))
+  }
+}

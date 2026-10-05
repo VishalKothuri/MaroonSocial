@@ -89,11 +89,13 @@
 		67EB137B6F5E642FD3CE4CD8 /* ImageEditorUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37E10DF7B747C97CC509C99B /* ImageEditorUITests.swift */; };
 		686BF6A69644B2156A91AD9C /* SyntheticMediaUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2DFCB35833D58C824B3AD /* SyntheticMediaUITests.swift */; };
 		68C3A8CFCA41299025C0926F /* CommunitiesService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC156543FF3ED9A3ED350225 /* CommunitiesService.swift */; };
+		696CA67B562B82D19F7A068F /* MessageRequestNavigationUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09113B5EE07E2931CD11328C /* MessageRequestNavigationUITests.swift */; };
 		6A03E9B19C50B0B4BE34A091 /* KlipyThumbnail.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EC1A3B242639DD971D4BCBA /* KlipyThumbnail.swift */; };
 		6A651B00259EA14B22C91957 /* AppStoreAccountBoundaryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB830182912D5CA777CEFE07 /* AppStoreAccountBoundaryTests.swift */; };
 		6A8A4B7848B131CDACD17481 /* GameService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4469DB5E76BB6B3F85905A38 /* GameService.swift */; };
 		6C4FA958845D7817165231BB /* TaggedPostLease.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB6C0162DD2C116D38A36DF6 /* TaggedPostLease.swift */; };
 		6CCFDDA029872577F9F10875 /* MediaCompressionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8AF053D4521630072F709252 /* MediaCompressionTests.swift */; };
+		6DA50DEFA571F6C45DCDDF9A /* PublicIdentityToggle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E2CD2F9C33B44A64946A478 /* PublicIdentityToggle.swift */; };
 		7124938F16D6949194B65B5C /* GroupLiveUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 554829754690129DFEC7317E /* GroupLiveUITests.swift */; };
 		726FF20786EEE1AEE4A84DB8 /* GameMatchmakingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8913C08355CB700A06D06F6F /* GameMatchmakingTests.swift */; };
 		72CE1F81B96BB92F08A812D9 /* DiscoveryService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1DEA1CB4396244C2D436FDE0 /* DiscoveryService.swift */; };
@@ -230,6 +232,7 @@
 		063D262DB4408A5BF8075E54 /* VideoAttachmentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoAttachmentView.swift; sourceTree = "<group>"; };
 		07119F9E57AFFAAF322F9967 /* ImageSearchSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageSearchSheet.swift; sourceTree = "<group>"; };
 		07F75B70B0A5BEA98618BD3F /* ImageLibraryServicesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageLibraryServicesTests.swift; sourceTree = "<group>"; };
+		09113B5EE07E2931CD11328C /* MessageRequestNavigationUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageRequestNavigationUITests.swift; sourceTree = "<group>"; };
 		0BFFE8DD40A6BC722F6D00DD /* SocialServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SocialServiceTests.swift; sourceTree = "<group>"; };
 		0C1A65CBF3E5E56ECE48A77C /* GroupPhotoServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupPhotoServiceTests.swift; sourceTree = "<group>"; };
 		1171D4797625B80CEC29C630 /* ActivityPlansServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityPlansServiceTests.swift; sourceTree = "<group>"; };
@@ -342,6 +345,7 @@
 		9B58DDF29B43BF7BB0F0D5EF /* CommentStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommentStoreTests.swift; sourceTree = "<group>"; };
 		9BCFADE1CF38CB044AD99011 /* game-runtime.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "game-runtime.js"; sourceTree = "<group>"; };
 		9CB3F0A04E301079B52269FA /* KlipyPickerFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KlipyPickerFixture.swift; sourceTree = "<group>"; };
+		9E2CD2F9C33B44A64946A478 /* PublicIdentityToggle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PublicIdentityToggle.swift; sourceTree = "<group>"; };
 		9E8B5B635A9027962A0A4D4E /* TabSwipeNavigationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabSwipeNavigationTests.swift; sourceTree = "<group>"; };
 		9E99690E8D217372CC8A267B /* ExploreView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExploreView.swift; sourceTree = "<group>"; };
 		9F512A4B0A8956C113B1A1E9 /* RefreshWork.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RefreshWork.swift; sourceTree = "<group>"; };
@@ -601,6 +605,7 @@
 				BDA752AD34DDDBE634A9D71D /* InlineFeedUITests.swift */,
 				C9C94FED541F3FA6ADCB2F13 /* KlipyPickerUITests.swift */,
 				F3928E5BD9DC6EF9DC5FA32C /* MaroonSocialUITests.swift */,
+				09113B5EE07E2931CD11328C /* MessageRequestNavigationUITests.swift */,
 				300C2FC4574AE492F2E8D483 /* OrganizationAdminUITests.swift */,
 				E9B9310EDE70760BAB7F3C20 /* PostFeaturesUITests.swift */,
 				FC2A1AE365C5718C53057861 /* PostRepliesUITests.swift */,
@@ -675,6 +680,7 @@
 				D47691C295916DFA32C4E94A /* PostDetailView.swift */,
 				EF74B9BB7F8A9F3EF3802144 /* PostExtrasView.swift */,
 				782EE29E0AAFCEF73DB87CB0 /* PrivacyControlsView.swift */,
+				9E2CD2F9C33B44A64946A478 /* PublicIdentityToggle.swift */,
 				32685BE0E4647CE16572DF51 /* PushGameInboxView.swift */,
 				02512052256BA80EF6A66CB1 /* PushSettingsView.swift */,
 				617FA135C3A01E8A73CBF8DF /* RandomBrowserPairView.swift */,
@@ -1018,6 +1024,7 @@
 				A3E4A10C1D73FA93DA52B49C /* PostDetailView.swift in Sources */,
 				33514B6BE5C9D398EAF1CA6D /* PostExtrasView.swift in Sources */,
 				D4A1F7BF8A724D9C8B7CECBE /* PrivacyControlsView.swift in Sources */,
+				6DA50DEFA571F6C45DCDDF9A /* PublicIdentityToggle.swift in Sources */,
 				F025898F0E2B16979337A3D7 /* PushGameInboxView.swift in Sources */,
 				D76852A142C11AF0EADE4E82 /* PushRouting.swift in Sources */,
 				A99AF636F31A8988BA997C34 /* PushService.swift in Sources */,
@@ -1071,6 +1078,7 @@
 				5BC099D80316C0CE27074553 /* InlineFeedUITests.swift in Sources */,
 				4C5507C5DE6BC42479B82FB3 /* KlipyPickerUITests.swift in Sources */,
 				EA358B8ACCE93093DF722C78 /* MaroonSocialUITests.swift in Sources */,
+				696CA67B562B82D19F7A068F /* MessageRequestNavigationUITests.swift in Sources */,
 				B405575610C96A9A3CF042B2 /* OrganizationAdminUITests.swift in Sources */,
 				BD982643E554F097FFDAC80B /* PostFeaturesUITests.swift in Sources */,
 				DF6252CB9770A9714E2DFADD /* PostRepliesUITests.swift in Sources */,
