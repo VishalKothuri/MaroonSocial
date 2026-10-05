@@ -51,8 +51,14 @@ import XCTest
     let narrow = ImageComposer.textBounds("Group chat energy", width: 500, scale: 1, colorIndex: 0)
     let wide = ImageComposer.textBounds("Group chat energy", width: 1000, scale: 1, colorIndex: 0)
     XCTAssertEqual(wide.width / narrow.width, 2, accuracy: 0.25, "Text keeps its share of the image at any display width")
+    // Text is wrapped inside 90% of the drawing width, so a doubled scale grows a
+    // long line's height (second line) and a short line's width, never both.
     let larger = ImageComposer.textBounds("Group chat energy", width: 500, scale: 2, colorIndex: 0)
-    XCTAssertGreaterThan(larger.width, narrow.width * 1.6)
+    XCTAssertGreaterThan(larger.height, narrow.height * 1.6)
+    XCTAssertLessThanOrEqual(larger.width, 500 * 0.9 + 6, "Scaled text still wraps inside the drawing width")
+    let shortNarrow = ImageComposer.textBounds("Gig", width: 500, scale: 1, colorIndex: 0)
+    let shortLarger = ImageComposer.textBounds("Gig", width: 500, scale: 2, colorIndex: 0)
+    XCTAssertGreaterThan(shortLarger.width, shortNarrow.width * 1.6)
     let sticker = bitmap(width: 200, height: 100, color: .green)
     let size = ImageComposer.stickerSize(sticker, width: 1000, scale: 1)
     XCTAssertEqual(size.width, 420, accuracy: 0.5); XCTAssertEqual(size.height, 210, accuracy: 0.5)

@@ -25,3 +25,6 @@ MaroonSocial/Resources/Klipy.json
 
 # Local Google image-search key and engine ID
 MaroonSocial/Resources/ImageSearch.json
+
+# Generated Vercel output for the hosted pool; rebuilt by npm run build and deployed from the build, never committed.
+games/web-pool-prototype/dist/

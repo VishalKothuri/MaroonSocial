@@ -21,7 +21,7 @@ async function rpc(action:string,hash:string,input:Record<string,unknown>,name='
  const response=await fetch(base+'/rest/v1/rpc/'+name,{method:'POST',headers:{...authHeaders,'Content-Type':'application/json'},body:JSON.stringify({p_action:action,p_hash:hash,p_input:input}),signal:AbortSignal.timeout(18000)});
  if(!response.ok){console.error('social_rpc_status',response.status);throw new ClientError('The community service is temporarily unavailable. Please retry.','unavailable',503)}
  const value=await response.json();
- if(value.error)throw new ClientError(value.error,value.code,value.code==='unauthorized'?401:value.code==='forbidden'?403:value.code==='rate_limit'?429:400);
+ if(value.error)throw new ClientError(value.error,value.code,value.code==='unauthorized'?401:value.code==='forbidden'?403:value.code==='not_found'?404:value.code==='rate_limit'?429:400);
  return value;
 }
 function dimensions(bytes:Uint8Array){

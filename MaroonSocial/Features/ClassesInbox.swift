@@ -75,6 +75,8 @@ struct InboxView: View {
                   Text(chat.anonymous ? latestMessage(chat) : chat.title)
                     .font(.subheadline.weight((counts.entries[chat.id]?.badge ?? 0) > 0 ? .semibold : .regular))
                     .foregroundStyle(Palette.ink).lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 2)
+                  // Display only: the row opens the chat, whose pinned tag opens the post.
+                  if store.conversationMeta[chat.id]?.kind == "dm", let origin = store.conversationMeta[chat.id]?.sourcePost { SourcePostTag(context: origin) }
                   if !chat.anonymous {
                     Text(latestMessage(chat)).font(.subheadline).foregroundStyle(.secondary)
                       .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
@@ -247,9 +249,11 @@ struct ChatView: View {
   @State private var displayedMessages: [Message] = []
   @State private var isNearBottom = true
   @State private var hasMessagesBelow = false
+  @State private var sourcePost: SourcePostDestination?
   @FocusState private var focused: Bool
   private var chat: Conversation? { store.canAccessConversation(id) ? store.state.conversations.first { $0.id == id } : nil }
   private var meta: SocialConversationMeta? { store.conversationMeta[id] }
+  private var origin: SourcePostContext? { meta?.kind == "dm" ? meta?.sourcePost : nil }
   private var pendingGroup: Bool { meta?.kind == "group" && chat?.request == true }
   private var canSend: Bool { !pendingGroup && chat != nil && (meta?.canSend ?? (chat?.request == false)) }
   private var draftSnapshot: MessageDraftSnapshot<PhotosPickerItem> {
@@ -322,9 +326,15 @@ struct ChatView: View {
         }
     }.appBackground().navigationTitle(chat?.anonymous == true ? "Anonymous chat" : chat?.title ?? "Conversation").navigationBarTitleDisplayMode(.inline).hidesTabBarWhenPushed()
       .safeAreaInset(edge: .top) {
-        if let call = meta?.call, call.state == "ringing" || call.state == "connected" {
-          Button { AppHaptics.shared.play(.selection); showCall = true } label: {
-            HStack { Image(systemName: call.mode == "video" ? "video.fill" : "phone.fill"); Text(call.incoming ? "Incoming \(call.mode) call" : "Open \(call.mode) call"); Spacer(); Image(systemName: "chevron.right") }.font(.subheadline.bold()).padding(12).background(Palette.hero)
+        VStack(spacing: 0) {
+          if let origin {
+            SourcePostTag(context: origin, fullWidth: true) { sourcePost = SourcePostDestination(id: $0) }
+              .padding(.horizontal, 16).padding(.vertical, 9).background(Palette.surface).overlay(alignment: .bottom) { Divider() }
+          }
+          if let call = meta?.call, call.state == "ringing" || call.state == "connected" {
+            Button { AppHaptics.shared.play(.selection); showCall = true } label: {
+              HStack { Image(systemName: call.mode == "video" ? "video.fill" : "phone.fill"); Text(call.incoming ? "Incoming \(call.mode) call" : "Open \(call.mode) call"); Spacer(); Image(systemName: "chevron.right") }.font(.subheadline.bold()).padding(12).background(Palette.hero)
+            }
           }
         }
       }
@@ -347,13 +357,16 @@ struct ChatView: View {
           if meta?.pendingOutgoing == true {
             Label("Request sent · waiting for acceptance", systemImage: "clock").font(.subheadline).padding().frame(maxWidth: .infinity).background(Palette.surface)
           } else {
-            HStack {
-              Button(role: .destructive) { Task { if await store.mutate(meta?.kind == "group" ? "group.decline" : "dm.decline", ["room_id": id]) { dismiss() } } } label: { Text("Decline").frame(minHeight: 44) }.accessibilityIdentifier("declineRequest")
-              Spacer()
-              Button("Accept request") {
-                if meta?.kind == "group" { acceptingGroup = true }
-                else { Task { let accepted = await store.mutate("dm.accept", ["room_id": id]); AppHaptics.shared.play(accepted ? .success : .error) } }
-              }.buttonStyle(.borderedProminent).tint(Palette.maroon).foregroundStyle(Palette.onAccent).accessibilityIdentifier("acceptRequest")
+            VStack(spacing: 10) {
+              if let origin { SourcePostTag(context: origin, fullWidth: true, identifierSuffix: "Request") { sourcePost = SourcePostDestination(id: $0) } }
+              HStack {
+                Button(role: .destructive) { Task { if await store.mutate(meta?.kind == "group" ? "group.decline" : "dm.decline", ["room_id": id]) { dismiss() } } } label: { Text("Decline").frame(minHeight: 44) }.accessibilityIdentifier("declineRequest")
+                Spacer()
+                Button("Accept request") {
+                  if meta?.kind == "group" { acceptingGroup = true }
+                  else { Task { let accepted = await store.mutate("dm.accept", ["room_id": id]); AppHaptics.shared.play(accepted ? .success : .error) } }
+                }.buttonStyle(.borderedProminent).tint(Palette.maroon).foregroundStyle(Palette.onAccent).accessibilityIdentifier("acceptRequest")
+              }
             }.padding().background(Palette.surface)
           }
         } else if canSend { composer }
@@ -362,6 +375,7 @@ struct ChatView: View {
       .sheet(isPresented: $gamePicker) { GameInviteSheet(roomID: id, onSent: { await store.refresh() }) }
       .sheet(isPresented: $notificationSettings) { RoomNotificationSettings(roomID: id) }
       .sheet(isPresented: $showOutbox) { PendingMessagesView(roomID: id) }
+      .navigationDestination(item: $sourcePost) { PostDetailView(id: $0.id).appHapticOnOpen().toolbar(.visible, for: .navigationBar) }
       .onAppear { if draftOwner.isEmpty { draftOwner = store.compositions.owner } }
       .persistentDraft("message:" + id, value: savedDraft)
       .sheet(isPresented: $groupInfo) { GroupManageView(roomID: id) }

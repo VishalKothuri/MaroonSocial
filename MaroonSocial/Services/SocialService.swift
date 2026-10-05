@@ -11,6 +11,24 @@ struct SocialGroupMember: Codable, Equatable {
   var avatar: String? = nil
   var isMe: Bool? = nil
 }
+/// Where a direct message started. The server keeps the origin in room meta, so the
+/// tag outlives the post: once it is deleted only the excerpt goes away. Never the author.
+struct SourcePostContext: Codable, Equatable {
+  var postID: String
+  var excerpt: String? = nil
+  var deleted = false
+  var fromReply = false
+  init(postID: String, excerpt: String? = nil, deleted: Bool = false, fromReply: Bool = false) {
+    self.postID = postID; self.excerpt = excerpt; self.deleted = deleted; self.fromReply = fromReply
+  }
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    postID = try container.decode(String.self, forKey: .postID)
+    excerpt = try container.decodeIfPresent(String.self, forKey: .excerpt)
+    deleted = try container.decodeIfPresent(Bool.self, forKey: .deleted) ?? false
+    fromReply = try container.decodeIfPresent(Bool.self, forKey: .fromReply) ?? false
+  }
+}
 struct SocialConversationMeta: Codable, Equatable {
   var id: String
   var kind: String
@@ -27,6 +45,7 @@ struct SocialConversationMeta: Codable, Equatable {
   var category: String? = nil
   var myAlias: String? = nil
   var myAvatar: String? = nil
+  var sourcePost: SourcePostContext? = nil
 }
 struct SocialAttachmentReference: Codable, Identifiable, Equatable {
   var id: String

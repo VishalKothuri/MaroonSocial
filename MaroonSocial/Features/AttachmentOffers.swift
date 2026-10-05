@@ -48,15 +48,29 @@ import SwiftUI
 struct AttachmentOffersPresentation: ViewModifier {
   @Bindable var offers: AttachmentOffers
   let service: SharedMemeService
+  /// The share offer follows the policy alert. SwiftUI drops a presentation
+  /// requested in the same update that dismisses another one, so the dialog
+  /// is shown from a short follow-up once the model says it is due.
+  @State private var showingShare = false
   func body(content: Content) -> some View {
     content
       .alert(PhotoPolicy.warningTitle, isPresented: $offers.policyWarning) {
         Button("I understand") { AppHaptics.shared.play(.selection); offers.acknowledgePolicy() }
       } message: { Text(PhotoPolicy.warning) }
-      .confirmationDialog(PhotoPolicy.shareTitle, isPresented: Binding(get: { offers.shareOfferPresented }, set: { if !$0 { offers.declineSharing() } }), titleVisibility: .visible) {
-        Button("Share as a meme") { AppHaptics.shared.play(.impact); offers.share(using: service) }
-        Button("Not now", role: .cancel) { offers.declineSharing() }
+      // An alert, not a confirmation dialog: on iPhone the dialog can present
+      // as a popover anchored to the composer, which drops its cancel button
+      // and leaves no explicit way to decline. The alert always shows both.
+      .alert(PhotoPolicy.shareTitle, isPresented: Binding(get: { showingShare }, set: { if !$0 { showingShare = false; offers.declineSharing() } })) {
+        Button("Share as a meme") { AppHaptics.shared.play(.impact); showingShare = false; offers.share(using: service) }
+        Button("Not now", role: .cancel) { showingShare = false; offers.declineSharing() }
       } message: { Text(PhotoPolicy.shareDetail) }
+      .task(id: offers.shareOfferPresented) {
+        guard offers.shareOfferPresented else { showingShare = false; return }
+        // Let an alert dismissal finish before the dialog is requested.
+        try? await Task.sleep(for: .milliseconds(450))
+        guard !Task.isCancelled, offers.shareOfferPresented else { return }
+        showingShare = true
+      }
   }
 }
 

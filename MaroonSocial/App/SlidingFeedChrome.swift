@@ -211,9 +211,13 @@ struct SlidingFeedTabBar: UIViewRepresentable {
 
 /// Pushed screens used to ask SwiftUI for `.toolbar(.hidden, for: .tabBar)`.
 /// On iOS 26 that hands the bar to UIKit, which fades or snaps it instead of
-/// sliding. This owns the same native bar for navigation: the real bar
-/// translates alongside the push/pop transition, follows an interactive back
-/// swipe, and the non-animated visibility API commits once the move ends.
+/// sliding. This owns the native bar for navigation instead: visibility
+/// commits through the non-animated API at the start of a push or pop, and a
+/// picture of the bar (a window snapshot clipped to its pill) slides down with
+/// the push, back up with a soft spring on the pop, or along an interactive
+/// back swipe. The real bar is never transformed: UIKit lays it out again
+/// mid-transition, and a snapshot of the bar itself holds only the selected
+/// capsule, which is why the picture comes from the window.
 struct SlidingPushedTabBar: UIViewControllerRepresentable {
   func makeUIViewController(context: Context) -> Probe {
     let probe = Probe()
@@ -390,6 +394,41 @@ extension View {
     }
   }
 
+  /// The view carrying the slide. During a navigation transition iOS 26 lays
+  /// the real bar out again and overrides any transform placed on it, so the
+  /// real bar only ever commits visibility; a snapshot of it does the moving.
+  private(set) var motionView: UIView?
+  private var motionGeneration = 0
+  /// The bar's picture taken while it was on screen (as a push hides it). A bar
+  /// that was just un-hidden has not been rendered yet on iOS 26, so a snapshot
+  /// taken at pop time is blank; the picture from the push is reused instead.
+  private var cachedBarSnapshot: UIView?
+  private var cachedBarFrame = CGRect.zero
+
+  /// The bar as the user sees it. On iOS 26 the floating bar's platter and
+  /// items are composited by the system: a snapshot of the UITabBar itself or
+  /// a drawn hierarchy contains only the selected capsule. A snapshot of the
+  /// window, clipped to the platter's rounded rect, carries the whole bar.
+  /// Returns the picture and its frame in window coordinates.
+  private static func picture(of bar: UITabBar, in tabs: UITabBarController) -> (view: UIView, frame: CGRect)? {
+    guard !bar.isHidden, bar.alpha > 0.01, let window = bar.window, let shot = window.snapshotView(afterScreenUpdates: false) else { return nil }
+    let platter = bar.subviews.first { $0.clipsToBounds && $0.bounds.height > 0 && $0.bounds.height <= bar.bounds.height } ?? bar
+    let inWindow = platter.convert(platter.bounds, to: window)
+    guard inWindow.width > 0, inWindow.height > 0 else { return nil }
+    let clip = UIView(frame: inWindow)
+    // Built while a navigation transition's animation block may be active:
+    // every property here must land immediately, never as part of that block.
+    UIView.performWithoutAnimation {
+      clip.clipsToBounds = true
+      clip.layer.cornerRadius = platter.layer.cornerRadius > 0 ? platter.layer.cornerRadius : platter.bounds.height / 2
+      clip.layer.cornerCurve = .continuous
+      shot.frame = CGRect(x: -inWindow.minX, y: -inWindow.minY, width: window.bounds.width, height: window.bounds.height)
+      clip.addSubview(shot)
+      clip.layer.removeAllAnimations(); shot.layer.removeAllAnimations()
+    }
+    return (clip, inWindow)
+  }
+
   private func apply(hidden: Bool, in tabs: UITabBarController, coordinator: (any UIViewControllerTransitionCoordinator)?,
     arriving: UIViewController?, departing: UIViewController?) {
     // Only our committed visibility matters here. In-flight slides of either
@@ -402,73 +441,133 @@ extension View {
     let generation = self.generation
     handledTransition = coordinator.map { ObjectIdentifier($0) }
     let bar = tabs.tabBar
-    let current = bar.layer.presentation()?.affineTransform() ?? bar.transform
     SlidingFeedTabBar.Coordinator.yieldToNavigation(in: tabs)
     settleCompensation()
-    let animated = coordinator?.isAnimated == true && !UIAccessibility.isReduceMotionEnabled
+    clearMotion(in: tabs)
+    let animated = coordinator?.isAnimated == true && !UIAccessibility.isReduceMotionEnabled && bar.window != nil
     guard animated, let coordinator else {
       Self.log.info("commit without motion hidden=\(hidden)")
       commit(hidden: hidden, in: tabs, entry: arriving); return
     }
+    // Visibility commits now in both directions, so every screen is laid out
+    // for its final bar state from the first frame. The departing screen keeps
+    // its previous layout through a transient inset while it slides away.
+    var snapshot: UIView?
+    var frame = CGRect.zero
     var distance: CGFloat = 0
-    if hidden {
-      // UIKit keeps its bar until the push lands, so the departing root keeps
-      // its layout. The arriving screen is laid out without the bar at once.
-      UIView.performWithoutAnimation {
-        bar.transform = .identity
-        tabs.view.layoutIfNeeded()
+    UIView.performWithoutAnimation {
+      bar.transform = .identity; bar.alpha = 1
+      let before = Self.contentInset(in: tabs)
+      if hidden {
         distance = Self.travel(of: bar, in: tabs)
-        if let arriving { compensate(arriving, by: -Self.barInset(in: tabs)) }
-        bar.transform = current
-      }
-      let queued = coordinator.animate(alongsideTransition: { _ in
-        bar.transform = CGAffineTransform(translationX: 0, y: distance)
-      }, completion: { [weak self] context in
-        guard let self, self.generation == generation else { return }
-        self.handledTransition = nil
-        UIView.performWithoutAnimation {
-          if !context.isCancelled, !tabs.isTabBarHidden { tabs.setTabBarHidden(true, animated: false) }
-          bar.transform = .identity
-          self.settleCompensation()
-          tabs.view.layoutIfNeeded()
-          if !context.isCancelled { self.correctHiddenLayout(of: arriving, in: tabs) }
+        if let picture = Self.picture(of: bar, in: tabs), let window = bar.window {
+          snapshot = picture.view; frame = picture.frame; cachedBarSnapshot = picture.view; cachedBarFrame = picture.frame
+          // A window snapshot samples its source when it joins the window, so
+          // the picture must be on screen before the real bar is hidden below.
+          picture.view.frame = picture.frame
+          picture.view.isUserInteractionEnabled = false
+          picture.view.isAccessibilityElement = false
+          window.addSubview(picture.view)
         }
-      })
-      Self.log.info("hide alongside queued=\(queued) distance=\(Double(distance))")
-      if !queued { commit(hidden: true, in: tabs, entry: arriving) }
-    } else {
-      // Restore UIKit's real bar first so the destination root regains its
-      // inset from the first frame; the departing screen keeps its layout
-      // while it slides away, and a cancelled swipe hides the bar again.
-      UIView.performWithoutAnimation {
-        bar.transform = .identity
-        let before = Self.contentInset(in: tabs)
-        tabs.setTabBarHidden(false, animated: false)
-        tabs.view.layoutIfNeeded()
-        let after = Self.contentInset(in: tabs)
-        if let departing, after > before { compensate(departing, by: before - after) }
+      }
+      tabs.setTabBarHidden(hidden, animated: false)
+      tabs.view.layoutIfNeeded()
+      let after = Self.contentInset(in: tabs)
+      if let departing, abs(after - before) > 0.5 { compensate(departing, by: before - after) }
+      if !hidden {
         distance = Self.travel(of: bar, in: tabs)
-        bar.transform = CGAffineTransform(translationX: 0, y: distance)
+        snapshot = cachedBarSnapshot; frame = cachedBarFrame
+        snapshot?.transform = .identity
+        snapshot?.removeFromSuperview()
       }
-      let queued = coordinator.animate(alongsideTransition: { _ in
-        bar.transform = .identity
-      }, completion: { [weak self] context in
-        guard let self, self.generation == generation else { return }
-        self.handledTransition = nil
-        UIView.performWithoutAnimation {
-          if context.isCancelled, !tabs.isTabBarHidden { tabs.setTabBarHidden(true, animated: false) }
-          bar.transform = .identity
-          self.settleCompensation()
-          if !context.isCancelled { self.releaseCorrections() }
-          tabs.view.layoutIfNeeded()
-        }
-      })
-      Self.log.info("show alongside queued=\(queued) distance=\(Double(distance))")
-      if !queued { commit(hidden: false, in: tabs, entry: nil) }
     }
+    let settled = coordinator.animate(alongsideTransition: nil) { [weak self] context in
+      guard let self, self.generation == generation else { return }
+      self.handledTransition = nil
+      UIView.performWithoutAnimation {
+        if context.isCancelled {
+          // An interactive pop returned to the pushed screen: hide for it again.
+          self.clearMotion(in: tabs)
+          if tabs.isTabBarHidden == hidden { tabs.setTabBarHidden(!hidden, animated: false) }
+          self.settleCompensation()
+          tabs.view.layoutIfNeeded()
+          if !hidden { self.correctHiddenLayout(of: departing, in: tabs) }
+        } else {
+          self.settleCompensation()
+          if hidden { self.correctHiddenLayout(of: arriving, in: tabs) } else { self.releaseCorrections() }
+          tabs.view.layoutIfNeeded()
+        }
+      }
+    }
+    if !settled {
+      handledTransition = nil
+      settleCompensation()
+      if hidden { correctHiddenLayout(of: arriving, in: tabs) } else { releaseCorrections() }
+    }
+    guard let snapshot, distance > 0 else {
+      // No picture to move (a bar that was never seen on this launch): the
+      // committed bar simply appears, which is still better than a fade.
+      Self.log.info("committed without a snapshot hidden=\(hidden)")
+      return
+    }
+    // Host the picture on the window: UIKit hides its own bar container with
+    // the bar and re-orders the tab controller's subviews during a navigation
+    // transition, both of which would cover the picture. The window does neither.
+    guard let host = bar.window ?? tabs.view.window else { Self.log.info("no window for the bar picture hidden=\(hidden)"); snapshot.removeFromSuperview(); return }
+    if snapshot.superview !== host {
+      snapshot.frame = frame
+      snapshot.isUserInteractionEnabled = false
+      snapshot.isAccessibilityElement = false
+      host.addSubview(snapshot)
+    }
+    motionGeneration += 1
+    let motion = motionGeneration
+    motionView = snapshot
+    let finish: () -> Void = { [weak self] in
+      guard let self, self.motionGeneration == motion else { return }
+      self.motionView = nil
+      snapshot.removeFromSuperview()
+      bar.alpha = 1
+    }
+    let interactive = coordinator.isInteractive
+    // UIKit delivers the incoming screen's viewWillAppear with animations
+    // disabled, which would complete the slide instantly and remove the
+    // picture at once. The slide runs with animations explicitly enabled.
+    let animationsWereEnabled = UIView.areAnimationsEnabled
+    UIView.setAnimationsEnabled(true)
+    defer { UIView.setAnimationsEnabled(animationsWereEnabled) }
+    if hidden {
+      UIView.animate(withDuration: 0.3, delay: 0, options: [.curveEaseIn, .beginFromCurrentState],
+        animations: { snapshot.transform = CGAffineTransform(translationX: 0, y: distance) }, completion: { _ in finish() })
+    } else {
+      // The real bar is already in place for layout; it stays transparent while
+      // its picture rises from below. A tap gets a soft spring, a back swipe
+      // follows the finger through the transition coordinator.
+      bar.alpha = 0
+      snapshot.transform = CGAffineTransform(translationX: 0, y: distance)
+      if interactive {
+        let queued = coordinator.animate(alongsideTransition: { _ in snapshot.transform = .identity }, completion: { _ in finish() })
+        if !queued { UIView.animate(withDuration: 0.34, animations: { snapshot.transform = .identity }, completion: { _ in finish() }) }
+      } else {
+        UIView.animate(withDuration: 0.55, delay: 0, usingSpringWithDamping: 0.72, initialSpringVelocity: 0.35,
+          options: [.beginFromCurrentState, .allowUserInteraction], animations: { snapshot.transform = .identity }, completion: { _ in finish() })
+      }
+    }
+    // The real bar must never stay transparent, whatever interrupts the slide.
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { finish() }
+    Self.log.info("\(hidden ? "hide" : "show") motion started distance=\(Double(distance)) interactive=\(interactive) settled=\(settled) animationsEnabledOnEntry=\(animationsWereEnabled)")
+  }
+
+  /// Remove an in-flight slide and give the real bar its appearance back.
+  private func clearMotion(in tabs: UITabBarController) {
+    motionGeneration += 1
+    motionView?.removeFromSuperview()
+    motionView = nil
+    tabs.tabBar.alpha = 1
   }
 
   private func commit(hidden: Bool, in tabs: UITabBarController, entry: UIViewController?) {
+    clearMotion(in: tabs)
     UIView.performWithoutAnimation {
       tabs.tabBar.transform = .identity
       if tabs.isTabBarHidden != hidden { tabs.setTabBarHidden(hidden, animated: false) }

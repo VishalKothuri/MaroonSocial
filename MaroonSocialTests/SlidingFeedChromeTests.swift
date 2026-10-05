@@ -359,8 +359,8 @@ import UIKit
     var positions: [CGFloat] = [], departingInsets: [CGFloat] = []
     let deadline = ProcessInfo.processInfo.systemUptime + 0.7
     while ProcessInfo.processInfo.systemUptime < deadline {
-      if let bar = tabs.tabBar.layer.presentation(), let root = window.layer.presentation() {
-        positions.append(bar.convert(bar.bounds, to: root).minY)
+      if let moving = NavigationTabBarMotion.shared.motionView?.layer.presentation(), let root = window.layer.presentation() {
+        positions.append(moving.convert(moving.bounds, to: root).minY)
       }
       if screen.view.window != nil { departingInsets.append(screen.view.safeAreaInsets.bottom) }
       try await Task.sleep(for: .milliseconds(12))
@@ -369,7 +369,7 @@ import UIKit
     XCTAssertTrue(tabs.tabBar.transform.isIdentity)
     XCTAssertEqual(tabs.tabBar.convert(tabs.tabBar.bounds, to: window).minY, restingY, accuracy: 1)
     XCTAssertTrue(positions.contains { $0 > restingY + 2 && $0 < window.bounds.maxY - 2 },
-      "The returning bar must travel upward from below its resting position, not snap/fade into place: \(positions)")
+      "The returning bar's picture must travel upward from below the resting position while the real bar is already laid out: \(positions)")
     XCTAssertFalse(departingInsets.isEmpty)
     XCTAssertTrue(departingInsets.allSatisfy { abs($0 - hiddenInset) < 1 },
       "The departing screen keeps its no-bar layout while sliding away: \(departingInsets)")
@@ -395,8 +395,8 @@ import UIKit
     var positions: [CGFloat] = [], arrivingInsets: [CGFloat] = [], rootInsets: [CGFloat] = []
     let deadline = ProcessInfo.processInfo.systemUptime + 0.7
     while ProcessInfo.processInfo.systemUptime < deadline {
-      if let bar = tabs.tabBar.layer.presentation(), let window = window.layer.presentation() {
-        positions.append(bar.convert(bar.bounds, to: window).minY)
+      if let moving = NavigationTabBarMotion.shared.motionView?.layer.presentation(), let window = window.layer.presentation() {
+        positions.append(moving.convert(moving.bounds, to: window).minY)
       }
       if screen.view.window != nil, screen.view.bounds.height > 0 { arrivingInsets.append(screen.view.safeAreaInsets.bottom) }
       if root.view.window != nil { rootInsets.append(root.view.safeAreaInsets.bottom) }
@@ -405,7 +405,7 @@ import UIKit
     XCTAssertTrue(tabs.isTabBarHidden)
     XCTAssertTrue(tabs.tabBar.transform.isIdentity)
     XCTAssertTrue(positions.contains { $0 > restingY + 2 && $0 < window.bounds.maxY - 2 },
-      "The bar must travel downward past its resting position, not fade in place: \(positions)")
+      "The bar's picture must travel downward past the resting position, not fade in place: \(positions)")
     XCTAssertEqual(screen.additionalSafeAreaInsets.bottom, 0, accuracy: 0.5, "Layout compensation settles with the transition")
     let hiddenInset = screen.view.safeAreaInsets.bottom
     XCTAssertLessThan(hiddenInset, rootInset)
@@ -413,7 +413,7 @@ import UIKit
     XCTAssertTrue(arrivingInsets.allSatisfy { $0 < rootInset - 1 },
       "The arriving screen is laid out without the bar from its first frame: \(arrivingInsets)")
     XCTAssertTrue(rootInsets.allSatisfy { abs($0 - rootInset) < 1 },
-      "The departing root keeps its layout while the bar is still UIKit-visible: \(rootInsets)")
+      "The departing root keeps its layout while its bar's picture slides away: \(rootInsets)")
     XCTAssertEqual(hiddenInset, window.safeAreaInsets.bottom, accuracy: 1,
       "Once the bar is gone the pushed screen sits on the device's own bottom inset, not the bar's")
   }

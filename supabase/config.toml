@@ -455,3 +455,36 @@ verify_jwt = false
 
 [functions.courses]
 verify_jwt = false
+# Remote setting for every deployed function: clients authenticate with X-Social-Token, Auth bearer or a pool-scoped header, never a Supabase JWT.
+[functions.refresh-campus]
+verify_jwt = false
+
+[functions.room-preferences]
+verify_jwt = false
+
+[functions.group-photos]
+verify_jwt = false
+
+[functions.sports]
+verify_jwt = false
+
+[functions.random-browser]
+verify_jwt = false
+
+[functions.group-calls]
+verify_jwt = false
+
+[functions.push-devices]
+verify_jwt = false
+
+[functions.push-delivery]
+verify_jwt = false
+
+[functions.activity-plans]
+verify_jwt = false
+
+[functions.discovery]
+verify_jwt = false
+
+[functions.web-pool]
+verify_jwt = false

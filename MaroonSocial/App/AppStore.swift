@@ -79,7 +79,10 @@ struct LocalState: Codable {
     }
     if !usesFixtures, state.onboarded, !social.hasStoredCredential { state = LocalState() }
     if fixtureMode, state.posts.isEmpty && !state.onboarded { seed() }
-    if fixtureMode { organizations = [OrganizationAccessFixture.managedOrganization, OrganizationAccessFixture.invitingOrganization] }
+    if fixtureMode {
+      organizations = [OrganizationAccessFixture.managedOrganization, OrganizationAccessFixture.invitingOrganization]
+      conversationMeta = Self.fixtureConversationMeta.filter { id, _ in state.conversations.contains { $0.id == id } }
+    }
     if !usesFixtures, !state.onboarded, social.hasStoredCredential,
       let data = try? Data(contentsOf: Self.storageFileURL(arguments: [])),
       let previous = try? JSONDecoder().decode(LocalState.self, from: data), previous.onboarded {
@@ -127,7 +130,7 @@ struct LocalState: Codable {
         score: 124,
         comments: [Comment(author: "demo-rev", text: "Especially when you're already late.")]),
       Post(
-        author: "demo-espresso", anonymous: false,
+        id: "demo-coffee-post", author: "demo-espresso", anonymous: false,
         text: "Unofficial campus rule: getting coffee counts as being productive.", score: 86,
         acceptsDM: true),
       Post(
@@ -161,9 +164,21 @@ struct LocalState: Codable {
       Conversation(
         id: "demo-request", title: "Anonymous • coffee post", subtitle: "Message request · sample",
         messages: [Message(author: "Post author", text: "Any good coffee spots near campus?")],
-        request: true, anonymous: true)
+        request: true, anonymous: true),
+      Conversation(
+        id: "demo-deleted-post-chat", title: "Anonymous conversation", subtitle: "Shared dm conversation",
+        messages: [Message(author: "Them", text: "Thanks for the study room tip!")], anonymous: true),
     ]
   }
+  /// Preview rooms carry the metadata the server sends, so the inbox row, request panel
+  /// and chat render their "From this post" tags without a backend: one live origin that
+  /// opens a seeded post, one whose post is gone.
+  static let fixtureConversationMeta: [String: SocialConversationMeta] = [
+    "demo-request": SocialConversationMeta(id: "demo-request", kind: "dm", status: "pending", role: "member", canSend: false, unread: 0, lastRead: 0, pendingOutgoing: false,
+      sourcePost: SourcePostContext(postID: "demo-coffee-post", excerpt: "Unofficial campus rule: getting coffee counts as being productive.")),
+    "demo-deleted-post-chat": SocialConversationMeta(id: "demo-deleted-post-chat", kind: "dm", status: "active", role: "member", canSend: true, unread: 0, lastRead: 0, pendingOutgoing: false,
+      sourcePost: SourcePostContext(postID: "demo-deleted-post", deleted: true, fromReply: true)),
+  ]
   func enter(username: String) {
     if !fixtureMode { Task { await connect(username: username) }; return }
     let username = username.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()

@@ -2,7 +2,7 @@ begin;
 set local role service_role;
 do $$
 declare ha text:=repeat('a',32)||replace(gen_random_uuid()::text,'-','');hb text:=repeat('b',32)||replace(gen_random_uuid()::text,'-','');hc text:=repeat('c',32)||replace(gen_random_uuid()::text,'-','');hd text:=repeat('d',32)||replace(gen_random_uuid()::text,'-','');
- aid uuid;r jsonb;meme uuid;i integer;path text;paths text[];
+ aid uuid;r jsonb;meme uuid;i integer;meme_path text;paths text[];
 begin
  if has_function_privilege('anon','public.social_memes(text,text,jsonb)','EXECUTE')or has_function_privilege('authenticated','public.social_memes(text,text,jsonb)','EXECUTE')then raise exception 'Shared meme RPC is exposed to clients';end if;
  insert into social_private.members(token_hash,username,adult,network_hash)values(ha,'meme_a_'||substr(ha,33,10),true,ha)returning id into aid;
@@ -24,7 +24,7 @@ begin
  r:=public.social_memes('list',hb,'{"page":1}');if jsonb_array_length(r->'memes')<>24 or (r->>'has_next')::boolean is not true then raise exception 'First page wrong %',jsonb_array_length(r->'memes');end if;
  r:=public.social_memes('list',hb,'{"page":2}');if jsonb_array_length(r->'memes')<>6 or (r->>'has_next')::boolean then raise exception 'Second page wrong %',jsonb_array_length(r->'memes');end if;
  r:=public.social_memes('list',hb,'{"query":"%"}');if jsonb_array_length(r->'memes')<>0 then raise exception 'Wildcard query not escaped';end if;
- r:=public.social_memes('read',hb,jsonb_build_object('meme_id',meme));path:=r->>'path';if path is null or r->>'mime'<>'image/png' then raise exception 'Read failed %',r;end if;
+ r:=public.social_memes('read',hb,jsonb_build_object('meme_id',meme));meme_path:=r->>'path';if meme_path is null or r->>'mime'<>'image/png' then raise exception 'Read failed %',r;end if;
  r:=public.social_memes('remove',hb,jsonb_build_object('meme_id',meme));if r->>'code'<>'forbidden'then raise exception 'Non-owner removed a meme %',r;end if;
  r:=public.social_memes('report',ha,jsonb_build_object('meme_id',meme));if r->>'code'<>'invalid'then raise exception 'Owner self-report accepted %',r;end if;
  r:=public.social_memes('report',hb,jsonb_build_object('meme_id',meme,'reason','test'));if (r->>'removed')::boolean then raise exception 'One report removed a meme';end if;
@@ -32,7 +32,7 @@ begin
  r:=public.social_memes('report',hc,jsonb_build_object('meme_id',meme));if (r->>'removed')::boolean then raise exception 'Two reporters removed a meme';end if;
  r:=public.social_memes('report',hd,jsonb_build_object('meme_id',meme));if (r->>'removed')::boolean is not true then raise exception 'Three distinct reporters did not remove %',r;end if;
  r:=public.social_memes('read',hb,jsonb_build_object('meme_id',meme));if r->>'code'<>'not_found'then raise exception 'Removed meme still readable %',r;end if;
- if not exists(select 1 from social_private.storage_deletions where storage_deletions.path=path)then raise exception 'Removed meme not queued for storage deletion';end if;
+ if not exists(select 1 from social_private.storage_deletions sd where sd.path=meme_path)then raise exception 'Removed meme not queued for storage deletion';end if;
  if not exists(select 1 from social_private.reports where target_type='shared_meme' and target_id=meme::text)then raise exception 'Reports not recorded for operators';end if;
  r:=public.social_memes('list',hb,'{"page":1}');if jsonb_array_length(r->'memes')<>24 then raise exception 'Removed meme still listed';end if;
  meme:=(r->'memes'->0->>'id')::uuid;

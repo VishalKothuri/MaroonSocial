@@ -7,6 +7,7 @@ export function installShotControls(container:Container) {
  const dialog=document.getElementById('spinDialog') as HTMLDialogElement
  const hit=document.getElementById('cueHit') as HTMLButtonElement
  const close=document.getElementById('closeSpin') as HTMLButtonElement
+ if(!open||!dialog||!hit||!close){console.warn('Spin controls missing from this page; shot inputs stay available.');return ()=>{}}
  const sync=()=>{open.disabled=hit.disabled;if(hit.disabled&&dialog.open)dialog.close()}
  const observer=new MutationObserver(sync);observer.observe(hit,{attributes:true,attributeFilter:['disabled']});sync()
  open.addEventListener('click',()=>{if(!hit.disabled)dialog.showModal()})
