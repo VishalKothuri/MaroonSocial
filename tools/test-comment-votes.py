@@ -43,7 +43,9 @@ try:
     assert post(a,p)['vote']==1 and post(a,p)['score']==1 and snapshot(a)['karma']==0, 'a post starts with its author\'s upvote, not karma'
     opnamed=ok('comment.create',a,post_id=p,text='OP stays anonymous',anonymous=False)['resource_id']
     assert reply(b,p,opnamed)['anonymous'] is True and reply(b,p,opnamed)['author']=='OP'
-    assert names[1] not in json.dumps(post(a,p)) and names[2] not in json.dumps(post(a,p))
+    assert names[1] not in json.dumps(post(a,p)), 'anonymous replier leaked'
+    assert names[2] in json.dumps(post(a,p)), 'named reply hides its author'
+    assert names[1] not in json.dumps(post(c,p)) and names[0] not in json.dumps(post(c,p)), 'anonymous post author or replier leaked'
     print('PASS three-client nested hierarchy, exact retry and anonymous source projection',flush=True)
     ok('comment.vote',b,comment_id=root,value=0); assert reply(b,p,root)['score']==0 and reply(b,p,root)['vote']==0
     ok('comment.vote',b,comment_id=root,value=1); assert reply(b,p,root)['score']==1 and reply(b,p,root)['vote']==1

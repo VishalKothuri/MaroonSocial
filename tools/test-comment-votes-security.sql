@@ -45,7 +45,8 @@ begin
  out:=public.social_gateway('comment.vote',hb,jsonb_build_object('comment_id',second_id,'value',1));if social_private.karma(a)<>2 then raise exception 'Post+reply karma not combined';end if;
  snap:=social_private.snapshot(a);if (snap->>'karma')::int<>2 then raise exception 'Own karma missing';end if;
  select v into obj from jsonb_array_elements(snap->'posts')v where v->>'id'=post_id::text;
- if obj::text like '%'||b::text||'%'or obj::text like '%'||c::text||'%'or obj::text like '%reply_b_%'or obj::text like '%reply_c_%'or obj::text like '%karma%'then raise exception 'Anonymous identity/karma leaked';end if;
+ if obj::text like '%'||b::text||'%'or obj::text like '%'||c::text||'%'or obj::text like '%reply_b_%'or obj::text like '%karma%'then raise exception 'Anonymous identity/karma leaked';end if;
+ if obj::text not like '%reply_c_%'then raise exception 'Named reply hides its author';end if;
  select v into obj from jsonb_array_elements(obj->'comments')v where v->>'id'=child_id::text;
  if obj->>'parentID' is distinct from root_id::text or obj->>'anonymous' is distinct from 'false'or (obj->>'score')::int<>2 then raise exception 'Parent/named reply/vote projection incorrect %',obj;end if;
  -- The author of an anonymous post stays anonymous in its own thread even when asking for a named reply.
