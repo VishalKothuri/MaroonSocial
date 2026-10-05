@@ -47,9 +47,9 @@ struct SettingsView: View {
           Toggle("Haptic feedback", isOn: $haptics.enabled).accessibilityIdentifier("hapticsEnabled")
         } header: { Text("Interaction") } footer: { Text("Subtle feedback for navigation, games, and completed actions.") }
         Section("People & privacy") {
-          NavigationLink("Friends and requests") { ConnectionsView(social: store.social).appHapticOnOpen() }
+          NavigationLink("Connections and requests") { ConnectionsView(social: store.social).appHapticOnOpen() }
           NavigationLink("Blocked accounts and data export") { PrivacyControlsView(social: store.social).appHapticOnOpen() }
-          Text("Anonymous posts and post-origin conversations do not show your username to other members. Named classes and activities use your account username. Each group uses the alias and avatar you choose for that group.").font(.subheadline)
+          Text("Anonymous posts, anonymous replies and post-origin conversations do not show your username to other members. Posts and replies you publish by name, named classes and activities use your account username. Each group uses the alias and avatar you choose for that group.").font(.subheadline)
           Text("Messages and reports are stored on the service and are not end-to-end encrypted. Login credentials are stored securely on this device. Personal email recovery becomes available after email delivery is configured and you link your account. Verify your TAMU mailbox from the account section when email delivery is available.").font(.subheadline)
           Text("Reports are saved for review. This development service does not have a staffed emergency response team.").font(.caption).foregroundStyle(.secondary)
         }
@@ -64,7 +64,7 @@ struct SettingsView: View {
         }
         #endif
         Section {
-          Button("Delete account", role: .destructive) { AppHaptics.shared.play(.warning); deleting = true }.disabled(store.busy)
+          Button("Delete account", role: .destructive) { AppHaptics.shared.play(.warning); deleting = true }.foregroundStyle(.red).disabled(store.busy)
         } footer: { Text("Deletes the account, revokes its credential, removes private media, and replaces authored content with deleted markers where replies depend on it. If you own an organization, transfer ownership first: an organization left without an owner is suspended.") }
       }.scrollContentBackground(.hidden).appBackground().navigationTitle("Your account").navigationBarTitleDisplayMode(.inline)
         .toolbar { ToolbarItem(placement: .topBarTrailing) { Button { dismiss() } label: { Image(systemName: "xmark") }.accessibilityLabel("Close settings") } }
