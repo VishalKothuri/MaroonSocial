@@ -38,11 +38,14 @@ struct CommunitiesView: View {
               .frame(maxWidth: .infinity, alignment: .leading).padding(16)
           }
           if service.loaded && service.communities.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-              Text(search.isEmpty ? joinedOnly ? "No joined communities" : "No communities yet" : "No matching communities").font(.headline)
-              Text(joinedOnly ? "Join a community from Discover or use an invite code." : "Start a chat for a campus interest, class or club.").font(.subheadline).foregroundStyle(.secondary)
-              Button("Create a community") { AppHaptics.shared.play(.selection); typing = false; creating = true }.font(.subheadline.bold())
-            }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
+            // Same centered empty state as the rest of the app, with the create action beneath it.
+            VStack(spacing: 4) {
+              EmptyCard(icon: joinedOnly ? "person.2" : "person.3",
+                        title: search.isEmpty ? joinedOnly ? "No joined communities" : "No communities yet" : "No matching communities",
+                        detail: joinedOnly ? "Join a community from Discover or use an invite code." : "Start a chat for a campus interest, class or club.")
+              Button("Create a community") { AppHaptics.shared.play(.selection); typing = false; creating = true }
+                .font(.subheadline.bold()).buttonStyle(.bordered).frame(minHeight: 44).accessibilityIdentifier("createCommunityEmpty")
+            }
           }
           ForEach(service.communities) { community in
             Button { AppHaptics.shared.play(.selection); typing = false; destination = community.id } label: {

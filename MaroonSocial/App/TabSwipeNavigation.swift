@@ -177,8 +177,10 @@ struct TabSwipeNavigation: UIViewRepresentable {
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
       guard current != 0, !transitionActive, rootIsAvailable(), let pan = gestureRecognizer as? UIPanGestureRecognizer else { return false }
       let velocity = pan.velocity(in: pan.view)
-      guard abs(velocity.x) > 80, abs(velocity.x) > abs(velocity.y) * 1.6 else { return false }
-      return (velocity.x < 0 && current < count - 1) || (velocity.x > 0 && current > 0)
+      // Any decisive horizontal swipe begins, including one past the first or last
+      // tab: beginning cancels the touch underneath, so a bounded swipe over a row
+      // or link never turns into a tap. `panned` ignores out-of-range destinations.
+      return abs(velocity.x) > 80 && abs(velocity.x) > abs(velocity.y) * 1.6
     }
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
       // A vertical ScrollView remains free to track its own pan. Its horizontal
@@ -427,8 +429,10 @@ struct CommunitySortSwipeNavigation: UIViewRepresentable {
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
       guard available, let pan = gestureRecognizer as? UIPanGestureRecognizer else { return false }
       let speed = pan.velocity(in: scroll)
-      guard abs(speed.x) > 80, abs(speed.x) > abs(speed.y) * 1.6 else { return false }
-      return (selection == "New" && speed.x < 0) || (selection == "Hot" && speed.x > 0)
+      // Begins for both directions so a swipe past "New" or "Hot" cancels the touch
+      // under the finger instead of activating a post or quote card as a tap;
+      // `panned` still finds no destination for the bounded direction.
+      return abs(speed.x) > 80 && abs(speed.x) > abs(speed.y) * 1.6
     }
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
       other is UIPanGestureRecognizer && other.view is UIScrollView

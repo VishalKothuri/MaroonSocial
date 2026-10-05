@@ -29,6 +29,8 @@ public struct Post: Identifiable, Codable, Equatable {
   public var linkURL: String? = nil
   public var tags: [String]? = nil
   public var deleted: Bool? = nil
+  public var quote: PostQuote? = nil
+  public var repostCount: Int = 0
   public init(
     id: String = UUID().uuidString, author: String, anonymous: Bool = true,
     community: Community = .campus, text: String, score: Int = 0, comments: [Comment] = [],
@@ -46,12 +48,65 @@ public struct Post: Identifiable, Codable, Equatable {
     self.saved = false
     self.acceptsDM = acceptsDM
   }
+  enum CodingKeys: String, CodingKey { case id, author, anonymous, community, text, score, vote, comments, created, saved, acceptsDM, media, attachmentID, poll, linkURL, tags, deleted, quote, repostCount }
+  // Cached feeds written before reposts existed carry neither key; synthesized
+  // decoding would reject them because repostCount is not optional.
+  public init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    id = try values.decode(String.self, forKey: .id)
+    author = try values.decode(String.self, forKey: .author)
+    anonymous = try values.decode(Bool.self, forKey: .anonymous)
+    community = try values.decode(Community.self, forKey: .community)
+    text = try values.decode(String.self, forKey: .text)
+    score = try values.decode(Int.self, forKey: .score)
+    vote = try values.decode(Int.self, forKey: .vote)
+    comments = try values.decode([Comment].self, forKey: .comments)
+    created = try values.decode(Date.self, forKey: .created)
+    saved = try values.decode(Bool.self, forKey: .saved)
+    acceptsDM = try values.decode(Bool.self, forKey: .acceptsDM)
+    media = try values.decodeIfPresent(MediaAttachment.self, forKey: .media)
+    attachmentID = try values.decodeIfPresent(String.self, forKey: .attachmentID)
+    poll = try values.decodeIfPresent(PostPoll.self, forKey: .poll)
+    linkURL = try values.decodeIfPresent(String.self, forKey: .linkURL)
+    tags = try values.decodeIfPresent([String].self, forKey: .tags)
+    deleted = try values.decodeIfPresent(Bool.self, forKey: .deleted)
+    quote = try values.decodeIfPresent(PostQuote.self, forKey: .quote)
+    repostCount = try values.decodeIfPresent(Int.self, forKey: .repostCount) ?? 0
+  }
   public mutating func setVote(_ newValue: Int) {
     let next = newValue == vote ? 0 : max(-1, min(1, newValue))
     score += next - vote
     vote = next
   }
   public var displayName: String { anonymous ? "Anonymous" : "@\(author)" }
+}
+/// The one level of a quoted post that a repost carries. Only the projected display
+/// name travels, never the author's identity, karma or vote; an unavailable quote keeps
+/// just the id so the reposting post still stands when its source is gone.
+public struct PostQuote: Codable, Equatable, Identifiable {
+  public var id: String
+  public var unavailable: Bool
+  public var author: String? = nil
+  public var anonymous: Bool? = nil
+  public var community: Community? = nil
+  public var text: String? = nil
+  public var created: Date? = nil
+  public var attachmentID: String? = nil
+  /// The quoted post itself quotes another post (only one level is projected).
+  public var quotes: Bool? = nil
+  public init(id: String, unavailable: Bool = false, author: String? = nil, anonymous: Bool? = nil, community: Community? = nil, text: String? = nil, created: Date? = nil, attachmentID: String? = nil, quotes: Bool? = nil) {
+    self.id = id; self.unavailable = unavailable; self.author = author; self.anonymous = anonymous
+    self.community = community; self.text = text; self.created = created; self.attachmentID = attachmentID
+    self.quotes = quotes
+  }
+  /// The feed's own copy of a post, reduced the way the server's quote_view projects it.
+  public init(quoting post: Post) {
+    self.init(id: post.id, unavailable: post.deleted == true, author: post.anonymous ? "Anonymous" : post.author, anonymous: post.anonymous,
+      community: post.community, text: String(post.text.prefix(280)), created: post.created, attachmentID: post.attachmentID,
+      quotes: post.quote != nil)
+    if unavailable { author = nil; anonymous = nil; community = nil; text = nil; created = nil; attachmentID = nil; quotes = nil }
+  }
+  public var displayName: String { anonymous == true ? "Anonymous" : "@\(author ?? "")" }
 }
 public struct Comment: Identifiable, Codable, Equatable {
   public var id = UUID().uuidString

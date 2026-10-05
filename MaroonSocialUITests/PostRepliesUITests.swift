@@ -44,7 +44,11 @@ import XCTest
     app.buttons["Message reply author anonymously"].firstMatch.tap()
     XCTAssertTrue(app.descendants(matching: .any)["fixedAnonymousIdentity"].firstMatch.waitForExistence(timeout: 3))
     XCTAssertFalse(app.textFields["requestUsername"].exists)
-    XCTAssertEqual(app.switches.count, 0)
+    // The request sheet offers no identity switch; the reply composer's own toggle sits behind it.
+    let replyToggle = app.switches["replyAnonymous"]
+    // The system switch inside the toggle row overhangs its labelled frame by a couple of points.
+    let toggleRow = replyToggle.frame.insetBy(dx: -8, dy: -4)
+    XCTAssertTrue(app.switches.allElementsBoundByIndex.allSatisfy { toggleRow.contains($0.frame) }, app.switches.debugDescription)
     let request = app.descendants(matching: .any)["requestText"].firstMatch
     request.tap(); request.typeText("A private anonymous reply request")
     XCTAssertTrue(app.buttons["sendMessageRequest"].isEnabled)

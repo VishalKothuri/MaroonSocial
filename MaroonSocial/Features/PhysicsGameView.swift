@@ -258,7 +258,7 @@ struct OnlineGamesListView: View {
   var body: some View {
     ScrollView {
       LazyVStack(spacing: 12) {
-        if service.games.isEmpty { ContentUnavailableView("Your next match starts in chat", systemImage: "gamecontroller", description: Text("Open a direct conversation or group chat and send a game invitation.")) }
+        if service.games.isEmpty { ContentUnavailableView("No matches yet", systemImage: "gamecontroller", description: Text("Tap Find a player in a game lobby, or send a game invitation from a direct or group chat.")) }
         ForEach(service.games) { game in NavigationLink { OnlineGameView(sessionID: game.id) } label: { HStack(spacing: 15) { Image(systemName: game.kind == "chess" ? "crown.fill" : "gamecontroller.fill").font(.title2); VStack(alignment: .leading, spacing: 5) { Text(game.title + " · " + game.opponent).font(.headline); Text(game.detail).font(.caption).foregroundStyle(.secondary) }; Spacer(); if game.yourTurn || game.canAccept { Circle().fill(.orange).frame(width: 9, height: 9) }; Image(systemName: "chevron.right").font(.caption) }.padding(18).background(Palette.surface.opacity(0.7), in: RoundedRectangle(cornerRadius: 18)) }.buttonStyle(.plain) }
         if let error = service.error { Text(error).foregroundStyle(.red).font(.callout) }
       }.padding()

@@ -8,6 +8,9 @@ struct InlinePostComposer: View {
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
   let community: Community
   @Binding var expanded: Bool
+  /// The sheet variant (QuotePostComposerSheet) keeps a separate draft from the feed's inline composer.
+  var draftKey = "post"
+  var quoting: String? = nil
   let onPublished: () -> Void
   @State private var text = ""
   @State private var anonymous = true
@@ -34,24 +37,33 @@ struct InlinePostComposer: View {
   @State private var tagsEnabled = false
   @State private var tagsText = ""
   @State private var optionsHeight: CGFloat = 220
+  @State private var quotedPostID: String?
   private var tagValues: [String] { tagsText.split(whereSeparator: { $0.isWhitespace || $0 == "," }).map(String.init) }
   private var validation: Result<ValidatedPostFeatures, Error> {
-    Result { try PostFeatureRules.validate(text: text, poll: pollEnabled ? poll : nil, linkURL: linkEnabled ? link : nil, tags: tagsEnabled ? tagValues : []) }
+    Result { try PostFeatureRules.validate(text: text, poll: pollEnabled ? poll : nil, linkURL: linkEnabled ? link : nil, tags: tagsEnabled ? tagValues : [], hasQuote: quotedPostID != nil) }
   }
   private var validationMessage: String? {
     if case let .failure(error) = validation, hasDraft { return error.localizedDescription }
     return nil
   }
-  private var hasDraft: Bool { !text.isEmpty || media != nil || item != nil || loadingMedia || pollEnabled || linkEnabled || tagsEnabled }
+  private var hasDraft: Bool { hasOwnContent || quotedPostID != nil }
+  /// What the member wrote or attached. The sheet's quote is supplied by the screen,
+  /// so a sheet closed with nothing else in it leaves no draft behind.
+  private var hasOwnContent: Bool { !text.isEmpty || media != nil || item != nil || loadingMedia || pollEnabled || linkEnabled || tagsEnabled }
+  private var persistsContent: Bool { quoting == nil ? hasDraft : hasOwnContent }
+  private var quote: PostQuote? {
+    quotedPostID.map { id in store.state.posts.first { $0.id == id }.map(PostQuote.init(quoting:)) ?? PostQuote(id: id, unavailable: true) }
+  }
   private var target: Community { draftCommunity ?? community }
   private var canSend: Bool { !sending && !loadingMedia && (try? validation.get()) != nil }
   private var savedDraft: Binding<CompositionDraft> {
-    Binding(get: { CompositionDraft(text: text, media: media, fields: ["anonymous": String(anonymous), "acceptsDM": String(acceptsDM), "community": target.rawValue, "pollEnabled": String(pollEnabled), "linkEnabled": String(linkEnabled), "link": link, "tagsEnabled": String(tagsEnabled), "tags": tagsText], poll: poll, nonce: "post", hasContent: hasDraft) }, set: { draft in
+    Binding(get: { CompositionDraft(text: text, media: media, fields: ["anonymous": String(anonymous), "acceptsDM": String(acceptsDM), "community": target.rawValue, "pollEnabled": String(pollEnabled), "linkEnabled": String(linkEnabled), "link": link, "tagsEnabled": String(tagsEnabled), "tags": tagsText, "quotedPostID": quotedPostID ?? ""], poll: poll, nonce: "post", hasContent: persistsContent) }, set: { draft in
       text = draft.text; media = draft.media; anonymous = draft.fields["anonymous"] != "false"; acceptsDM = draft.fields["acceptsDM"] != "false"
       draftCommunity = draft.fields["community"].flatMap(Community.init(rawValue:))
       pollEnabled = draft.fields["pollEnabled"] == "true"; poll = draft.poll ?? PostPollDraft()
       linkEnabled = draft.fields["linkEnabled"] == "true"; link = draft.fields["link"] ?? ""
       tagsEnabled = draft.fields["tagsEnabled"] == "true"; tagsText = draft.fields["tags"] ?? ""
+      quotedPostID = draft.fields["quotedPostID"].flatMap { $0.isEmpty ? nil : $0 }
     })
   }
   var body: some View {
@@ -61,8 +73,19 @@ struct InlinePostComposer: View {
     }.disabled(sending).padding(.horizontal, 12).padding(.vertical, 8).background(Palette.paper)
       .overlay(alignment: .top) { Divider() }
       .onAppear { if draftOwner.isEmpty { draftOwner = store.compositions.owner } }
-      .persistentDraft("post", value: savedDraft)
+      .persistentDraft(draftKey, value: savedDraft)
       .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: expanded)
+      // Runs after the saved draft is restored, so the post tapped now wins over an older quote.
+      .task {
+        guard let quoting else { return }
+        quotedPostID = quoting
+        // The sheet starts ready to type, like the inline repost path.
+        try? await Task.sleep(for: .milliseconds(350)); focused = .body
+      }
+      .onChange(of: store.quoteRequest) { _, value in
+        guard quoting == nil, let value else { return }
+        quotedPostID = value; expand(); store.quoteRequest = nil
+      }
       .onChange(of: expanded) { _, value in
         if value {
           AppHaptics.shared.play(.impact)
@@ -162,6 +185,7 @@ struct InlinePostComposer: View {
     ScrollView {
       VStack(alignment: .leading, spacing: 8) {
         featureToolbar
+        if let quote { quoteRow(quote) }
         if pollEnabled { pollEditor }
         if linkEnabled { linkEditor }
         if tagsEnabled { tagsEditor }
@@ -247,6 +271,13 @@ struct InlinePostComposer: View {
       Text("Up to 5 tags, separated by spaces or commas.").font(.caption).foregroundStyle(Palette.secondary)
     }
   }
+  private func quoteRow(_ quote: PostQuote) -> some View {
+    HStack(alignment: .top, spacing: 4) {
+      PostQuoteCard(quote: quote, navigates: false)
+      Button { AppHaptics.shared.play(.selection); quotedPostID = nil } label: { Image(systemName: "xmark.circle.fill").frame(width: 44, height: 44) }
+        .buttonStyle(.plain).accessibilityLabel("Remove quote").accessibilityIdentifier("removeQuote")
+    }
+  }
   private func attachmentRow(_ attachment: MediaAttachment) -> some View {
     let label = attachment.klipy != nil ? "KLIPY attachment" : attachment.kind == .video ? "Video attached" : attachment.kind == .gif ? "GIF attached" : "Image attached"
     return HStack(spacing: 10) {
@@ -277,7 +308,7 @@ struct InlinePostComposer: View {
         .fixedSize(horizontal: false, vertical: true)
       Spacer(minLength: 4)
       Text("\(text.count)/1,000").font(.caption2.monospacedDigit()).foregroundStyle(countColor)
-      Button("Cancel") { AppHaptics.shared.play(.impact); focused = nil; if hasDraft { discard = true } else { close() } }
+      Button("Cancel") { AppHaptics.shared.play(.impact); focused = nil; if persistsContent { discard = true } else { close() } }
         .font(.caption.bold()).frame(minHeight: 44)
     }
   }
@@ -290,15 +321,15 @@ struct InlinePostComposer: View {
   private func addLink() { if expanded && !linkEnabled { AppHaptics.shared.play(.selection) }; expand(focus: false); linkEnabled = true; focused = .link }
   private func addTags() { if expanded && !tagsEnabled { AppHaptics.shared.play(.selection) }; expand(focus: false); tagsEnabled = true; focused = .tags }
   private func resetDraft() {
-    text = ""; media = nil; item = nil; loadingMedia = false; error = nil
+    text = ""; media = nil; item = nil; loadingMedia = false; error = nil; quotedPostID = nil
     pollEnabled = false; poll = PostPollDraft(); linkEnabled = false; link = ""; tagsEnabled = false; tagsText = ""
   }
   private func close() { focused = nil; expanded = false; draftCommunity = nil }
   private func send() {
     guard draftOwner == store.compositions.owner, canSend else { return }; AppHaptics.shared.play(.impact); sending = true; focused = nil; error = nil
     Task {
-      guard await store.compositions.saveDraft(savedDraft.wrappedValue,key:"post",owner:draftOwner), draftOwner == store.compositions.owner else { sending=false;return }
-      let succeeded = await store.createPost(text: text.trimmingCharacters(in: .whitespacesAndNewlines), anonymous: anonymous, community: target, acceptsDM: acceptsDM, media: media, poll: pollEnabled ? poll : nil, linkURL: linkEnabled ? link : nil, tags: tagsEnabled ? tagValues : [])
+      guard await store.compositions.saveDraft(savedDraft.wrappedValue,key:draftKey,owner:draftOwner), draftOwner == store.compositions.owner else { sending=false;return }
+      let succeeded = await store.createPost(text: text.trimmingCharacters(in: .whitespacesAndNewlines), anonymous: anonymous, community: target, acceptsDM: acceptsDM, media: media, poll: pollEnabled ? poll : nil, linkURL: linkEnabled ? link : nil, tags: tagsEnabled ? tagValues : [], quoting: quotedPostID)
       guard draftOwner == store.compositions.owner else { return }
       if succeeded {
         AppHaptics.shared.play(.success)

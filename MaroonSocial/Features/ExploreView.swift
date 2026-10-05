@@ -42,9 +42,11 @@ struct ExploreView: View {
             }.padding(14).background(Palette.surface, in: RoundedRectangle(cornerRadius: 14))
           }.buttonStyle(.plain)
         }
-        if !store.state.activities.isEmpty {
+        // Only plans that are still ahead earn the heading; past or cancelled ones leave it out.
+        let upcoming = store.state.activities.filter { !$0.cancelled && $0.starts > .now }.sorted { $0.starts < $1.starts }.prefix(4)
+        if !upcoming.isEmpty {
           Text("Upcoming plans").font(.headline)
-          ForEach(store.state.activities.filter { !$0.cancelled && $0.starts > .now }.sorted { $0.starts < $1.starts }.prefix(4)) { activity in
+          ForEach(upcoming) { activity in
             NavigationLink { ActivityDetailView(id: activity.id).appHapticOnOpen().toolbar(.visible, for: .navigationBar) } label: { ActivityCard(activity: activity) }.buttonStyle(.plain)
           }
         }
@@ -84,7 +86,7 @@ struct ActivityListView: View {
           ForEach(activities) { activity in NavigationLink { ActivityDetailView(id: activity.id).appHapticOnOpen() } label: { ActivityCard(activity: activity) }.buttonStyle(.plain) }
           if activities.isEmpty {
             EmptyCard(icon: filter.icon, title: "No plans yet", detail: "Create a plan or try another search.")
-            Button("Create \(filter.rawValue.lowercased())") { AppHaptics.shared.play(.selection); create = true }.buttonStyle(.borderedProminent).tint(Palette.maroon).foregroundStyle(Palette.onAccent)
+            Button("Create a plan") { AppHaptics.shared.play(.selection); create = true }.buttonStyle(.borderedProminent).tint(Palette.maroon).foregroundStyle(Palette.onAccent)
           }
         }.padding(.horizontal, 16).padding(.bottom, 18)
       }.maroonRefreshable { await store.refreshAndWait() }

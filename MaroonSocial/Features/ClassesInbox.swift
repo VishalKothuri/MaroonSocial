@@ -91,7 +91,13 @@ struct InboxView: View {
               }.padding(.horizontal, 16).padding(.vertical, 14).background(Palette.paper).overlay(alignment: .bottom) { Divider().padding(.leading, 72) }
             }.buttonStyle(.plain)
           }
-          if chats.isEmpty { EmptyCard(icon: "tray", title: filter == .requests ? "No message requests" : "No conversations yet", detail: "Join a class, create a plan, or message someone by username.") }
+          if chats.isEmpty {
+            switch filter {
+            case .requests: EmptyCard(icon: "tray", title: "No message requests", detail: "Requests from posts and replies wait here until you accept them.")
+            case .groups: EmptyCard(icon: "person.3", title: "No groups yet", detail: "Create a group from the compose button or accept a group invitation.")
+            default: EmptyCard(icon: "tray", title: "No conversations yet", detail: "Join a class, create a plan, or message someone by username.")
+            }
+          }
         }
       }.maroonRefreshable { await store.refreshAndWait(); if !store.fixtureMode { await gameActivity.refresh(social: store.social) } }
     }.appBackground().toolbar(.hidden, for: .navigationBar)
@@ -541,6 +547,8 @@ struct RemoteMedia: View {
   @Environment(AppStore.self) private var store
   let attachmentID: String
   var layout: Layout = .fill
+  /// Width cap for the feed layout; quote cards pass a smaller one.
+  var maxWidth: CGFloat = MediaGeometry.feedMaxWidth
   @State private var data: Data?
   @State private var failed = false
   @State private var isKlipy = false
@@ -550,7 +558,7 @@ struct RemoteMedia: View {
   var body: some View {
     Group {
       if let data, isVideo {
-        if layout == .feed { VideoAttachmentView(data: data).postMedia(ratio: MediaGeometry.ratio(of: data)) } else { VideoAttachmentView(data: data) }
+        if layout == .feed { VideoAttachmentView(data: data).postMedia(ratio: MediaGeometry.ratio(of: data), maxWidth: maxWidth) } else { VideoAttachmentView(data: data) }
       }
       else if let data {
         let picture = AnimatedMedia(data: data, paused: paused).overlay(alignment: .bottomLeading) { if isKlipy { Text("KLIPY").font(.caption2.bold()).padding(5).background(Palette.paper.opacity(0.9), in: RoundedRectangle(cornerRadius: 5)).padding(6) } }
@@ -559,11 +567,11 @@ struct RemoteMedia: View {
               Button { paused.toggle() } label: { Image(systemName: paused ? "play.circle.fill" : "pause.circle.fill").font(.title2).padding(8).background(.ultraThinMaterial, in: Circle()) }.accessibilityLabel(paused ? "Play GIF" : "Pause GIF")
             }
           }
-        if layout == .feed { picture.postMedia(ratio: MediaGeometry.ratio(of: data)) }
+        if layout == .feed { picture.postMedia(ratio: MediaGeometry.ratio(of: data), maxWidth: maxWidth) }
         else { picture.frame(minHeight: 160).clipShape(RoundedRectangle(cornerRadius: 12)) }
       }
       else if failed { Button("Reload attachment") { retry += 1 }.font(.caption).padding(20) }
-      else if layout == .feed { ProgressView().frame(width: 180, height: 120).background(Palette.elevated.opacity(0.4), in: RoundedRectangle(cornerRadius: 14, style: .continuous)).frame(maxWidth: .infinity, alignment: .leading) }
+      else if layout == .feed { ProgressView().frame(width: min(180, maxWidth), height: 120 * min(180, maxWidth) / 180).background(Palette.elevated.opacity(0.4), in: RoundedRectangle(cornerRadius: 14, style: .continuous)).frame(maxWidth: .infinity, alignment: .leading) }
       else { ProgressView().frame(height: 120) }
     }.task(id: "\(attachmentID)-\(retry)") { do { let result = try await store.social.attachmentContent(attachmentID); try Task.checkCancellation(); data = result.data; isKlipy = result.isKlipy; isVideo = result.mime == "video/mp4"; failed = false } catch { failed = true } }
   }
@@ -587,9 +595,11 @@ enum MediaGeometry {
 extension View {
   /// An exact box in the picture's own proportions (so the rounded clip hugs the
   /// picture), capped at 300×260 points and pinned to the leading edge.
-  func postMedia(ratio: CGFloat?) -> some View {
+  func postMedia(ratio: CGFloat?, maxWidth: CGFloat = MediaGeometry.feedMaxWidth) -> some View {
     let proportion = max(0.5, min(ratio ?? 4 / 3, 2.4))
-    let width = min(MediaGeometry.feedMaxWidth, MediaGeometry.feedMaxHeight * proportion)
+    // The height cap scales with the width cap so a smaller box keeps the feed's shape.
+    let maxHeight = MediaGeometry.feedMaxHeight * maxWidth / MediaGeometry.feedMaxWidth
+    let width = min(maxWidth, maxHeight * proportion)
     return frame(width: width, height: width / proportion)
       .clipShape(RoundedRectangle(cornerRadius: MediaGeometry.cornerRadius, style: .continuous))
       .frame(maxWidth: .infinity, alignment: .leading)

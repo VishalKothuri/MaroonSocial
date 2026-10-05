@@ -91,7 +91,9 @@ import XCTest
     XCTAssertTrue(app.buttons["communityPicker"].isHittable)
     XCTAssertTrue(app.buttons["Create post"].isHittable)
     app.buttons["savedPostsFilter"].tap()
-    app.swipeUp(); assertTab("Community", in: app)
+    // The full feed is long enough to collapse the bars on the way up; bringing
+    // them back must land on the same tab, never on a neighbour.
+    app.swipeUp(); app.swipeDown(); assertTab("Community", in: app)
     app.swipeDown(); assertTab("Community", in: app)
     app.buttons["Search posts"].tap()
     let search = app.textFields["postSearch"]; XCTAssertTrue(search.waitForExistence(timeout: 3))

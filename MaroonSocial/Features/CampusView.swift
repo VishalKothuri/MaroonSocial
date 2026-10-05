@@ -232,7 +232,7 @@ struct EventDetailView: View {
             event.starts.formatted(date: .complete, time: event.allDay ? .omitted : .shortened),
             systemImage: "calendar")
           if !event.location.isEmpty { Label(event.location, systemImage: "mappin.and.ellipse") }
-          Text(event.details).font(.subheadline).lineSpacing(5)
+          Text(event.details.decodingHTMLEntities).font(.subheadline).lineSpacing(5)
           Button(store.state.savedEvents.contains(event.id) ? "Saved" : "Save event") {
             AppHaptics.shared.play(.impact)
             saving = true
@@ -377,8 +377,12 @@ struct TransitView: View {
       }
       Section {
         Button { AppHaptics.shared.play(.impact); liveMap = true } label: {
-          Label("Live buses & departure times", systemImage: "bus.fill")
-        }
+          HStack {
+            Label("Live buses & departure times", systemImage: "bus.fill")
+            Spacer()
+            Image(systemName: "arrow.up.right").font(.caption.bold()).foregroundStyle(.secondary)
+          }
+        }.accessibilityHint("Opens the official AggieSpirit map")
         Text(
           "Browse current routes and stops below, or open the official live map for buses, departures and service changes."
         ).font(.caption).foregroundStyle(.secondary)
@@ -474,4 +478,28 @@ struct OfficialCampusBrowser: UIViewControllerRepresentable {
     return controller
   }
   func updateUIViewController(_ controller: SFSafariViewController, context: Context) {}
+}
+
+
+extension String {
+  /// Older cached campus rows still carry raw entities such as `&#160;`; the
+  /// refresh function now decodes them, and the detail sheet decodes any leftovers.
+  var decodingHTMLEntities: String {
+    guard contains("&") else { return self }
+    var result = self
+    if let regex = try? NSRegularExpression(pattern: "&#x([0-9a-fA-F]+);|&#([0-9]+);") {
+      let matches = regex.matches(in: result, range: NSRange(result.startIndex..., in: result)).reversed()
+      for match in matches {
+        guard let whole = Range(match.range, in: result) else { continue }
+        let hex = Range(match.range(at: 1), in: result).map { String(result[$0]) }
+        let dec = Range(match.range(at: 2), in: result).map { String(result[$0]) }
+        let code = hex.flatMap { UInt32($0, radix: 16) } ?? dec.flatMap { UInt32($0) }
+        if let code, let scalar = Unicode.Scalar(code) { result.replaceSubrange(whole, with: String(Character(scalar))) }
+      }
+    }
+    for (entity, value) in [("&nbsp;", " "), ("&quot;", "\""), ("&apos;", "'"), ("&lt;", "<"), ("&gt;", ">"), ("&amp;", "&")] {
+      result = result.replacingOccurrences(of: entity, with: value)
+    }
+    return result
+  }
 }

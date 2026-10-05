@@ -89,7 +89,7 @@ public enum PostFeatureRules {
     guard result.count <= 5 else { throw PostFeatureError.invalidTags }
     return result
   }
-  public static func validate(text: String, poll: PostPollDraft? = nil, linkURL: String? = nil, tags: [String] = []) throws -> ValidatedPostFeatures {
+  public static func validate(text: String, poll: PostPollDraft? = nil, linkURL: String? = nil, tags: [String] = [], hasQuote: Bool = false) throws -> ValidatedPostFeatures {
     let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard body.count <= 1000 else { throw PostFeatureError.textTooLong }
     let link = try normalizeLink(linkURL)
@@ -103,7 +103,7 @@ public enum PostFeatureRules {
       guard [24, 72, 168].contains(poll.durationHours) else { throw PostFeatureError.invalidDuration }
       cleanPoll = PostPollDraft(question: question, options: options, durationHours: poll.durationHours)
     }
-    guard !body.isEmpty || link != nil || cleanPoll != nil else { throw PostFeatureError.empty }
+    guard !body.isEmpty || link != nil || cleanPoll != nil || hasQuote else { throw PostFeatureError.empty }
     return ValidatedPostFeatures(text: body, poll: cleanPoll, linkURL: link, tags: cleanTags)
   }
 }

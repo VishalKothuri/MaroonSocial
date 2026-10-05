@@ -17,8 +17,13 @@ import XCTest
     XCTAssertTrue(app.buttons["Create post"].waitForExistence(timeout: 5))
     XCTAssertTrue(app.tabBars.buttons["Community"].exists)
 
-    let envelope = app.buttons.matching(NSPredicate(format: "label == 'Message the author' AND enabled == true")).firstMatch
-    XCTAssertTrue(envelope.waitForExistence(timeout: 5)); envelope.tap()
+    // The coffee post accepts requests; it may sit below the fold once newer seeded posts exist.
+    let envelope = app.buttons["messageAuthor-demo-coffee-post"]
+    XCTAssertTrue(envelope.waitForExistence(timeout: 5))
+    for _ in 0..<4 where !envelope.isHittable { app.scrollViews["communityFeed"].swipeUp(velocity: .slow) }
+    XCTAssertTrue(envelope.isHittable, "The coffee post's envelope must be on screen")
+    // Let the scroll settle so the tap opens the request instead of stopping the deceleration.
+    RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.8)); envelope.tap()
     let request = app.descendants(matching: .any)["requestText"].firstMatch
     XCTAssertTrue(request.waitForExistence(timeout: 5)); request.tap(); request.typeText("Checking the bar on the way back")
     app.buttons["sendMessageRequest"].tap()

@@ -23,6 +23,8 @@ struct LocalState: Codable {
   var state = LocalState()
   var notice: String?
   var tab = 0
+  /// A post the member chose to repost; the feed's inline composer consumes it.
+  var quoteRequest: String?
   let campus = CampusService()
   let compositions = DurableCompositions()
   private(set) var sendingQueuedID: String?
@@ -143,6 +145,13 @@ struct LocalState: Codable {
         author: "demo-night", community: .nsfw,
         text: "How do you set boundaries with a roommate without making it weird?", score: 18),
     ]
+    state.posts[1].repostCount = 1
+    var quoted = Post(author: "demo-lab", anonymous: false, text: "Confirmed: this is how I passed CHEM", score: 12, created: .now.addingTimeInterval(1))
+    quoted.quote = PostQuote(quoting: state.posts[1])
+    var orphan = Post(id: "demo-missing-quote-post", author: "demo-quiet", text: "Someone said it better than I could.", score: 3, created: .now.addingTimeInterval(2))
+    orphan.quote = PostQuote(id: "demo-deleted-post", unavailable: true)
+    // Appended so tests that read the first seeded post and its reply keep their fixture; the feed sorts by date.
+    state.posts.append(contentsOf: [quoted, orphan])
     state.activities = [
       Activity(
         title: "Coffee, then absolutely no plans", kind: .hangout, host: "demo-espresso",
@@ -607,10 +616,10 @@ extension AppStore {
   }
   func owns(_ post: Post) -> Bool { fixtureMode ? post.author == state.username : ownPostIDs.contains(post.id) }
   func isMine(_ message: Message) -> Bool { fixtureMode ? message.author == state.username : ownMessageIDs.contains(message.id) }
-  func createPost(text: String, anonymous: Bool, community: Community, acceptsDM: Bool, media: MediaAttachment? = nil, poll: PostPollDraft? = nil, linkURL: String? = nil, tags: [String] = []) async -> Bool {
+  func createPost(text: String, anonymous: Bool, community: Community, acceptsDM: Bool, media: MediaAttachment? = nil, poll: PostPollDraft? = nil, linkURL: String? = nil, tags: [String] = [], quoting: String? = nil) async -> Bool {
     guard !creatingPost else { return false }
     let features: ValidatedPostFeatures
-    do { features = try PostFeatureRules.validate(text: text, poll: poll, linkURL: linkURL, tags: tags) }
+    do { features = try PostFeatureRules.validate(text: text, poll: poll, linkURL: linkURL, tags: tags, hasQuote: quoting != nil) }
     catch { notice = error.localizedDescription; return false }
     let owner = compositions.owner
     creatingPost = true
@@ -622,12 +631,19 @@ extension AppStore {
       if let draft = features.poll {
         post.poll = PostPoll(question: draft.question, options: draft.options.map { PostPollOption(text: $0) }, endsAt: .now.addingTimeInterval(Double(draft.durationHours) * 3600))
       }
+      let previous = state.posts
+      if let quoting {
+        if let source = state.posts.firstIndex(where: { $0.id == quoting }), state.posts[source].deleted != true {
+          post.quote = PostQuote(quoting: state.posts[source]); state.posts[source].repostCount += 1
+        } else { post.quote = PostQuote(id: quoting, unavailable: true) }
+      }
       state.posts.insert(post, at: 0)
-      if save() { return true }; state.posts.removeAll { $0.id == post.id }; return false
+      if save() { return true }; state.posts = previous; return false
     }
     let mediaKey = media.map { $0.klipy?.url ?? SHA256.hash(data: $0.data).map { String(format: "%02x", $0) }.joined() } ?? ""
     var payload: [String: Any] = ["text": features.text, "anonymous": anonymous, "community": community.rawValue, "acceptsDM": acceptsDM, "tags": features.tags]
     if let link = features.linkURL { payload["link_url"] = link }
+    if let quoting { payload["quoted_post_id"] = quoting }
     if let draft = features.poll { payload["poll"] = ["question": draft.question, "options": draft.options, "duration_hours": draft.durationHours] }
     // Stable structured encoding prevents a changed poll/link/tag draft from reusing
     // the previous post's idempotency nonce, including after an upload retry.

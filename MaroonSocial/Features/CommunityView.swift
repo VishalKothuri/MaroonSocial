@@ -90,7 +90,7 @@ struct CommunityView: View {
       if showSearch {
         HStack {
           Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-          TextField("Search conversations", text: $search).autocorrectionDisabled().accessibilityIdentifier("postSearch")
+          TextField("Search posts", text: $search).autocorrectionDisabled().accessibilityIdentifier("postSearch")
           if !search.isEmpty { Button { AppHaptics.shared.play(.impact); search = "" } label: { Image(systemName: "xmark.circle.fill").frame(width: 44, height: 44) }.accessibilityLabel("Clear search") }
         }.frame(minHeight: 44).padding(11).background(Palette.surface, in: RoundedRectangle(cornerRadius: 12)).padding(.horizontal, 16).padding(.bottom, 10)
       }
@@ -115,7 +115,7 @@ struct CommunityView: View {
             // Keep the flexible empty state outside the lazy row cache. A
             // filter can remove every row while the feed is scrolled down.
             LazyVStack(spacing: 0) {
-              ForEach(posts) { PostCard(post: $0, onConversationCreated: { conversationID = $0 }) }
+              ForEach(posts) { PostCard(post: $0, onConversationCreated: { conversationID = $0 }, onRepost: { store.quoteRequest = $0 }) }
             }
           }
         }.padding(.bottom, 12).id(sort).transition(feedSortTransition)
@@ -211,9 +211,13 @@ struct PostCard: View {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
   @State private var requestMessage = false
+  @State private var quoteSheet = false
   let post: Post
   var navigates = true
   var onConversationCreated: ((String) -> Void)? = nil
+  /// The feed hands a repost to its inline composer; without a handler the card
+  /// presents the composer as a sheet (threads, library and tag results).
+  var onRepost: ((String) -> Void)? = nil
   var body: some View {
     VStack(alignment: .leading, spacing: 9) {
       HStack(spacing: 7) {
@@ -239,6 +243,7 @@ struct PostCard: View {
       if let attachmentID = post.attachmentID { RemoteMedia(attachmentID: attachmentID, layout: .feed) }
       else if let media = post.media { AttachmentPreview(media: media).postMedia(ratio: media.aspectRatio) }
       PostExtrasView(post: post)
+      if let quote = post.quote, post.deleted != true { PostQuoteCard(quote: quote) }
       (dynamicTypeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4)) : AnyLayout(HStackLayout(spacing: 8))) {
         HStack(spacing: 12) {
         if navigates {
@@ -246,8 +251,17 @@ struct PostCard: View {
         } else { Label("\(post.comments.count)", systemImage: "bubble.right").font(.subheadline.weight(.semibold)) }
         Button { AppHaptics.shared.play(.impact); requestMessage = true } label: { Image(systemName: "envelope").font(.subheadline.weight(.semibold)).frame(width: 44, height: 44) }
           .buttonStyle(ControlPressStyle()).foregroundStyle(Palette.accentText).accessibilityLabel("Message the author")
+          .accessibilityIdentifier("messageAuthor-\(post.id)")
           .disabled(!post.acceptsDM || store.owns(post) || post.deleted == true)
           .accessibilityHint(store.owns(post) ? "This is your post" : post.acceptsDM ? "Send an anonymous message request" : "This author is not accepting message requests")
+        Button { AppHaptics.shared.play(.impact); if let onRepost { onRepost(post.id) } else { quoteSheet = true } } label: {
+          Group {
+            if post.repostCount > 0 { Label("\(post.repostCount)", systemImage: "arrow.2.squarepath").labelStyle(.titleAndIcon) }
+            else { Image(systemName: "arrow.2.squarepath") }
+          }.font(.subheadline.weight(.semibold)).frame(minWidth: 44, minHeight: 44)
+        }.buttonStyle(ControlPressStyle()).foregroundStyle(Palette.accentText).disabled(post.deleted == true)
+          .accessibilityLabel(post.repostCount == 0 ? "Repost" : post.repostCount == 1 ? "Repost, 1 repost" : "Repost, \(post.repostCount) reposts").accessibilityIdentifier("repostPost-\(post.id)")
+          .accessibilityHint("Quote this post in a new post")
         }
         if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 0) }
         HStack(spacing: 8) {
@@ -273,6 +287,7 @@ struct PostCard: View {
       .sheet(isPresented: $requestMessage) {
         NewMessageView(postID: post.id, anonymous: true) { onConversationCreated?($0) }
       }
+      .sheet(isPresented: $quoteSheet) { QuotePostComposerSheet(post: post) }
   }
   private func voteButton(_ value: Int, symbol: String, label: String) -> some View {
     Button { AppHaptics.shared.play(.selection); store.vote(post.id, value) } label: {
