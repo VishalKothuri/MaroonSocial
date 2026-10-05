@@ -1,3 +1,4 @@
+import OSLog
 import SwiftUI
 import UIKit
 
@@ -233,8 +234,13 @@ struct SlidingPushedTabBar: UIViewControllerRepresentable {
       view.isUserInteractionEnabled = false
       view.isAccessibilityElement = false
     }
+    override func didMove(toParent parent: UIViewController?) {
+      super.didMove(toParent: parent)
+      if parent != nil { NavigationTabBarMotion.shared.attach(self) }
+    }
     override func viewWillAppear(_ animated: Bool) {
       super.viewWillAppear(animated)
+      NavigationTabBarMotion.shared.attach(self)
       NavigationTabBarMotion.shared.screenWillChange(self)
     }
     override func viewDidAppear(_ animated: Bool) {
@@ -278,8 +284,45 @@ extension View {
   /// Standing offsets while the bar is hidden: a pushed screen must never keep
   /// the bar's inset once the bar is gone, whatever UIKit or SwiftUI left there.
   private var corrections: [Compensation] = []
+  private var hooks: [ObjectIdentifier: NavigationHook] = [:]
+  static let log = Logger(subsystem: "app.maroonsocial.MaroonSocial", category: "TabBarMotion")
+
+  /// The navigation controller's own delegate callbacks are the reliable
+  /// moment to slide: they fire with the transition coordinator for every
+  /// push and pop, whether or not SwiftUI forwards appearance to the probe.
+  func attach(_ probe: UIViewController) {
+    var node = probe.parent
+    while let current = node {
+      if let navigation = current as? UINavigationController {
+        let key = ObjectIdentifier(navigation)
+        let hook = hooks[key] ?? NavigationHook(owner: self)
+        hooks[key] = hook
+        hook.install(on: navigation)
+        return
+      }
+      node = current.parent
+    }
+  }
+
+  /// Delegate-driven entry: `shown` is the controller the stack is moving to.
+  func navigationWillShow(_ navigation: UINavigationController, shown: UIViewController, coordinator: (any UIViewControllerTransitionCoordinator)?) {
+    guard let tabs = Self.tabBarController(above: navigation), tabs.view.window != nil else { return }
+    let hidden = wantsHidden(stack: navigation.viewControllers, top: shown)
+    let departing = coordinator?.viewController(forKey: .from)
+    Self.log.info("willShow stack=\(navigation.viewControllers.count) hidden=\(hidden) committed=\(tabs.isTabBarHidden) animated=\(coordinator?.isAnimated ?? false)")
+    if tabs.isTabBarHidden == hidden { return }
+    apply(hidden: hidden, in: tabs, coordinator: coordinator, arriving: shown, departing: departing)
+  }
+  func navigationDidShow(_ navigation: UINavigationController, shown: UIViewController) {
+    guard let tabs = Self.tabBarController(above: navigation), tabs.view.window != nil else { return }
+    let hidden = wantsHidden(stack: navigation.viewControllers, top: shown)
+    Self.log.info("didShow hidden=\(hidden) committed=\(tabs.isTabBarHidden) inset=\(Double(shown.view.safeAreaInsets.bottom)) device=\(Double(tabs.view.window?.safeAreaInsets.bottom ?? -1))")
+    if tabs.isTabBarHidden == hidden { if hidden { correctHiddenLayout(of: shown, in: tabs) }; return }
+    apply(hidden: hidden, in: tabs, coordinator: nil, arriving: shown, departing: nil)
+  }
   private var generation = 0
   private var applying = false
+  private var handledTransition: ObjectIdentifier?
 
   func register(_ probe: UIViewController) { probes.add(probe) }
   func unregister(_ probe: UIViewController) { probes.remove(probe) }
@@ -299,6 +342,7 @@ extension View {
     if let coordinator, coordinator.isCancelled { return }
     guard let destination = Self.destination(in: tabs, coordinator: coordinator) else { return }
     let hidden = wantsHidden(stack: destination.navigation.viewControllers, top: destination.top)
+    Self.log.debug("appearance settling=\(settling) hidden=\(hidden) committed=\(tabs.isTabBarHidden) coordinator=\(coordinator != nil)")
     if tabs.isTabBarHidden == hidden {
       // Nothing to move. A screen that appeared above a hidden bar still needs
       // its layout checked, since only transitions apply the offset below.
@@ -351,16 +395,21 @@ extension View {
     // Only our committed visibility matters here. In-flight slides of either
     // owner are picked up from the bar's live position below.
     guard tabs.isTabBarHidden != hidden else { return }
+    if let coordinator, handledTransition == ObjectIdentifier(coordinator) { return }
     applying = true
     defer { applying = false }
     generation += 1
     let generation = self.generation
+    handledTransition = coordinator.map { ObjectIdentifier($0) }
     let bar = tabs.tabBar
     let current = bar.layer.presentation()?.affineTransform() ?? bar.transform
     SlidingFeedTabBar.Coordinator.yieldToNavigation(in: tabs)
     settleCompensation()
     let animated = coordinator?.isAnimated == true && !UIAccessibility.isReduceMotionEnabled
-    guard animated, let coordinator else { commit(hidden: hidden, in: tabs, entry: arriving); return }
+    guard animated, let coordinator else {
+      Self.log.info("commit without motion hidden=\(hidden)")
+      commit(hidden: hidden, in: tabs, entry: arriving); return
+    }
     var distance: CGFloat = 0
     if hidden {
       // UIKit keeps its bar until the push lands, so the departing root keeps
@@ -376,6 +425,7 @@ extension View {
         bar.transform = CGAffineTransform(translationX: 0, y: distance)
       }, completion: { [weak self] context in
         guard let self, self.generation == generation else { return }
+        self.handledTransition = nil
         UIView.performWithoutAnimation {
           if !context.isCancelled, !tabs.isTabBarHidden { tabs.setTabBarHidden(true, animated: false) }
           bar.transform = .identity
@@ -384,6 +434,7 @@ extension View {
           if !context.isCancelled { self.correctHiddenLayout(of: arriving, in: tabs) }
         }
       })
+      Self.log.info("hide alongside queued=\(queued) distance=\(Double(distance))")
       if !queued { commit(hidden: true, in: tabs, entry: arriving) }
     } else {
       // Restore UIKit's real bar first so the destination root regains its
@@ -403,6 +454,7 @@ extension View {
         bar.transform = .identity
       }, completion: { [weak self] context in
         guard let self, self.generation == generation else { return }
+        self.handledTransition = nil
         UIView.performWithoutAnimation {
           if context.isCancelled, !tabs.isTabBarHidden { tabs.setTabBarHidden(true, animated: false) }
           bar.transform = .identity
@@ -411,6 +463,7 @@ extension View {
           tabs.view.layoutIfNeeded()
         }
       })
+      Self.log.info("show alongside queued=\(queued) distance=\(Double(distance))")
       if !queued { commit(hidden: false, in: tabs, entry: nil) }
     }
   }
@@ -494,3 +547,36 @@ extension View {
     return nil
   }
 }
+
+
+/// Forwards every delegate callback SwiftUI's navigation controller expects,
+/// adding only the will/didShow observation the bar slide needs.
+@MainActor final class NavigationHook: NSObject, UINavigationControllerDelegate {
+  private unowned let owner: NavigationTabBarMotion
+  private weak var navigation: UINavigationController?
+  private weak var forwardedDelegate: (any UINavigationControllerDelegate)?
+  init(owner: NavigationTabBarMotion) { self.owner = owner }
+  func install(on navigation: UINavigationController) {
+    self.navigation = navigation
+    guard navigation.delegate !== self else { return }
+    // SwiftUI may refresh its delegate; keep forwarding to whatever it set last.
+    forwardedDelegate = navigation.delegate
+    navigation.delegate = self
+  }
+  override func responds(to selector: Selector!) -> Bool {
+    super.responds(to: selector) || forwardedDelegate?.responds(to: selector) == true
+  }
+  override func forwardingTarget(for selector: Selector!) -> Any? {
+    if forwardedDelegate?.responds(to: selector) == true { return forwardedDelegate }
+    return super.forwardingTarget(for: selector)
+  }
+  func navigationController(_ navigationController: UINavigationController, willShow viewController: UIViewController, animated: Bool) {
+    forwardedDelegate?.navigationController?(navigationController, willShow: viewController, animated: animated)
+    owner.navigationWillShow(navigationController, shown: viewController, coordinator: navigationController.transitionCoordinator)
+  }
+  func navigationController(_ navigationController: UINavigationController, didShow viewController: UIViewController, animated: Bool) {
+    forwardedDelegate?.navigationController?(navigationController, didShow: viewController, animated: animated)
+    owner.navigationDidShow(navigationController, shown: viewController)
+  }
+}
+
