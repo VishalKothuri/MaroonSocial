@@ -49,6 +49,7 @@
 		3C69CD411D602A7713DDD500 /* CompositionIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7347EE794A0A5B87A336455D /* CompositionIdentity.swift */; };
 		3EA8DD5B662B6EADAF8D1DE3 /* SharedMemeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1B4AD9AA45949A8D381E643 /* SharedMemeService.swift */; };
 		4142D98DA300ED34C32F5FB9 /* WebPoolSessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CA0829C52C24F5CA0EE8076 /* WebPoolSessionStore.swift */; };
+		41DA8F4D2B319C59703AE90C /* RealtimePokeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C045BD2D6E71DB0D5C7414D /* RealtimePokeTests.swift */; };
 		44148CB134531CE6981EBF89 /* game-states.json in Resources */ = {isa = PBXBuildFile; fileRef = D7AEB72B94995492B1EC5B60 /* game-states.json */; };
 		44759CB13CAF8ACD5016C7EC /* TabNavigationUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFF322BB730215D99777BD0A /* TabNavigationUITests.swift */; };
 		45819E942CE1A41154D27406 /* StudySeriesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45B128239698B0067C542959 /* StudySeriesView.swift */; };
@@ -112,6 +113,7 @@
 		79EB94451ADB6CA8DCE45532 /* MemeComposerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 783CEE9F6A9B10A549A29558 /* MemeComposerView.swift */; };
 		7BDB1ACDFE033145CEF0B442 /* TagView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66E4837DD050F73616051416 /* TagView.swift */; };
 		7CD72CE6A377CD5F04522753 /* PostQuoteCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE154A67C1710FDA7C4942E0 /* PostQuoteCard.swift */; };
+		7D629D9E4E7B7922E37A67F2 /* RealtimeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66E8019E918104F455ACB9F9 /* RealtimeService.swift */; };
 		7E3BD49585F1E132F928A0B9 /* video-call.html in Resources */ = {isa = PBXBuildFile; fileRef = D23D5B386CFAA6E67E1D0C3F /* video-call.html */; };
 		80FE27055DD3C3C98988B253 /* CommunityLaunch.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = DF4431B61DF5AC1C6314F0A3 /* CommunityLaunch.storyboard */; };
 		814A9630BF750182E2E46855 /* VideoAttachmentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 063D262DB4408A5BF8075E54 /* VideoAttachmentView.swift */; };
@@ -128,6 +130,7 @@
 		8F7D27BF253A55645D7EC164 /* ClassesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C39C43ABECBEFC164616F5E9 /* ClassesView.swift */; };
 		905DC999F22EB390B29D4BCE /* TagServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD265FF2A4FFA4FB85A1E5EB /* TagServiceTests.swift */; };
 		9097C12DF3E031816DE3191D /* GameMatchmakingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECCEF02619044803D767A80F /* GameMatchmakingService.swift */; };
+		911521E78F599865B5BB163D /* Realtime in Frameworks */ = {isa = PBXBuildFile; productRef = 098DC58532FE1D04D6C64C4B /* Realtime */; };
 		91E639F8E55B29D5E85501DB /* TagLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6526115F6189F7BD5666436C /* TagLifecycleTests.swift */; };
 		92AF7DF6DF6AC302E2F4042E /* RoomNotificationSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC924FCED39D1864AD7EB30D /* RoomNotificationSettings.swift */; };
 		932219744F85185C50AD4A10 /* PhotoPolicyNotice.swift in Sources */ = {isa = PBXBuildFile; fileRef = 169794B65E998AB42AC6100A /* PhotoPolicyNotice.swift */; };
@@ -306,11 +309,13 @@
 		651CACCDB04C3A3D1A5A4D27 /* game-table.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = "game-table.html"; sourceTree = "<group>"; };
 		6526115F6189F7BD5666436C /* TagLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TagLifecycleTests.swift; sourceTree = "<group>"; };
 		66E4837DD050F73616051416 /* TagView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TagView.swift; sourceTree = "<group>"; };
+		66E8019E918104F455ACB9F9 /* RealtimeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeService.swift; sourceTree = "<group>"; };
 		6924E953A834D57450655DCD /* Game-Licenses.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Game-Licenses.txt"; sourceTree = "<group>"; };
 		6A455F59CB05ED18A16FF4C9 /* MessageRequestScopeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageRequestScopeTests.swift; sourceTree = "<group>"; };
 		6A8F118B8449111631C95FE9 /* Klipy.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = Klipy.json; sourceTree = "<group>"; };
 		6AA3D13F18F07425CDB50FC6 /* GroupSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupSetupView.swift; sourceTree = "<group>"; };
 		6B6583CB01A1B76225762DBE /* PersistentDraft.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersistentDraft.swift; sourceTree = "<group>"; };
+		6C045BD2D6E71DB0D5C7414D /* RealtimePokeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimePokeTests.swift; sourceTree = "<group>"; };
 		6D29E5E8E913475F4D8C916D /* OutlinedActionStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutlinedActionStyle.swift; sourceTree = "<group>"; };
 		6D9722F76EC30CA5E01E4C17 /* MaroonSocialApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MaroonSocialApp.swift; sourceTree = "<group>"; };
 		70F76686685FF26A2DA03F77 /* GroupCallServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupCallServiceTests.swift; sourceTree = "<group>"; };
@@ -463,6 +468,7 @@
 			files = (
 				0C40E3B4C58B8753C4B88040 /* MaroonCore in Frameworks */,
 				3B8C4B6705A1E738ACDB2CEB /* Auth in Frameworks */,
+				911521E78F599865B5BB163D /* Realtime in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -526,6 +532,7 @@
 				4C1131C909A41026E62D1538 /* PostFeatureStoreTests.swift */,
 				DF5A4459F2B27600BE58ED07 /* PushRoutingTests.swift */,
 				EE01903A92F6E703A4222E36 /* RandomChatServiceTests.swift */,
+				6C045BD2D6E71DB0D5C7414D /* RealtimePokeTests.swift */,
 				21BB5F85AF00096299A29D0A /* RefreshGateTests.swift */,
 				477BE689781B58349AB55CB4 /* RefreshWorkTests.swift */,
 				713BF83B63ED8BB56DA70215 /* RepostTests.swift */,
@@ -593,6 +600,7 @@
 				169794B65E998AB42AC6100A /* PhotoPolicyNotice.swift */,
 				DA6755A3C1E1322D03F5F054 /* PushService.swift */,
 				8A033685AC6ABF24B77DBE35 /* RandomChatService.swift */,
+				66E8019E918104F455ACB9F9 /* RealtimeService.swift */,
 				8909E862C2FAACEF986DBBFA /* RefreshGate.swift */,
 				9F512A4B0A8956C113B1A1E9 /* RefreshWork.swift */,
 				D537F61C3F1907A97DC3AFFE /* RoomCallService.swift */,
@@ -806,6 +814,7 @@
 			packageProductDependencies = (
 				020A5D20698A8FD9F6D74319 /* MaroonCore */,
 				44EB3D17FC5A3B6820474C75 /* Auth */,
+				098DC58532FE1D04D6C64C4B /* Realtime */,
 			);
 			productName = MaroonSocial;
 			productReference = 4FE3135AFCAFD0FDF5C5F358 /* MaroonSocial.app */;
@@ -958,6 +967,7 @@
 				1DD1F94C5A5EEA2E907739D0 /* PostFeatureStoreTests.swift in Sources */,
 				D3F01209B9DECB4C1CCF2C90 /* PushRoutingTests.swift in Sources */,
 				2A57D96729A7246164BDCE99 /* RandomChatServiceTests.swift in Sources */,
+				41DA8F4D2B319C59703AE90C /* RealtimePokeTests.swift in Sources */,
 				9A5D6EBBB2F4FF842F518635 /* RefreshGateTests.swift in Sources */,
 				529577B0CEA5BF3DD099E275 /* RefreshWorkTests.swift in Sources */,
 				562E10EC7FF67A090454AB6E /* RepostTests.swift in Sources */,
@@ -1061,6 +1071,7 @@
 				5D09432E72B695BFB16794B5 /* RandomBrowserPairView.swift in Sources */,
 				E4E002051CD49F04B1614FF7 /* RandomChatService.swift in Sources */,
 				C6EAB8F983A48C038F6FEC18 /* RandomChatView.swift in Sources */,
+				7D629D9E4E7B7922E37A67F2 /* RealtimeService.swift in Sources */,
 				E683359BBF2249AAFF892733 /* RefreshGate.swift in Sources */,
 				616598B27144327058703CFE /* RefreshWork.swift in Sources */,
 				AE33FE9D8DD1D013BEAE42C6 /* RoomCallService.swift in Sources */,
@@ -1438,6 +1449,11 @@
 		020A5D20698A8FD9F6D74319 /* MaroonCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = MaroonCore;
+		};
+		098DC58532FE1D04D6C64C4B /* Realtime */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D43B433A3D0B867F7D102FA4 /* XCRemoteSwiftPackageReference "supabase-swift" */;
+			productName = Realtime;
 		};
 		44EB3D17FC5A3B6820474C75 /* Auth */ = {
 			isa = XCSwiftPackageProductDependency;

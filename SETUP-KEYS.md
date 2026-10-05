@@ -28,7 +28,7 @@ supabase secrets set NAME=value --project-ref myxbghfbapbfffkpndwo
 | `R2_PUBLIC_BASE_URL` (optional) | The custom domain you attach to `R2_BUCKET` only, e.g. `https://media.<your domain>` | CDN delivery for post media | Post media is served through 24-hour signed URLs without the CDN |
 | `R2_CDN_ZONE_ID` (with the CDN) | Cloudflare dashboard → the domain's zone id | Purging deleted post media from the CDN | CDN URLs are not issued |
 | `R2_CDN_PURGE_TOKEN` (with the CDN) | Cloudflare API token with only Zone → Cache Purge on that zone | Purging deleted post media from the CDN | CDN URLs are not issued |
-| `REALTIME_JWT_SECRET` | Supabase dashboard → Project Settings → API → JWT secret (or an imported signing key) | Realtime pokes for chats, inbox and game-day chat | Chats and inbox keep polling every few seconds |
+| `REALTIME_JWT_SECRET` | Supabase dashboard → Project Settings → API → JWT secret (or an imported signing key). Set it only after `20261005200000_realtime_pokes.sql` and `20261005210000_realtime_pokes_review_fixes.sql` are applied | Realtime pokes for chats, inbox and game-day chat | Chats and inbox keep polling every few seconds |
 | `CF_REALTIME_APP_ID`, `CF_REALTIME_APP_SECRET` (later) | Cloudflare Realtime → SFU app | SFU for group calls | Group calls keep the current path |
 
 Order for R2: apply the revocation migration, set the four `R2_*` credentials (and `R2_PRIVATE_BUCKET` if chats should use R2), then `MEDIA_BACKEND=r2`, and redeploy the functions. The CDN comes last: zone id and purge token first, then `R2_PUBLIC_BASE_URL`. Switching `MEDIA_BACKEND` back off is safe because every object records its backend in its path.
@@ -43,8 +43,11 @@ Schema changes are applied by the owner. These migration files are in `supabase/
 |---|---|---|
 | `20261005160000_feed_sync_incremental.sql` | Incremental feed (only new or changed posts every few seconds), 30-post pages with infinite scroll, "Load earlier replies", per-chat message catch-up | Apply together with the next file, in this order |
 | `20261005170000_feed_sync_review_fixes.sql` | Review fixes for the file above: no change clock that could link anonymous posts to accounts, per-member resync instead, message edits/reactions/unsends in the catch-up, input range checks | `python3 tools/test-feed-sync.py`, then `psql … -f tools/test-feed-sync-security.sql` |
-
 | `20261005190000_r2_media_revocation.sql` | Deleted posts and attachments queue their R2 objects for deletion and CDN purge. Apply it before setting `MEDIA_BACKEND=r2` | `psql … -f tools/test-r2-media-revocation.sql` |
+| `20261005200000_realtime_pokes.sql` | Realtime pokes for chats, the inbox and game-day chat (id-only signals; the app then fetches the new messages) | Apply together with the next file, in this order |
+| `20261005210000_realtime_pokes_review_fixes.sql` | Review fixes for the file above: pending group invitees get no message pokes, receiving needs the same TAMU verification as the app, and calls, DM answers, membership and room changes poke open chats | `psql … -f tools/test-realtime-security.sql`, then `EXPECT_REALTIME=1 python3 tools/test-realtime-token.py` after setting `REALTIME_JWT_SECRET` |
+
+Apply them in filename order (`supabase db push` does this). The realtime file depends on the two feed-sync files.
 
 Apply the two feed-sync files back to back and never the first one alone: on its own it would publish a raw change clock that the second file removes.
 

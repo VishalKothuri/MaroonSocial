@@ -410,7 +410,8 @@ struct ChatView: View {
       }
       .attachmentOffers(offers, service: SharedMemeService(social: store.social, fixtureMode: store.fixtureMode))
       .task { await store.markRead(id) }
-      // Only the open conversation polls; new messages arrive as `room.messages after_seq`.
+      // The open conversation follows its room: Realtime pokes (or a 3 s poll until they flow)
+      // fetch `room.messages after_seq`; the view itself never polls.
       .task(id: id) { await store.followRoom(id) }
       .onChange(of: chat?.id) { _, value in
         if value == nil {
@@ -499,7 +500,7 @@ struct ChatView: View {
         TextField("Message…", text: $text, axis: .vertical).lineLimit(1...(dynamicTypeSize.isAccessibilitySize ? 3 : 5)).focused($focused).submitLabel(.send)
           .padding(11).background(Palette.surface, in: RoundedRectangle(cornerRadius: 18)).accessibilityIdentifier("messageText")
           .onSubmit { send() }
-          .onChange(of: text) { _, value in if !store.fixtureMode && store.connected && !value.isEmpty && Date.now.timeIntervalSince(lastTyping) > 4 { lastTyping = .now; Task { _ = try? await store.social.perform("room.typing", payload: ["room_id": id]) } } }
+          .onChange(of: text) { _, value in if !store.fixtureMode && store.connected && !value.isEmpty && Date.now.timeIntervalSince(lastTyping) > 4 { lastTyping = .now; Task { await store.sendTyping(id) } } }
         Button(action: send) { Image(systemName: "arrow.up").font(.system(size: 20, weight: .bold)).frame(width: 40, height: 40).background(Palette.maroon, in: Circle()).foregroundStyle(Palette.onAccent).frame(width: 44, height: 44) }.buttonStyle(ControlPressStyle())
           .disabled(sending || loadingMedia || restoredReplyID != nil || text.count > 4000 || (text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && media == nil)).accessibilityLabel("Send message").accessibilityIdentifier("sendMessage")
         }

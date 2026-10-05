@@ -105,6 +105,16 @@ struct LocalState: Codable {
   private var libraryOwners: [UUID: SocialLibraryQuery] = [:]
   private(set) var libraryPages: [SocialLibraryQuery: SocialLibraryPage] = [:]
   private(set) var fixtureMode: Bool
+  /// Supabase Realtime pokes (inert in fixture mode). While `realtime.connected`, open rooms stop polling.
+  let realtime: RealtimeService
+  private var pokeQueue: [RealtimePoke] = []
+  private var pokeDrain: Task<Void, Never>?
+  /// A poke asked for a snapshot that has not started yet (see `requestSnapshot`).
+  private(set) var snapshotRequested = false
+  /// When this device last sent `room.typing`, per room: the server echoes it back as a poke.
+  private var typingSent: [String: Date] = [:]
+  /// When the server last showed a room's typing indicator (realtime mode expires it locally).
+  private var typingSeen: [String: Date] = [:]
   private var polling = false
   private let refreshWork = RefreshWork()
   private var pendingPost: (key: String, nonce: String, id: String?, attachmentID: String?)?
@@ -116,7 +126,7 @@ struct LocalState: Codable {
     let testing = arguments.contains("--uitesting") || arguments.contains("--uitesting-preserve")
     return directory.appending(path: testing ? "preview-state-ui-tests.json" : "preview-state.json")
   }
-  init(storageURL: URL? = nil, arguments: [String] = ProcessInfo.processInfo.arguments, courseTermService: CourseTermsService? = nil, socialService: SocialService? = nil) {
+  init(storageURL: URL? = nil, arguments: [String] = ProcessInfo.processInfo.arguments, courseTermService: CourseTermsService? = nil, socialService: SocialService? = nil, realtime: RealtimeService? = nil) {
     let usesFixtures = storageURL != nil || arguments.contains("--uitesting") || arguments.contains("--uitesting-preserve")
     let auth = usesFixtures ? EmailAuthService.unavailableForFixtures() : EmailAuthService()
     self.auth = auth
@@ -124,6 +134,8 @@ struct LocalState: Codable {
     self.tag = TagService(social: social)
     self.courseTerms = courseTermService ?? CourseTermsService(social: social, fixtureMode: usesFixtures)
     fixtureMode = usesFixtures && socialService == nil
+    // UI tests and fixture journeys have no realtime: the service stays inert.
+    self.realtime = realtime ?? (usesFixtures ? .inert() : .live(social: social))
     file = storageURL ?? (usesFixtures ? Self.storageFileURL(arguments: arguments) : URL.documentsDirectory.appending(path: "social-cache.json"))
     if arguments.contains("--uitesting") && !arguments.contains("--uitesting-preserve") {
       try? FileManager.default.removeItem(at: file)
@@ -160,6 +172,7 @@ struct LocalState: Codable {
     save()
     courseTerms.onChange = { [weak self] in self?.removeExpiredCourseContent() }
     removeExpiredCourseContent()
+    self.realtime.onPoke = { [weak self] poke in self?.enqueue(poke) }
   }
   func canAccessConversation(_ id: String) -> Bool {
     if let course = state.courses.first(where: { $0.id == id }) { return courseTerms.canAccess(term: course.term) }
@@ -187,6 +200,12 @@ struct LocalState: Codable {
         state.posts.filter { ids.contains($0.id) }.sorted { $0.created > $1.created }.map(\.id)
       }
       persisted.feedCommunity = feedPostIDs == nil ? nil : feedCommunity.rawValue
+      // Game-day chat lives in memory only (its last 50 messages); the snapshot refills it.
+      for index in persisted.conversations.indices where isGameRoom(persisted.conversations[index].id) {
+        persisted.conversations[index].messages = []
+        persisted.roomCursors?.removeValue(forKey: persisted.conversations[index].id)
+      }
+      if persisted.roomCursors?.isEmpty == true { persisted.roomCursors = nil }
       if !fixtureMode { persisted = Self.evicted(persisted, ownPostIDs: ownPostIDs, now: .now) }
       let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
       let data = try encoder.encode(persisted)
@@ -432,6 +451,7 @@ struct LocalState: Codable {
       }
       let message = Message(author: state.username, text: trimmed, media: media, game: game)
       state.conversations[i].messages.append(message)
+      if isGameRoom(id) { state.conversations[i].messages = Self.trimmedGameRoom(state.conversations[i].messages) }
       guard save() else {
         state.conversations[i].messages.removeAll { $0.id == message.id }
         return false
@@ -507,6 +527,8 @@ extension AppStore {
   private func fetchRefresh() async {
     guard !fixtureMode, state.onboarded, !syncing, !busy else { return }
     let owner = compositions.owner
+    // This snapshot starts after every poke that asked for one so far.
+    snapshotRequested = false
     syncing = true
     defer { if compositions.owner == owner { syncing = false } }
     do {
@@ -531,15 +553,20 @@ extension AppStore {
       await PushService.shared.configure(social: social)
     }
     await courseTerms.refresh()
+    // Pokes for the inbox and open rooms while the app is active; inert in fixture mode. Until the
+    // member channel joins (or after 10 s without a socket) open rooms keep their 3 s polling.
+    let pokes = Task { await realtime.run() }
+    defer { pokes.cancel() }
     var calendarRefresh = Date.now
     while !Task.isCancelled {
       do { try await Task.sleep(for: .seconds(3)) } catch { break }
       // Incremental servers: the feed asks for its delta every 3 s while the Community tab is
-      // visible (an open ChatView polls its own room), and a slim snapshot reconciles the
+      // visible (an open ChatView polls its own room unless Realtime pokes it), and a slim snapshot reconciles the
       // rest every 60 s and after mutations. A server without deltas keeps the 3 s snapshot.
       // A feed that does not match the selected community (a switch whose snapshot was skipped
       // or failed) takes a snapshot instead of a delta.
-      if !incrementalSync || feedIDsCommunity != feedCommunity || Date.now.timeIntervalSince(lastSnapshot) >= Self.reconciliationInterval { await refresh() }
+      // A snapshot a poke asked for, which a mutation or another refresh held up, runs now.
+      if snapshotRequested || !incrementalSync || feedIDsCommunity != feedCommunity || Date.now.timeIntervalSince(lastSnapshot) >= Self.reconciliationInterval { await refresh() }
       else if tab == 0 { await syncFeedDelta() }
       if connected && connectionError == nil { await flushOutbox() }
       courseTerms.advanceClock()
@@ -610,6 +637,10 @@ extension AppStore {
     }
     // A window shorter than the snapshot's is the whole conversation.
     for conversation in snapshot.conversations where conversation.messages.count < Self.roomMessageWindow { roomHistoryComplete.insert(conversation.id) }
+    let gameRooms = Set(snapshot.conversationMeta.filter { $0.kind == "sports" }.map(\.id))
+    for index in state.conversations.indices where Self.isGameRoom(state.conversations[index].id) || gameRooms.contains(state.conversations[index].id) {
+      state.conversations[index].messages = Self.trimmedGameRoom(state.conversations[index].messages)
+    }
     var opened = state.roomOpened ?? [:], cursors = state.roomCursors ?? [:]
     for conversation in state.conversations {
       if opened[conversation.id] == nil { opened[conversation.id] = .now }
@@ -971,7 +1002,11 @@ extension AppStore {
     }
   }
   /// An open ChatView follows its room: `room.messages after_seq` with the changes to held
-  /// messages every 3 s. While it is open, snapshots merge into the room instead of replacing it.
+  /// messages. While Realtime pokes the room (its channel is subscribed) new messages, edits,
+  /// reactions, typing and room changes arrive as pokes and the view does not poll: a shown typing
+  /// indicator clears locally once the server's 8 s window passes without a new typing poke.
+  /// Otherwise it polls every 3 s. While it is open, snapshots merge into the room instead of
+  /// replacing it.
   func followRoom(_ id: String) async {
     markRoomOpened(id)
     openRooms[id, default: 0] += 1
@@ -980,11 +1015,37 @@ extension AppStore {
       else { openRooms.removeValue(forKey: id); roomChangeClocks.removeValue(forKey: id) }
     }
     guard !fixtureMode else { return }
+    await syncRoom(id)
+    guard !Task.isCancelled else { return }
+    // Joining the room's channel catches it up once more (`.resync`), after this first read.
+    realtime.follow(id)
+    defer { realtime.unfollow(id) }
     while !Task.isCancelled {
-      await syncRoom(id)
       do { try await Task.sleep(for: .seconds(3)) } catch { break }
+      if realtime.receives(room: id) { expireTyping(id) } else { await syncRoom(id) }
     }
   }
+  /// Realtime mode: a shown typing indicator clears once the server's window has passed without
+  /// the room confirming it again (each typing poke re-reads the room).
+  func expireTyping(_ id: String, now: Date = .now) {
+    guard conversationMeta[id]?.typing?.isEmpty == false else { typingSeen.removeValue(forKey: id); return }
+    guard let seen = typingSeen[id] else { typingSeen[id] = now; return }
+    guard now.timeIntervalSince(seen) >= Self.typingWindow else { return }
+    conversationMeta[id]?.typing = nil
+    typingSeen.removeValue(forKey: id)
+  }
+  /// `room.typing` shows the indicator for 8 s on the server.
+  static let typingWindow: TimeInterval = 8
+  /// The composer's typing ping (at most every 4 s). Its own poke comes back within this window
+  /// and is ignored.
+  func sendTyping(_ room: String) async {
+    guard !fixtureMode else { return }
+    typingSent[room] = .now
+    _ = try? await social.perform("room.typing", payload: ["room_id": room])
+  }
+  static let ownTypingEcho: TimeInterval = 2
+  /// Rooms an open ChatView follows.
+  func isRoomOpen(_ id: String) -> Bool { openRooms[id] != nil }
   func markRoomOpened(_ id: String) {
     var opened = state.roomOpened ?? [:]; opened[id] = .now; state.roomOpened = opened
   }
@@ -1002,12 +1063,19 @@ extension AppStore {
         // Changes only refresh messages already held; older history stays unloaded.
         let held = Set(state.conversations[index].messages.map(\.id))
         let updates = (page.changed ?? []).filter { held.contains($0.id) } + page.messages
+        if let meta = page.meta {
+          conversationMeta[id] = meta
+          if meta.typing?.isEmpty == false { typingSeen[id] = .now } else { typingSeen.removeValue(forKey: id) }
+        }
         if !updates.isEmpty {
-          let merged = Self.mergeMessages(state.conversations[index].messages, with: updates)
+          var merged = Self.mergeMessages(state.conversations[index].messages, with: updates)
+          if isGameRoom(id) { merged = Self.trimmedGameRoom(merged) }
           if merged != state.conversations[index].messages { state.conversations[index].messages = merged }
         }
-        if let meta = page.meta { conversationMeta[id] = meta }
-        if let now = page.now { roomChangeClocks[id] = now; changedSince = now }
+        if let now = page.now {
+          changedSince = now
+          if openRooms[id] != nil { roomChangeClocks[id] = now }
+        }
         let last = state.conversations[index].messages.compactMap(\.sequence).max()
         if let last { var cursors = state.roomCursors ?? [:]; cursors[id] = last; state.roomCursors = cursors }
         save()
@@ -1024,13 +1092,13 @@ extension AppStore {
   static let roomMessageWindow = 50
   /// A room may hold older messages than its window: "Earlier messages" pages them in.
   func hasEarlierMessages(_ id: String) -> Bool {
-    guard !fixtureMode, !roomSyncUnsupported, incrementalSync, !roomHistoryComplete.contains(id),
+    guard !fixtureMode, !roomSyncUnsupported, incrementalSync, !roomHistoryComplete.contains(id), !isGameRoom(id),
       let conversation = state.conversations.first(where: { $0.id == id }) else { return false }
     return conversation.messages.count >= Self.roomMessageWindow
   }
   /// "Earlier messages": the page before the oldest message held in the room (`before_seq`).
   func loadEarlierMessages(_ id: String) async {
-    guard !fixtureMode, !loadingEarlierMessages.contains(id), canAccessConversation(id),
+    guard !fixtureMode, !loadingEarlierMessages.contains(id), canAccessConversation(id), !isGameRoom(id),
       let oldest = state.conversations.first(where: { $0.id == id })?.messages.compactMap(\.sequence).min() else { return }
     let owner = compositions.owner
     loadingEarlierMessages.insert(id)
@@ -1132,6 +1200,7 @@ extension AppStore {
     feedIDsCommunity = nil; feedNeedsReset = false; feedLoadFailed = false; loadingMoreFeed = false; loadingComments = []
     feedDeltaRunning = false; roomSyncUnsupported = false; lastSnapshot = .distantPast
     firstReplyIDs = [:]; fillingFeed = false; snapshotClock = nil; openRooms = [:]; roomChangeClocks = [:]
+    pokeQueue = []; snapshotRequested = false; typingSent = [:]; typingSeen = [:]; realtime.restart()
     loadingEarlierMessages = []; roomHistoryComplete = []; feedGeneration += 1
     feedCommunity = .campus; social.feedCommunity = .campus; loadingCommunity = false
     pendingPost = nil; pendingComments = [:]; pendingUploads = [:]
@@ -1377,5 +1446,91 @@ extension AppStore {
     guard !fixtureMode, let meta = conversationMeta[roomID], meta.unread > 0 else { return }
     let owner = compositions.owner
     if let response = try? await social.perform("room.read", payload: ["room_id": roomID]), compositions.owner == owner { apply(response) }
+  }
+}
+
+// MARK: - Realtime pokes and game-day chat (caching phase 3)
+extension AppStore {
+  /// Game-day chat keeps only its newest messages in memory and is never written to the cache.
+  static let gameRoomMessageLimit = 50
+  /// Game-day rooms are created by `join_sports` as `sports:<event>` with room kind "sports".
+  static func isGameRoom(_ id: String) -> Bool { id.hasPrefix("sports:") }
+  func isGameRoom(_ id: String) -> Bool { Self.isGameRoom(id) || conversationMeta[id]?.kind == "sports" }
+  /// The newest `gameRoomMessageLimit` messages (sequenced ones; unsent local copies stay).
+  static func trimmedGameRoom(_ messages: [Message]) -> [Message] {
+    let sequenced = messages.filter { $0.sequence != nil }
+    guard sequenced.count > gameRoomMessageLimit else { return messages }
+    let floor = sequenced.compactMap(\.sequence).sorted().suffix(gameRoomMessageLimit).first ?? 0
+    return messages.filter { ($0.sequence ?? .max) >= floor }
+  }
+  /// Pokes are handled one at a time in arrival order, so a room poke and the matching inbox poke
+  /// for the same message cost one `room.messages` request.
+  func enqueue(_ poke: RealtimePoke) {
+    pokeQueue.append(poke)
+    guard pokeDrain == nil else { return }
+    pokeDrain = Task { [weak self] in
+      while let self, !self.pokeQueue.isEmpty {
+        let next = self.pokeQueue.removeFirst()
+        await self.handle(next)
+      }
+      self?.pokeDrain = nil
+    }
+  }
+  /// Enqueues a poke and waits until the queue is drained (tests).
+  func receive(_ poke: RealtimePoke) async {
+    enqueue(poke)
+    await pokeDrain?.value
+  }
+  /// One poke, one read: `room.messages after_seq` for a held room the poke is ahead of, a snapshot
+  /// for a room this device does not hold yet. Nothing is fetched for a sequence already held, and
+  /// a read answers the pokes still queued behind it that it covers (it starts after they arrived).
+  func handle(_ poke: RealtimePoke) async {
+    guard !fixtureMode, connected, state.onboarded else { return }
+    switch poke.kind {
+    case .resync:
+      if let room = poke.room {
+        guard openRooms[room] != nil else { return }
+        dropQueuedRoomPokes(room)
+        await syncRoom(room)
+        return
+      }
+      for id in openRooms.keys.sorted() { dropQueuedRoomPokes(id); await syncRoom(id) }
+      // Inbox pokes sent while the member channel was away are gone too: one snapshot, unless one
+      // just ran (the first join right after the app became active).
+      if Date.now.timeIntervalSince(lastSnapshot) > Self.resyncSnapshotAge { await requestSnapshot() }
+    case .message, .inbox:
+      // Invitations, request answers and calls change the room row itself: the snapshot carries it.
+      guard let room = poke.room, let seq = poke.seq, let conversation = state.conversations.first(where: { $0.id == room }) else {
+        await requestSnapshot(); return
+      }
+      // Game-day chat is live only while it is open.
+      if isGameRoom(room) && openRooms[room] == nil { return }
+      if let held = conversation.messages.compactMap(\.sequence).max() ?? state.roomCursors?[room], seq <= held { return }
+      await syncRoom(room)
+    case .change, .typing:
+      guard let room = poke.room, openRooms[room] != nil else { return }
+      // This device's own typing comes back as a poke; it changes nothing here.
+      if poke.kind == .typing, let sent = typingSent[room], Date.now.timeIntervalSince(sent) < Self.ownTypingEcho { return }
+      dropQueuedRoomPokes(room)
+      await syncRoom(room)
+    }
+  }
+  /// A snapshot within this long before a member-channel catch-up already covers the inbox.
+  static let resyncSnapshotAge: TimeInterval = 10
+  /// A poke that needs the room list asks for a snapshot that starts after it arrived. A refresh
+  /// already running may have read before the change, and a mutation in flight blocks refreshes,
+  /// so the request stays pending (the update loop retries it every 3 s) until one starts.
+  func requestSnapshot() async {
+    pokeQueue.removeAll { poke in
+      guard poke.kind == .inbox || poke.kind == .message else { return false }
+      guard let room = poke.room, poke.seq != nil else { return true }
+      return !state.conversations.contains { $0.id == room }
+    }
+    snapshotRequested = true
+    await refreshAfterMutation()
+  }
+  /// Queued pokes for `room` that only ask for a read of it; a read starting now answers them.
+  private func dropQueuedRoomPokes(_ room: String) {
+    pokeQueue.removeAll { $0.room == room && ($0.kind == .change || $0.kind == .typing || $0.kind == .resync) }
   }
 }

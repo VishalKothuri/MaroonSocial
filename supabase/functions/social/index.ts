@@ -4,6 +4,7 @@ import { socialIdentity, SocialAuthError, authFailure, authBridge, sha256 } from
 import { Image, GIF } from 'jsr:@matmen/imagescript@1.3.1';
 import { sanitizeVideo, VideoMediaError } from '../_shared/video-media.ts';
 import { mediaStore, newMediaPath, groupByBackend, MediaStoreError, type MediaRead } from '../_shared/media-store.ts';
+import { mintRealtimeToken } from '../_shared/realtime-token.ts';
 // A device credential is server-authenticated; it does not assert university enrollment.
 const base = Deno.env.get('SUPABASE_URL')!;
 const secret = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -21,7 +22,7 @@ const activityActions=new Set(['notifications','notification.read','notification
 const organizationActions:Record<string,string>={'organization.admins':'get','organization.invitations':'incoming','organization.invite':'invite','organization.revoke':'revoke','organization.remove':'remove','organization.leave':'leave','organization.accept':'accept','organization.decline':'decline'};
 const organizationInputs:Record<string,string[]>={get:['organization_id'],incoming:[],invite:['organization_id','username','kind','nonce'],revoke:['organization_id','invitation_id'],remove:['organization_id','administrator_key'],leave:['organization_id'],accept:['invitation_id'],decline:['invitation_id']};
 const memeActions:Record<string,string[]>={'meme.publish':['data','title'],'meme.list':['page','query'],'meme.read':['meme_id'],'meme.report':['meme_id','reason'],'meme.remove':['meme_id']};
-const clientActions=new Set([...activityActions,...Object.keys(organizationActions),...Object.keys(memeActions),'snapshot','feed.page','feed.delta','feed.posts','comments.page','room.messages','profile.update','community.join','community.leave','posts.tag','post.create','post.delete','post.vote','poll.vote','post.save','post.attach','comment.create','comment.delete','comment.vote','course.join','course.leave','activity.create','activity.join','activity.leave','activity.cancel','activity.edit','activity.approve','dm.request','dm.accept','dm.decline','room.send','room.delete','room.react','room.read','room.typing','room.leave','group.create','group.invite','group.accept','group.decline','group.remove','group.transfer','group.leave','join_sports','sports.join','save_event','organization.apply','organization.follow','organization.update','organization.publish','organization.message','report','block','account.delete','attachment.upload','attachment.read','attachment.external']);
+const clientActions=new Set([...activityActions,...Object.keys(organizationActions),...Object.keys(memeActions),'snapshot','feed.page','feed.delta','feed.posts','comments.page','room.messages','profile.update','community.join','community.leave','posts.tag','post.create','post.delete','post.vote','poll.vote','post.save','post.attach','comment.create','comment.delete','comment.vote','course.join','course.leave','activity.create','activity.join','activity.leave','activity.cancel','activity.edit','activity.approve','dm.request','dm.accept','dm.decline','room.send','room.delete','room.react','room.read','room.typing','room.leave','group.create','group.invite','group.accept','group.decline','group.remove','group.transfer','group.leave','join_sports','sports.join','save_event','organization.apply','organization.follow','organization.update','organization.publish','organization.message','report','block','account.delete','attachment.upload','attachment.read','attachment.external','realtime.token']);
 class ClientError extends Error {constructor(message:string,public code='invalid',public status=400){super(message)}}
 async function rpc(action:string,hash:string,input:Record<string,unknown>,name='social_gateway'){
  const response=await fetch(base+'/rest/v1/rpc/'+name,{method:'POST',headers:{...authHeaders,'Content-Type':'application/json'},body:JSON.stringify({p_action:action,p_hash:hash,p_input:input}),signal:AbortSignal.timeout(18000)});
@@ -63,6 +64,22 @@ async function sanitize(input:string){
  if(bytes.length>5000000)throw new ClientError('The processed image is too large. Choose smaller media.');
  return {...info,bytes};
 }
+// Realtime pokes (caching phase 3). Without REALTIME_JWT_SECRET, or before the
+// realtime_pokes migration adds public.social_realtime, the app is told to keep polling.
+// The token is returned to its own member only and is never logged.
+async function realtimeGrant(hash:string){
+ const key=Deno.env.get('REALTIME_JWT_SECRET');
+ if(!key)return {realtime:false};
+ const response=await fetch(base+'/rest/v1/rpc/social_realtime',{method:'POST',headers:{...authHeaders,'Content-Type':'application/json'},body:JSON.stringify({p_action:'member',p_hash:hash,p_input:{}}),signal:AbortSignal.timeout(8000)});
+ if(response.status===404){await response.body?.cancel();return {realtime:false}}
+ if(!response.ok){console.error('realtime_member_status',response.status);await response.body?.cancel();return {realtime:false}}
+ const value=await response.json();
+ if(value.error)throw new ClientError(value.error,value.code,value.code==='unauthorized'?401:value.code==='forbidden'?403:value.code==='rate_limit'?429:400);
+ if(typeof value.member!=='string')return {realtime:false};
+ const grant=await mintRealtimeToken(key,value.member);
+ // expires_in lets the app time its refresh on its own clock (a skewed device clock cannot let the token lapse first).
+ return {realtime:true,token:grant.token,expires_at:grant.expiresAt,expires_in:grant.claims.exp-grant.claims.iat,member:grant.claims.sub};
+}
 function encodeBase64(bytes:Uint8Array){let result='';for(let i=0;i<bytes.length;i+=32768)result+=String.fromCharCode(...bytes.subarray(i,i+32768));return btoa(result)}
 Deno.serve(async req=>{
  if(req.method!=='POST')return respond({error:'Use POST.'},405);
@@ -86,6 +103,7 @@ Deno.serve(async req=>{
    await authBridge('prepare-deletion',identity.auth,{receipt_hash:await sha256(payload.deletion_receipt)});
   }
   delete payload.deletion_receipt;
+  if(action==='realtime.token')return respond(await realtimeGrant(hash));
   if(activityActions.has(action))return respond(await rpc(action,hash,payload,'social_activity'));
   if(Object.hasOwn(organizationActions,action)){
    const name=organizationActions[action];const input:Record<string,unknown>={};

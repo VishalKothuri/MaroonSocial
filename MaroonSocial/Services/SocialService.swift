@@ -342,6 +342,13 @@ struct SocialServiceError: Error, Decodable, LocalizedError {
     guard page.messages.count <= 50, (page.changed?.count ?? 0) <= 50, page.roomID == roomID else { throw URLError(.badServerResponse) }
     return page
   }
+  /// A Realtime token for this member's private channels, or `{realtime: false}` (keep polling).
+  /// The token is held in memory only and never logged.
+  func realtimeGrant() async throws -> RealtimeGrant {
+    let grant = try await queued("realtime.token", payload: [:], as: RealtimeGrant.self)
+    guard !grant.realtime || (grant.token?.isEmpty == false && grant.member != nil && grant.expiresAt != nil) else { throw URLError(.badServerResponse) }
+    return grant
+  }
   func credential() async throws -> String {
     guard let token else { throw SocialServiceError(error: "Sign in to continue.", code: "unauthorized") }
     return token
