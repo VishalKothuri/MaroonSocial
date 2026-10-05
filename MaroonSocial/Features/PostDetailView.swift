@@ -40,11 +40,24 @@ struct PostDetailView: View {
               .accessibilityIdentifier("threadOriginalPost")
             HStack {
               Text("Replies").font(.headline)
-              Text("\(post.comments.filter { $0.deleted != true }.count)").font(.subheadline).foregroundStyle(.secondary)
+              // The server's total (a thread opened from the feed holds only the newest replies),
+              // less the deleted replies held here.
+              Text("\(max(0, max(post.commentCount ?? 0, post.comments.count) - post.comments.filter { $0.deleted == true }.count))").font(.subheadline).foregroundStyle(.secondary)
               Spacer()
             }.padding(.horizontal, 16).padding(.top, 20).padding(.bottom, 8)
+            if store.hasEarlierReplies(post) {
+              Button { Task { await store.loadEarlierComments(post.id) } } label: {
+                HStack(spacing: 8) {
+                  if store.loadingComments.contains(post.id) { ProgressView().controlSize(.small) }
+                  Text("Load earlier replies").font(.subheadline.bold())
+                }.frame(maxWidth: .infinity, minHeight: 44)
+              }.buttonStyle(ControlPressStyle()).foregroundStyle(Palette.accentText).padding(.horizontal, 16)
+                .disabled(store.loadingComments.contains(post.id)).accessibilityIdentifier("loadEarlierReplies")
+            }
+            let parentsMayBeEarlier = store.hasEarlierReplies(post)
             ForEach(CommentThread.flatten(post.comments)) { row in
               ThreadReplyRow(comment: row.comment, depth: row.depth, isOrphan: row.isOrphan,
+                parentNotLoaded: row.isOrphan && parentsMayBeEarlier,
                 selected: replyTarget == row.id,
                 onReply: { replyTarget = row.id; focused = true },
                 onMessage: { focused = false; messageTarget = row.comment })
@@ -67,7 +80,10 @@ struct PostDetailView: View {
             withAnimation(reduceMotion ? nil : .easeOut(duration: 0.23)) { proxy.scrollTo(target, anchor: .bottom) }
           }
         }
-    }.onAppear { if draftOwner.isEmpty { draftOwner = store.compositions.owner } }.persistentDraft(draftKey,value:savedDraft).appBackground().navigationTitle("Post").navigationBarTitleDisplayMode(.inline).hidesTabBarWhenPushed()
+    }.onAppear { if draftOwner.isEmpty { draftOwner = store.compositions.owner } }
+      // Newest replies that answer replies older than the loaded window bring their parents in.
+      .task(id: id) { await store.loadMissingParents(id) }
+      .persistentDraft(draftKey,value:savedDraft).appBackground().navigationTitle("Post").navigationBarTitleDisplayMode(.inline).hidesTabBarWhenPushed()
       .navigationDestination(item: $conversationID) { ChatView(id: $0) }
       .sheet(item: $messageTarget) { comment in
         NewMessageView(commentID: comment.id, anonymous: true) { conversationID = $0 }
@@ -151,6 +167,8 @@ private struct ThreadReplyRow: View {
   let comment: Comment
   let depth: Int
   let isOrphan: Bool
+  /// The parent may simply be older than the replies loaded so far (not removed).
+  var parentNotLoaded = false
   let selected: Bool
   let onReply: () -> Void
   let onMessage: () -> Void
@@ -189,7 +207,7 @@ private struct ThreadReplyRow: View {
         }.accessibilityLabel("Reply options").disabled(deleted)
       }
       if isOrphan && comment.parentID != nil {
-        Label("Earlier reply unavailable", systemImage: "arrow.turn.down.right")
+        Label(parentNotLoaded ? "Reply to an earlier reply" : "Earlier reply unavailable", systemImage: "arrow.turn.down.right")
           .font(.caption2).foregroundStyle(.secondary)
       } else if depth > 3 {
         Label("Continuing this reply thread", systemImage: "arrow.turn.down.right")

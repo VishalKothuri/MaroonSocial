@@ -31,6 +31,11 @@ public struct Post: Identifiable, Codable, Equatable {
   public var deleted: Bool? = nil
   public var quote: PostQuote? = nil
   public var repostCount: Int = 0
+  /// Every reply the server holds for this post; `comments` may carry only the newest ones.
+  public var commentCount: Int? = nil
+  /// Server time at which this copy was read. Merges keep the most recently read copy; the
+  /// device cache does not persist it (anything fetched after a launch is newer than the cache).
+  public var syncedAt: Date? = nil
   public init(
     id: String = UUID().uuidString, author: String, anonymous: Bool = true,
     community: Community = .campus, text: String, score: Int = 0, comments: [Comment] = [],
@@ -48,7 +53,7 @@ public struct Post: Identifiable, Codable, Equatable {
     self.saved = false
     self.acceptsDM = acceptsDM
   }
-  enum CodingKeys: String, CodingKey { case id, author, anonymous, community, text, score, vote, comments, created, saved, acceptsDM, media, attachmentID, poll, linkURL, tags, deleted, quote, repostCount }
+  enum CodingKeys: String, CodingKey { case id, author, anonymous, community, text, score, vote, comments, created, saved, acceptsDM, media, attachmentID, poll, linkURL, tags, deleted, quote, repostCount, commentCount, syncedAt }
   // Cached feeds written before reposts existed carry neither key; synthesized
   // decoding would reject them because repostCount is not optional.
   public init(from decoder: Decoder) throws {
@@ -72,6 +77,8 @@ public struct Post: Identifiable, Codable, Equatable {
     deleted = try values.decodeIfPresent(Bool.self, forKey: .deleted)
     quote = try values.decodeIfPresent(PostQuote.self, forKey: .quote)
     repostCount = try values.decodeIfPresent(Int.self, forKey: .repostCount) ?? 0
+    commentCount = try values.decodeIfPresent(Int.self, forKey: .commentCount)
+    syncedAt = try values.decodeIfPresent(Date.self, forKey: .syncedAt)
   }
   public mutating func setVote(_ newValue: Int) {
     let next = newValue == vote ? 0 : max(-1, min(1, newValue))

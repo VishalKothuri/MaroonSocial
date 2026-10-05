@@ -43,9 +43,11 @@ import MaroonCore
     XCTAssertEqual(response.snapshot?.posts, [recent]); XCTAssertEqual(response.tagPages?.first?.posts, [older])
     XCTAssertEqual(AppStore.mergePostSources(feed: response.snapshot!.posts, pages: response.tagPages!), [recent, older])
     service.releaseTagQuery(owner: child); actions = []
-    _ = try await service.refresh(); XCTAssertEqual(actions, ["snapshot", "posts.tag"])
+    // A plain snapshot (polling, launch) leaves retained pages to their views; a mutation still refreshes them.
+    _ = try await service.refresh(); XCTAssertEqual(actions, ["snapshot"])
+    actions = []; _ = try await service.perform("post.save", payload: ["post_id": "older", "saved": true]); XCTAssertEqual(actions, ["post.save", "posts.tag"])
     service.releaseTagQuery(owner: parent); actions = []
-    let unscoped = try await service.refresh(); XCTAssertEqual(actions, ["snapshot"]); XCTAssertTrue(unscoped.tagPages?.isEmpty == true)
+    let unscoped = try await service.refresh(); XCTAssertEqual(actions, ["snapshot"]); XCTAssertNil(unscoped.tagPages)
   }
   func testUnavailableTagCannotUndoSuccessfulMutationOrRetainDeletedFallback() async throws {
     let recent = Post(id: "recent", author: "other", text: "New feed post", created: Date(timeIntervalSince1970: 1_000))

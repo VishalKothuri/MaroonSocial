@@ -24,11 +24,16 @@ struct CommunityView: View {
   @State private var conversationID: String?
   @State private var refreshPresentation = RefreshPresentation.idle
   private var posts: [Post] {
-    let posts = store.state.posts.filter {
-      (store.feedPostIDs?.contains($0.id) ?? true) && $0.community == community && $0.deleted != true && !store.state.hiddenPosts.contains($0.id) && (!savedOnly || $0.saved)
+    let feed = store.state.posts.filter { (store.feedPostIDs?.contains($0.id) ?? true) && $0.community == community }
+      .sorted { $0.created > $1.created }
+    // Hot ranks a fixed window of the newest posts, so pages loaded in New never re-rank older
+    // posts above the reader (the store fills that window when Hot is chosen).
+    let window = sort == "Hot" ? Array(feed.prefix(AppStore.hotWindow)) : feed
+    let posts = window.filter {
+      $0.deleted != true && !store.state.hiddenPosts.contains($0.id) && (!savedOnly || $0.saved)
         && (search.isEmpty || $0.text.localizedCaseInsensitiveContains(search))
     }
-    return sort == "Hot" ? posts.sorted { rank($0) > rank($1) } : posts.sorted { $0.created > $1.created }
+    return sort == "Hot" ? posts.sorted { rank($0) > rank($1) } : posts
   }
   private func rank(_ post: Post) -> Double {
     Double(post.score) / pow(max(1, Date.now.timeIntervalSince(post.created) / 3600) + 2, 1.4)
@@ -116,9 +121,17 @@ struct CommunityView: View {
             // filter can remove every row while the feed is scrolled down.
             LazyVStack(spacing: 0) {
               ForEach(posts) { PostCard(post: $0, onConversationCreated: { conversationID = $0 }, onRepost: { store.quoteRequest = $0 }) }
+              if sort == "Hot" {
+                if store.fillingFeed { ProgressView().controlSize(.small).frame(maxWidth: .infinity, minHeight: 56).accessibilityLabel("Loading more posts") }
+              } else if store.feedHasMore && community == store.feedCommunity {
+                // Search and Saved filter the loaded pages; older pages load on request so a
+                // filter that matches nothing does not walk the whole feed.
+                FeedLoadMoreRow(manual: savedOnly || !search.isEmpty)
+              }
             }
           }
         }.padding(.bottom, 12).id(sort).transition(feedSortTransition)
+          .task(id: sort == "Hot" ? "\(community.rawValue)#\(store.feedGeneration)" : nil) { if sort == "Hot" { await store.fillFeedForHot() } }
         }
       }.accessibilityIdentifier("communityFeed")
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { feedWidth = $0 }
@@ -218,6 +231,8 @@ struct PostCard: View {
   /// The feed hands a repost to its inline composer; without a handler the card
   /// presents the composer as a sheet (threads, library and tag results).
   var onRepost: ((String) -> Void)? = nil
+  /// Every reply the server holds; a feed post carries only its newest replies.
+  private var replyCount: Int { max(post.commentCount ?? 0, post.comments.count) }
   var body: some View {
     VStack(alignment: .leading, spacing: 9) {
       HStack(spacing: 7) {
@@ -247,8 +262,8 @@ struct PostCard: View {
       (dynamicTypeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4)) : AnyLayout(HStackLayout(spacing: 8))) {
         HStack(spacing: 12) {
         if navigates {
-          NavigationLink { PostDetailView(id: post.id).appHapticOnOpen().toolbar(.visible, for: .navigationBar) } label: { Label("\(post.comments.count)", systemImage: "bubble.right").font(.subheadline.weight(.semibold)).frame(minWidth: 44, minHeight: 44) }.accessibilityLabel("\(post.comments.count) replies")
-        } else { Label("\(post.comments.count)", systemImage: "bubble.right").font(.subheadline.weight(.semibold)) }
+          NavigationLink { PostDetailView(id: post.id).appHapticOnOpen().toolbar(.visible, for: .navigationBar) } label: { Label("\(replyCount)", systemImage: "bubble.right").font(.subheadline.weight(.semibold)).frame(minWidth: 44, minHeight: 44) }.accessibilityLabel("\(replyCount) replies")
+        } else { Label("\(replyCount)", systemImage: "bubble.right").font(.subheadline.weight(.semibold)) }
         Button { AppHaptics.shared.play(.impact); requestMessage = true } label: { Image(systemName: "envelope").font(.subheadline.weight(.semibold)).frame(width: 44, height: 44) }
           .buttonStyle(ControlPressStyle()).foregroundStyle(Palette.accentText).accessibilityLabel("Message the author")
           .accessibilityIdentifier("messageAuthor-\(post.id)")
@@ -323,5 +338,31 @@ private struct FeedPageSlide: AnimatableModifier {
   var animatableData: CGFloat { get { distance } set { distance = newValue } }
   func body(content: Content) -> some View {
     content.offset(x: distance * (forward ? 1 : -1) * (entering ? 1 : -1))
+  }
+}
+/// Bottom sentinel: appearing (or a new cursor while it stays visible) asks for the next page.
+/// While a search or the Saved filter is on, it is a button instead (`feedLoadOlder`).
+private struct FeedLoadMoreRow: View {
+  @Environment(AppStore.self) private var store
+  var manual = false
+  var body: some View {
+    if manual {
+      Button { Task { await store.loadMoreFeed() } } label: {
+        HStack(spacing: 8) {
+          if store.loadingMoreFeed { ProgressView().controlSize(.small) }
+          Text("Search older posts").font(.subheadline.bold())
+        }.frame(maxWidth: .infinity, minHeight: 44)
+      }.buttonStyle(ControlPressStyle()).foregroundStyle(Palette.accentText).disabled(store.loadingMoreFeed)
+        .frame(maxWidth: .infinity, minHeight: 56).accessibilityIdentifier("feedLoadOlder")
+    } else {
+      Group {
+        if store.feedLoadFailed && !store.loadingMoreFeed {
+          Button("Load more posts") { Task { await store.loadMoreFeed() } }.font(.subheadline.bold()).frame(minHeight: 44)
+        } else {
+          ProgressView().controlSize(.small).accessibilityLabel("Loading more posts")
+        }
+      }.frame(maxWidth: .infinity, minHeight: 56).accessibilityIdentifier("feedLoadMore")
+        .task(id: store.state.feedCursor) { if !store.feedLoadFailed { await store.loadMoreFeed() } }
+    }
   }
 }

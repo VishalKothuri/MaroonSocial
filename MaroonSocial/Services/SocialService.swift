@@ -80,6 +80,52 @@ struct SocialSnapshot: Codable {
   var attachments: [SocialAttachmentReference]
   var organizations: [SocialOrganization]
   var savedEvents: [String]
+  /// Cursor after the first feed page the snapshot carries; nil when that page is the whole feed.
+  var feedNext: SocialPageCursor? = nil
+  /// Server clock (with overlap) to start `feed.delta` from. Absent on older servers.
+  var serverNow: Double? = nil
+}
+/// Keyset position: everything strictly older than (before_created, before_id).
+/// `beforeCreated` is the server's own epoch value, kept as received so no rounding moves it.
+struct SocialPageCursor: Codable, Equatable {
+  var beforeCreated: Double
+  var beforeID: String
+  enum CodingKeys: String, CodingKey { case beforeCreated = "before_created", beforeID = "before_id" }
+  var payload: [String: Any] { ["before_created": beforeCreated, "before_id": beforeID] }
+}
+struct SocialFeedPage: Decodable {
+  var posts: [Post]
+  var next: SocialPageCursor?
+}
+struct SocialFeedDelta: Decodable {
+  var changed: [Post]
+  var removed: [String]
+  var now: Double
+  var truncated: Bool? = nil
+  /// Something only this member sees changed (a block, a hidden post, their own rename):
+  /// the held posts are refetched with `feed.posts`.
+  var resync: Bool? = nil
+}
+/// `feed.posts`: current copies of held posts, and the requested ids that are gone.
+struct SocialFeedPosts: Decodable {
+  var posts: [Post]
+  var removed: [String]
+}
+struct SocialCommentsPage: Decodable {
+  var comments: [Comment]
+  var next: SocialPageCursor?
+  var commentCount: Int?
+}
+struct SocialRoomMessages: Decodable {
+  var roomID: String
+  var messages: [Message]
+  var meta: SocialConversationMeta?
+  var more: Bool?
+  /// Held messages (up to `after_seq`) deleted, edited or reacted to after `changed_since`.
+  var changed: [Message]? = nil
+  /// Server clock (with overlap) for the next `changed_since`.
+  var now: Double? = nil
+  enum CodingKeys: String, CodingKey { case roomID = "room_id", messages, meta, more, changed, now }
 }
 struct SocialTagQuery: Hashable {
   let tag: String
@@ -198,7 +244,10 @@ struct SocialServiceError: Error, Decodable, LocalizedError {
       let data = try await raw("social", action: action, payload: payload, authenticated: true)
       guard epoch == identityGeneration else { throw CancellationError() }
       var response = try decoder.decode(SocialResponse.self, from: data)
-      if response.snapshot != nil {
+      // A plain snapshot (launch, polling, pull-to-refresh) never re-fetches the retained
+      // tag/library pages: their views load them on demand. A mutation still refreshes
+      // them, because a vote, save, block or deletion may change or remove their posts.
+      if response.snapshot != nil && action != "snapshot" {
         let queries = Set(tagOwners.values).sorted { ($0.community.rawValue, $0.tag) < ($1.community.rawValue, $1.tag) }
         var pages: [SocialTagPage] = []
         for query in queries {
@@ -229,6 +278,60 @@ struct SocialServiceError: Error, Decodable, LocalizedError {
     }
     tail = Task { _ = try? await task.value }
     return try await task.value
+  }
+  /// Incremental reads share the request queue with mutations, so a page or delta can never
+  /// overtake the write that preceded it, and an account switch cancels them the same way.
+  private func queued<Value: Decodable>(_ action: String, payload: [String: Any], as type: Value.Type) async throws -> Value {
+    let previous = tail
+    let epoch = identityGeneration
+    let task = Task { @MainActor [self] in
+      await previous?.value
+      guard epoch == identityGeneration else { throw CancellationError() }
+      let data = try await raw("social", action: action, payload: payload, authenticated: true)
+      guard epoch == identityGeneration else { throw CancellationError() }
+      return try decoder.decode(Value.self, from: data)
+    }
+    tail = Task { _ = try? await task.value }
+    return try await task.value
+  }
+  /// One keyset page of the selected community, newest first (30 by default, at most 50).
+  func feedPage(community: Community, cursor: SocialPageCursor?, limit: Int = 30) async throws -> SocialFeedPage {
+    var payload: [String: Any] = ["community": community.rawValue, "limit": min(50, max(1, limit))]
+    if let cursor { payload.merge(cursor.payload) { _, new in new } }
+    let page = try await queued("feed.page", payload: payload, as: SocialFeedPage.self)
+    guard page.posts.count <= 50 else { throw URLError(.badServerResponse) }
+    return page
+  }
+  /// Posts changed after `since` (new ones, or ones in `knownIDs`) and known ids that are gone.
+  func feedDelta(community: Community, since: Double, knownIDs: [String]) async throws -> SocialFeedDelta {
+    try await queued("feed.delta", payload: ["community": community.rawValue, "since": since, "known_ids": Array(knownIDs.prefix(300))], as: SocialFeedDelta.self)
+  }
+  /// Current copies of held feed posts (at most 50 per call) and the ids that are gone.
+  func feedPosts(community: Community, ids: [String]) async throws -> SocialFeedPosts {
+    let requested = Array(ids.prefix(50))
+    let page = try await queued("feed.posts", payload: ["community": community.rawValue, "ids": requested], as: SocialFeedPosts.self)
+    guard page.posts.count <= requested.count else { throw URLError(.badServerResponse) }
+    return page
+  }
+  /// Older replies of one post, returned oldest first.
+  func commentsPage(postID: String, cursor: SocialPageCursor?, limit: Int = 50) async throws -> SocialCommentsPage {
+    var payload: [String: Any] = ["post_id": postID, "limit": min(50, max(1, limit))]
+    if let cursor { payload.merge(cursor.payload) { _, new in new } }
+    let page = try await queued("comments.page", payload: payload, as: SocialCommentsPage.self)
+    guard page.comments.count <= 50 else { throw URLError(.badServerResponse) }
+    return page
+  }
+  /// Messages of one room newer than `afterSequence` or older than `beforeSequence` (oldest
+  /// first), or the newest page. With `changedSince` (and `afterSequence`) the answer also lists
+  /// held messages that were deleted, edited or reacted to since that server clock.
+  func roomMessages(roomID: String, afterSequence: Int? = nil, beforeSequence: Int? = nil, changedSince: Double? = nil, limit: Int = 50) async throws -> SocialRoomMessages {
+    var payload: [String: Any] = ["room_id": roomID, "limit": min(50, max(1, limit))]
+    if let afterSequence { payload["after_seq"] = afterSequence }
+    else if let beforeSequence { payload["before_seq"] = beforeSequence }
+    if let changedSince, afterSequence != nil { payload["changed_since"] = changedSince }
+    let page = try await queued("room.messages", payload: payload, as: SocialRoomMessages.self)
+    guard page.messages.count <= 50, (page.changed?.count ?? 0) <= 50, page.roomID == roomID else { throw URLError(.badServerResponse) }
+    return page
   }
   func credential() async throws -> String {
     guard let token else { throw SocialServiceError(error: "Sign in to continue.", code: "unauthorized") }

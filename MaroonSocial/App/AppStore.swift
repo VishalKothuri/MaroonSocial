@@ -12,11 +12,36 @@ struct LocalState: Codable {
   var courses: [Course] = []
   var conversations: [Conversation] = []
   var activities: [Activity] = []
-  var hiddenPosts: Set<String> = []
-  var savedEvents: Set<String> = []
+  @SortedSetCoding var hiddenPosts: Set<String> = []
+  @SortedSetCoding var savedEvents: Set<String> = []
   var reports: [String] = []
   /// Set once the member has confirmed the username that named posts and replies carry.
   var publicNameConfirmed: Bool? = nil
+  // Incremental sync bookkeeping. Every key is optional so cache files written before
+  // incremental sync still decode (synthesized decoding treats a missing optional as nil).
+  /// Server time (already overlapped) from which `feed.delta` asks for changes.
+  var feedSince: Double? = nil
+  /// Keyset position of the next older feed page; nil once the end of the feed is loaded.
+  var feedCursor: SocialPageCursor? = nil
+  /// The posts that belong to the feed (newest first) and the community they were loaded for.
+  var feedPostIDs: [String]? = nil
+  var feedCommunity: String? = nil
+  /// Highest message sequence held per room (`room.messages after_seq`).
+  var roomCursors: [String: Int]? = nil
+  /// When each room was last opened (or first seen); drives message eviction.
+  var roomOpened: [String: Date]? = nil
+}
+
+/// Encodes a set as a sorted array (the same JSON as before). Swift may iterate two equal sets in
+/// different orders, and the hash-gated `save()` needs equal state to encode to identical bytes.
+@propertyWrapper struct SortedSetCoding: Codable, Equatable {
+  var wrappedValue: Set<String>
+  init(wrappedValue: Set<String>) { self.wrappedValue = wrappedValue }
+  init(from decoder: Decoder) throws { wrappedValue = Set(try decoder.singleValueContainer().decode([String].self)) }
+  func encode(to encoder: Encoder) throws {
+    var container = encoder.singleValueContainer()
+    try container.encode(wrappedValue.sorted())
+  }
 }
 
 @Observable @MainActor final class AppStore {
@@ -46,6 +71,33 @@ struct LocalState: Codable {
   var attachments: [SocialAttachmentReference] = []
   var organizations: [SocialOrganization] = []
   var feedPostIDs: Set<String>?
+  private var feedIDsCommunity: Community?
+  /// Set when a delta could not describe every change; the next snapshot rebuilds the feed.
+  private var feedNeedsReset = false
+  private(set) var loadingMoreFeed = false
+  private(set) var feedLoadFailed = false
+  private(set) var loadingComments: Set<String> = []
+  /// Posts whose held replies reach the thread's first reply (the oldest held id when
+  /// "Load earlier replies" found no older page). A merge that drops held replies invalidates it.
+  private(set) var firstReplyIDs: [String: String] = [:]
+  private var feedDeltaRunning = false
+  /// Bumped whenever the feed is rebuilt from a first page; Hot refills its window after it.
+  private(set) var feedGeneration = 0
+  private(set) var fillingFeed = false
+  private var roomSyncUnsupported = false
+  private var lastSnapshot = Date.distantPast
+  /// The last snapshot's server clock (with overlap): where an open room's change polling starts.
+  private var snapshotClock: Double?
+  /// Rooms an open ChatView follows (a count, since the same room can be pushed twice).
+  private var openRooms: [String: Int] = [:]
+  /// Per open room, the server clock from which `room.messages` reports changed held messages.
+  private var roomChangeClocks: [String: Double] = [:]
+  private(set) var loadingEarlierMessages: Set<String> = []
+  /// Rooms whose held messages start at the conversation's first message.
+  private var roomHistoryComplete: Set<String> = []
+  private var lastSavedDigest: SHA256.Digest?
+  /// Number of times the cache file was actually written (saves skip identical bytes).
+  private(set) var diskWrites = 0
   private(set) var feedCommunity = Community.campus
   private(set) var loadingCommunity = false
   private(set) var tagPages: [SocialTagQuery: SocialTagPage] = [:]
@@ -82,7 +134,15 @@ struct LocalState: Codable {
       state = saved
     }
     if !usesFixtures, state.onboarded, !social.hasStoredCredential { state = LocalState() }
-    if fixtureMode, state.posts.isEmpty && !state.onboarded { seed() }
+    if fixtureMode, state.posts.isEmpty && !state.onboarded {
+      seed()
+      if arguments.contains("--uitesting-feed-pages") { seedFeedPages() }
+    }
+    if let ids = state.feedPostIDs, state.feedCommunity == feedCommunity.rawValue {
+      feedPostIDs = Set(ids); feedIDsCommunity = feedCommunity
+    } else {
+      state.feedPostIDs = nil; state.feedCommunity = nil; state.feedCursor = nil; state.feedSince = nil
+    }
     if fixtureMode {
       organizations = [OrganizationAccessFixture.managedOrganization, OrganizationAccessFixture.invitingOrganization]
       conversationMeta = Self.fixtureConversationMeta.filter { id, _ in state.conversations.contains { $0.id == id } }
@@ -114,18 +174,71 @@ struct LocalState: Codable {
     attachments.removeAll { $0.roomID.map(expired.contains) == true }
     save()
   }
+  /// Writes the cache only when its bytes changed (SHA-256 of the encoded state), so a
+  /// poll that brought nothing new costs no disk write.
   @discardableResult
   func save() -> Bool {
     do {
       var persisted = state
-      if !fixtureMode, let feedPostIDs { persisted.posts.removeAll { !feedPostIDs.contains($0.id) } }
-      try JSONEncoder().encode(persisted).write(
-        to: file, options: [.atomic, .completeFileProtectionUnlessOpen])
+      // Read times only order copies within one run; anything fetched after a launch is newer
+      // than the cache, and leaving them out keeps an unchanged snapshot from rewriting the file.
+      for index in persisted.posts.indices { persisted.posts[index].syncedAt = nil }
+      persisted.feedPostIDs = feedPostIDs.map { ids in
+        state.posts.filter { ids.contains($0.id) }.sorted { $0.created > $1.created }.map(\.id)
+      }
+      persisted.feedCommunity = feedPostIDs == nil ? nil : feedCommunity.rawValue
+      if !fixtureMode { persisted = Self.evicted(persisted, ownPostIDs: ownPostIDs, now: .now) }
+      let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
+      let data = try encoder.encode(persisted)
+      let digest = SHA256.hash(data: data)
+      if digest == lastSavedDigest { return true }
+      try data.write(to: file, options: [.atomic, .completeFileProtectionUnlessOpen])
+      lastSavedDigest = digest; diskWrites += 1
       return true
     } catch {
       notice = "Your changes could not be saved on this device. Please try again."
       return false
     }
+  }
+  /// Persisted cache caps (eviction). Memory may hold more while the app runs:
+  /// - posts: the 100 newest feed posts, plus saved and own posts the store still holds
+  ///   (tag and library pages are not persisted otherwise);
+  /// - messages: the 50 newest per room;
+  /// - rooms not opened for 30 days keep their conversation row but drop their messages.
+  /// The next snapshot (launch, foreground) refills the newest page of everything.
+  static let persistedFeedPosts = 100
+  static let persistedMessagesPerRoom = 50
+  static let roomMessageRetention: TimeInterval = 30 * 86_400
+  static func evicted(_ state: LocalState, ownPostIDs: Set<String>, now: Date) -> LocalState {
+    var result = state
+    let feedIDs = state.feedPostIDs.map(Set.init)
+    let feed = state.posts.filter { feedIDs?.contains($0.id) ?? true }.sorted { $0.created > $1.created }
+    let keptFeed = Array(feed.prefix(persistedFeedPosts))
+    let keep = Set(keptFeed.map(\.id)).union(state.posts.filter { $0.saved || ownPostIDs.contains($0.id) }.map(\.id))
+    result.posts = state.posts.filter { keep.contains($0.id) }
+    if feedIDs != nil {
+      result.feedPostIDs = keptFeed.map(\.id)
+      // Dropped older pages are fetched again from just above the oldest kept post; the
+      // microsecond margin turns any rounding into a harmless duplicate instead of a gap.
+      if feed.count > keptFeed.count, state.feedSince != nil, let oldest = keptFeed.last {
+        result.feedCursor = SocialPageCursor(beforeCreated: oldest.created.timeIntervalSince1970 + 0.000_001, beforeID: oldest.id)
+      }
+    }
+    var cursors = state.roomCursors ?? [:]
+    let opened = (state.roomOpened ?? [:]).filter { id, _ in state.conversations.contains { $0.id == id } }
+    for index in result.conversations.indices {
+      let id = result.conversations[index].id
+      if let seen = opened[id], now.timeIntervalSince(seen) > roomMessageRetention {
+        result.conversations[index].messages = []
+      } else if result.conversations[index].messages.count > persistedMessagesPerRoom {
+        result.conversations[index].messages = Array(result.conversations[index].messages.suffix(persistedMessagesPerRoom))
+      }
+      if result.conversations[index].messages.isEmpty { cursors.removeValue(forKey: id) }
+    }
+    cursors = cursors.filter { id, _ in result.conversations.contains { $0.id == id } }
+    result.roomCursors = cursors.isEmpty ? nil : cursors
+    result.roomOpened = opened.isEmpty ? nil : opened
+    return result
   }
   func seed() {
     state.posts = [
@@ -181,6 +294,19 @@ struct LocalState: Codable {
         messages: [Message(author: "Them", text: "Thanks for the study room tip!")], anonymous: true),
     ]
   }
+  /// `--uitesting-feed-pages`: 40 older fixture posts so the feed has more than one page.
+  /// Only the newest 30 posts start in the feed; `loadMoreFeed` pages the rest from `state`.
+  func seedFeedPages() {
+    let base = Date.now.addingTimeInterval(-3_600)
+    for number in 1...40 {
+      state.posts.append(Post(id: "fixture-page-post-\(number)", author: "demo-archive", text: "Archived campus thread \(number)",
+        score: 40 - number, created: base.addingTimeInterval(Double(-number) * 600)))
+    }
+    let feed = state.posts.filter { $0.community == feedCommunity }.sorted { $0.created > $1.created }
+    let first = feed.prefix(30)
+    state.feedPostIDs = first.map(\.id); state.feedCommunity = feedCommunity.rawValue
+    state.feedCursor = first.last.map { SocialPageCursor(beforeCreated: $0.created.timeIntervalSince1970, beforeID: $0.id) }
+  }
   /// Preview rooms carry the metadata the server sends, so the inbox row, request panel
   /// and chat render their "From this post" tags without a backend: one live origin that
   /// opens a seeded post, one whose post is gone.
@@ -212,7 +338,18 @@ struct LocalState: Codable {
     if !save() { state.posts[i] = previous }
   }
   func toggleSave(_ id: String) {
-    if !fixtureMode { Task { _ = await mutate("post.save", ["post_id": id, "saved": !(state.posts.first { $0.id == id }?.saved ?? false)]) }; return }
+    if !fixtureMode {
+      let saved = !(state.posts.first { $0.id == id }?.saved ?? false)
+      Task {
+        // Saved is projected for the saver alone, so no delta reports it: a post older than the
+        // snapshot's first page takes the confirmed value here.
+        guard await mutate("post.save", ["post_id": id, "saved": saved]),
+          let index = state.posts.firstIndex(where: { $0.id == id }), state.posts[index].saved != saved else { return }
+        state.posts[index].saved = saved
+        save()
+      }
+      return
+    }
     guard let i = state.posts.firstIndex(where: { $0.id == id }) else { return }
     state.posts[i].saved.toggle()
     if !save() { state.posts[i].saved.toggle() }
@@ -323,8 +460,14 @@ extension AppStore {
     guard !fixtureMode else { return }
     loadingCommunity = true
     defer { if feedCommunity == community { loadingCommunity = false } }
-    // Wait for any old feed request, then fetch after the selection changed.
-    await refreshAfterMutation()
+    // Wait for any old feed request, then fetch after the selection changed. A mutation in
+    // flight makes that fetch skip (busy), so wait for it and fetch again. A fetch that failed
+    // is retried by the update loop, which snapshots until the feed matches the selection.
+    for _ in 0..<60 {
+      await refreshAfterMutation()
+      guard feedCommunity == community, feedIDsCommunity != community, busy || syncing, !Task.isCancelled else { return }
+      try? await Task.sleep(for: .milliseconds(250))
+    }
   }
   func connect(username: String? = nil) async {
     guard !busy else { return }
@@ -391,17 +534,55 @@ extension AppStore {
     var calendarRefresh = Date.now
     while !Task.isCancelled {
       do { try await Task.sleep(for: .seconds(3)) } catch { break }
-      await refresh()
+      // Incremental servers: the feed asks for its delta every 3 s while the Community tab is
+      // visible (an open ChatView polls its own room), and a slim snapshot reconciles the
+      // rest every 60 s and after mutations. A server without deltas keeps the 3 s snapshot.
+      // A feed that does not match the selected community (a switch whose snapshot was skipped
+      // or failed) takes a snapshot instead of a delta.
+      if !incrementalSync || feedIDsCommunity != feedCommunity || Date.now.timeIntervalSince(lastSnapshot) >= Self.reconciliationInterval { await refresh() }
+      else if tab == 0 { await syncFeedDelta() }
       if connected && connectionError == nil { await flushOutbox() }
       courseTerms.advanceClock()
       if Date.now.timeIntervalSince(calendarRefresh) >= 300 { await courseTerms.refresh(); calendarRefresh = .now }
     }
   }
+  static let reconciliationInterval: TimeInterval = 60
+  /// The server answered the last snapshot with a delta clock, so deltas and pages exist.
+  var incrementalSync: Bool { state.feedSince != nil }
+  var feedHasMore: Bool { feedPostIDs != nil && state.feedCursor != nil }
   func apply(_ response: SocialResponse) {
     guard let snapshot = response.snapshot else { return }
     state.username = snapshot.username
     let currentFeed = snapshot.feedCommunity == nil || snapshot.feedCommunity == feedCommunity
-    if currentFeed { feedPostIDs = Set(snapshot.posts.map(\.id)) }
+    // Only a snapshot of the selected feed is a reconciliation: a mutation answered for the
+    // previous community leaves the new one waiting for (and the loop asking for) its own.
+    if currentFeed { lastSnapshot = .now }
+    snapshotClock = snapshot.serverNow
+    var feed = state.posts.filter { feedPostIDs?.contains($0.id) == true }
+    if currentFeed {
+      // The snapshot's posts are the first page. Cached older pages stay unless the page no
+      // longer overlaps them (another community, a gap, or a requested rebuild).
+      let page = snapshot.posts, pageIDs = Set(page.map(\.id))
+      // The first clock from a server that just gained pages also starts over: the held feed
+      // came without a cursor, so it could never page past what the old server sent.
+      let upgraded = state.feedSince == nil && state.feedCursor == nil && snapshot.serverNow != nil && snapshot.feedNext != nil
+      let reset = upgraded || feedNeedsReset || feedPostIDs == nil || feedIDsCommunity != feedCommunity || feedPostIDs?.isDisjoint(with: pageIDs) != false
+      if reset {
+        feed = page; state.feedCursor = snapshot.feedNext; state.feedSince = snapshot.serverNow; feedGeneration += 1
+      } else {
+        // The page is authoritative inside its window: a cached post there that it no
+        // longer carries was deleted, hidden or blocked.
+        if snapshot.feedNext != nil, let oldest = page.map(\.created).min() {
+          feed.removeAll { $0.created >= oldest && !pageIDs.contains($0.id) }
+        } else { feed.removeAll { !pageIDs.contains($0.id) }; state.feedCursor = nil }
+        feed = Self.mergePosts(feed, with: page)
+        // Keep the delta clock: jumping it forward would skip changes to older pages.
+        if state.feedSince == nil { state.feedSince = snapshot.serverNow }
+      }
+      // A server without incremental reads sends no clock: no deltas and no paging.
+      if snapshot.serverNow == nil { state.feedSince = nil; state.feedCursor = nil }
+      feedPostIDs = Set(feed.map(\.id)); feedIDsCommunity = feedCommunity; feedNeedsReset = false
+    }
     let activeQueries = Set(tagOwners.values)
     tagPages = tagPages.filter { activeQueries.contains($0.key) }
     for page in response.tagPages ?? [] where activeQueries.contains(page.query) { tagPages[page.query] = page }
@@ -416,10 +597,25 @@ extension AppStore {
         libraryPages[key]?.comments.removeAll { !visible.contains($0.postID) }
       }
     }
-    if currentFeed { state.posts = mergeActivePostSources(feed: snapshot.posts) }
+    if currentFeed { state.posts = mergeActivePostSources(feed: feed) }
     state.courses = snapshot.courses
     state.activities = snapshot.activities
-    state.conversations = snapshot.conversations
+    let held = Dictionary(state.conversations.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+    state.conversations = snapshot.conversations.map { incoming in
+      // An open chat keeps the history it paged in or followed; other rooms take the newest window.
+      guard openRooms[incoming.id] != nil, let current = held[incoming.id] else { roomHistoryComplete.remove(incoming.id); return incoming }
+      var merged = incoming
+      merged.messages = Self.mergedRoomMessages(held: current.messages, window: incoming.messages)
+      return merged
+    }
+    // A window shorter than the snapshot's is the whole conversation.
+    for conversation in snapshot.conversations where conversation.messages.count < Self.roomMessageWindow { roomHistoryComplete.insert(conversation.id) }
+    var opened = state.roomOpened ?? [:], cursors = state.roomCursors ?? [:]
+    for conversation in state.conversations {
+      if opened[conversation.id] == nil { opened[conversation.id] = .now }
+      if let last = conversation.messages.compactMap(\.sequence).max() { cursors[conversation.id] = last }
+    }
+    state.roomOpened = opened; state.roomCursors = cursors
     state.savedEvents = Set(snapshot.savedEvents)
     nsfwEnabled = snapshot.nsfwEnabled
     karma = snapshot.karma ?? 0
@@ -453,11 +649,60 @@ extension AppStore {
     var result = Self.mergePostSources(feed: feed, pages: Array(tagPages.values))
     for page in libraryPages.values.sorted(by: { $0.loadedAt < $1.loadedAt }) where page.error == nil {
       for post in page.posts {
-        if let index = result.firstIndex(where: { $0.id == post.id }) { result[index] = post }
+        if let index = result.firstIndex(where: { $0.id == post.id }) { if !Self.isOlder(post, than: result[index]) { result[index] = post } }
         else { result.append(post) }
       }
     }
     return result
+  }
+  /// A copy the server read earlier than the one held loses a merge (`syncedAt`, the read time,
+  /// orders copies without exposing when a post last changed). Copies without one always win.
+  static func isOlder(_ post: Post, than held: Post) -> Bool {
+    guard let incoming = post.syncedAt, let current = held.syncedAt else { return false }
+    return incoming < current
+  }
+  /// Merges posts by id, keeping the most recently read copy. Replies older than the newest
+  /// window the server sent (loaded with "Load earlier replies") are kept while they connect.
+  static func mergePosts(_ existing: [Post], with incoming: [Post]) -> [Post] {
+    var result = existing
+    var index = Dictionary(result.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { first, _ in first })
+    for var post in incoming {
+      if let position = index[post.id] {
+        let held = result[position]
+        if isOlder(post, than: held) { continue }
+        post.comments = mergedComments(held: held, incoming: post)
+        result[position] = post
+      } else { index[post.id] = result.count; result.append(post) }
+    }
+    return result
+  }
+  /// Older held replies stay only while they connect to the incoming window (the window
+  /// overlaps them). Otherwise replies in between would be silently missing, so the thread
+  /// keeps just the window and "Load earlier replies" pages back from it without a gap.
+  static func mergedComments(held: Post, incoming: Post) -> [Comment] {
+    guard let total = incoming.commentCount, total > incoming.comments.count,
+      let oldest = incoming.comments.map(\.created).min() else { return incoming.comments }
+    let sent = Set(incoming.comments.map(\.id))
+    guard held.comments.contains(where: { sent.contains($0.id) }) else { return incoming.comments }
+    return held.comments.filter { $0.created <= oldest && !sent.contains($0.id) } + incoming.comments
+  }
+  /// Merges messages by id/sequence; incoming copies replace held ones (edits, deletions, reactions).
+  /// Sequenced messages sort by sequence; local messages without one (still sending) stay last.
+  static func mergeMessages(_ existing: [Message], with incoming: [Message]) -> [Message] {
+    var result = existing
+    for message in incoming {
+      if let position = result.firstIndex(where: { $0.id == message.id || ($0.sequence != nil && $0.sequence == message.sequence) }) {
+        result[position] = message
+      } else { result.append(message) }
+    }
+    let sequenced = result.filter { $0.sequence != nil }.sorted { $0.sequence! < $1.sequence! }
+    return sequenced + result.filter { $0.sequence == nil }
+  }
+  /// The snapshot's newest window is authoritative inside its range (a held message missing
+  /// from it was removed or blocked); held messages older than the window stay.
+  static func mergedRoomMessages(held: [Message], window: [Message]) -> [Message] {
+    guard let oldest = window.compactMap(\.sequence).min() else { return window }
+    return mergeMessages(held.filter { ($0.sequence ?? .max) < oldest }, with: window)
   }
   func openLibraryScope(_ query: SocialLibraryQuery) -> LibraryPostLease {
     let owner = UUID(); libraryOwners[owner] = query
@@ -471,12 +716,27 @@ extension AppStore {
     libraryPages.removeValue(forKey: query)
     if !fixtureMode, let feedPostIDs { state.posts = mergeActivePostSources(feed: state.posts.filter { feedPostIDs.contains($0.id) }) }
   }
+  /// The owning view asks for its page; snapshots no longer re-fetch retained pages.
   func loadLibraryPage(_ query: SocialLibraryQuery) async {
     guard !fixtureMode else { return }
     let owner = compositions.owner
-    if await perform("snapshot") == nil, compositions.owner == owner, libraryOwners.values.contains(query) {
-      libraryPages[query] = SocialLibraryPage(query: query, error: notice ?? "Your collection could not load. Please retry.")
+    do {
+      var page = try await social.library(query)
+      guard compositions.owner == owner, libraryOwners.values.contains(query) else { return }
+      if !nsfwEnabled {
+        page.posts.removeAll { $0.community == .nsfw }
+        let visible = Set(page.posts.map(\.id)); page.comments.removeAll { !visible.contains($0.postID) }
+      }
+      libraryPages[query] = page
+    } catch {
+      guard compositions.owner == owner, libraryOwners.values.contains(query), !(error is CancellationError) else { return }
+      libraryPages[query] = SocialLibraryPage(query: query, error: error.localizedDescription)
     }
+    refreshActivePosts()
+  }
+  private func refreshActivePosts() {
+    guard let feedPostIDs else { state.posts = mergeActivePostSources(feed: state.posts); return }
+    state.posts = mergeActivePostSources(feed: state.posts.filter { feedPostIDs.contains($0.id) })
   }
   func libraryPosts(_ queries: [SocialLibraryQuery]) -> [Post] {
     let ids = Set(queries.flatMap { libraryPages[$0]?.posts.map(\.id) ?? [] })
@@ -486,9 +746,15 @@ extension AppStore {
   func loadTagPage(_ query: SocialTagQuery) async {
     guard !fixtureMode else { return }
     let owner = compositions.owner
-    if await perform("snapshot") == nil, compositions.owner == owner, tagOwners.values.contains(query) {
-      tagPages[query] = SocialTagPage(query: query, posts: [], error: notice ?? "Posts could not load. Please retry.")
+    do {
+      let posts = try await social.posts(tag: query.tag, community: query.community)
+      guard compositions.owner == owner, tagOwners.values.contains(query) else { return }
+      tagPages[query] = SocialTagPage(query: query, posts: posts)
+    } catch {
+      guard compositions.owner == owner, tagOwners.values.contains(query), !(error is CancellationError) else { return }
+      tagPages[query] = SocialTagPage(query: query, posts: [], error: error.localizedDescription)
     }
+    refreshActivePosts()
   }
   func posts(for query: SocialTagQuery) -> [Post] {
     guard query.community != .nsfw || nsfwEnabled else { return [] }
@@ -503,7 +769,7 @@ extension AppStore {
     var result = feed
     for page in pages.sorted(by: { $0.loadedAt < $1.loadedAt }) where page.error == nil {
       for post in page.posts {
-        if let index = result.firstIndex(where: { $0.id == post.id }) { result[index] = post }
+        if let index = result.firstIndex(where: { $0.id == post.id }) { if !isOlder(post, than: result[index]) { result[index] = post } }
         else { result.append(post) }
       }
     }
@@ -524,7 +790,258 @@ extension AppStore {
     } catch { if compositions.owner == owner { notice = error.localizedDescription }; return nil }
   }
   @discardableResult func mutate(_ action: String, _ payload: [String: Any] = [:]) async -> Bool {
-    await perform(action, payload) != nil
+    guard await perform(action, payload) != nil else { return false }
+    // The snapshot only carries the first page; a delta brings the changed older post too.
+    if Self.postMutations.contains(action) { await syncFeedDelta() }
+    return true
+  }
+  static let postMutations: Set<String> = ["post.vote", "post.save", "post.delete", "post.attach", "poll.vote", "comment.create", "comment.delete", "comment.vote", "report", "block"]
+
+  // MARK: Incremental feed, replies and rooms
+  /// Applies `feed.delta`: changed posts replace held copies (the most recently read copy wins)
+  /// and join the feed; removed ids leave every cache. A truncated delta, or one asking this
+  /// member to resync, refetches the held pages instead of collapsing the feed.
+  func syncFeedDelta() async {
+    guard !fixtureMode, connected, state.onboarded, !feedDeltaRunning, let since = state.feedSince, feedPostIDs != nil else { return }
+    // A feed still showing another community waits for that community's snapshot: a delta would
+    // ask for the new community with the old feed's ids and report every one of them removed.
+    guard feedIDsCommunity == feedCommunity else { lastSnapshot = .distantPast; return }
+    let owner = compositions.owner, community = feedCommunity
+    feedDeltaRunning = true
+    defer { if compositions.owner == owner { feedDeltaRunning = false } }
+    do {
+      let delta = try await social.feedDelta(community: community, since: since, knownIDs: heldFeedIDs())
+      guard compositions.owner == owner, feedCommunity == community, feedIDsCommunity == community, state.feedSince == since else { return }
+      guard delta.truncated == true || delta.resync == true else { applyFeedDelta(delta); return }
+      // `removed` is complete either way; a truncated `changed` is not, so the held posts (and,
+      // for posts created meanwhile, the first page) are read again before the clock moves.
+      var complete = delta
+      if delta.truncated == true { complete.changed = [] }
+      applyFeedDelta(complete, advanceClock: false)
+      guard await refetchHeldFeed(owner: owner, community: community, includeFirstPage: delta.truncated == true),
+        state.feedSince == since else { return }
+      state.feedSince = delta.now
+      save()
+    } catch {
+      guard compositions.owner == owner else { return }
+      // A server without incremental reads answers "invalid": fall back to snapshots.
+      if (error as? SocialServiceError)?.code == "invalid" { state.feedSince = nil }
+    }
+  }
+  /// The held feed posts deltas cover: the 300 newest.
+  private func heldFeedIDs() -> [String] {
+    guard let ids = feedPostIDs else { return [] }
+    return state.posts.filter { ids.contains($0.id) }.sorted { $0.created > $1.created }.prefix(300).map(\.id)
+  }
+  /// Reads the held feed posts again with `feed.posts` (50 per call), plus the first page after a
+  /// truncated delta. A first page that no longer overlaps the feed (more new posts than a page)
+  /// starts the feed over from it. Returns false when a read failed or the feed changed meanwhile;
+  /// the delta clock then stays, so the next delta asks again.
+  private func refetchHeldFeed(owner: String, community: Community, includeFirstPage: Bool) async -> Bool {
+    let ids = heldFeedIDs()
+    for start in stride(from: 0, to: ids.count, by: 50) {
+      do {
+        let page = try await social.feedPosts(community: community, ids: Array(ids[start..<min(ids.count, start + 50)]))
+        guard compositions.owner == owner, feedCommunity == community, feedIDsCommunity == community else { return false }
+        applyFeedDelta(SocialFeedDelta(changed: page.posts, removed: page.removed, now: 0), advanceClock: false)
+      } catch { return false }
+    }
+    guard includeFirstPage else { return true }
+    do {
+      let page = try await social.feedPage(community: community, cursor: nil)
+      guard compositions.owner == owner, feedCommunity == community, feedIDsCommunity == community, let held = feedPostIDs else { return false }
+      if !page.posts.isEmpty && held.isDisjoint(with: page.posts.map(\.id)) {
+        let feed = page.posts
+        feedPostIDs = Set(feed.map(\.id)); state.feedCursor = page.next; feedGeneration += 1
+        state.posts = mergeActivePostSources(feed: Self.mergePosts(state.posts.filter { feedPostIDs?.contains($0.id) == true }, with: feed))
+        save()
+      } else {
+        applyFeedDelta(SocialFeedDelta(changed: page.posts, removed: [], now: 0), advanceClock: false)
+      }
+      return true
+    } catch { return false }
+  }
+  func applyFeedDelta(_ delta: SocialFeedDelta, advanceClock: Bool = true) {
+    guard let ids = feedPostIDs else { return }
+    let removed = Set(delta.removed)
+    var feed = state.posts.filter { ids.contains($0.id) && !removed.contains($0.id) }
+    feed = Self.mergePosts(feed, with: delta.changed.filter { !removed.contains($0.id) })
+    feedPostIDs = Set(feed.map(\.id))
+    if !removed.isEmpty {
+      for key in tagPages.keys { tagPages[key]?.posts.removeAll { removed.contains($0.id) } }
+      for key in libraryPages.keys { libraryPages[key]?.posts.removeAll { removed.contains($0.id) } }
+    }
+    state.posts = mergeActivePostSources(feed: feed)
+    if advanceClock { state.feedSince = delta.now }
+    save()
+  }
+  /// Scroll end: the next keyset page of the selected community.
+  func loadMoreFeed() async {
+    guard !loadingMoreFeed, let cursor = state.feedCursor, let ids = feedPostIDs else { return }
+    let owner = compositions.owner, community = feedCommunity
+    loadingMoreFeed = true; feedLoadFailed = false
+    defer { if compositions.owner == owner { loadingMoreFeed = false } }
+    let page: SocialFeedPage
+    if fixtureMode {
+      // Stand in for network latency so the loading row is observable in UI journeys.
+      try? await Task.sleep(for: .seconds(2))
+      page = fixtureFeedPage(after: cursor, excluding: ids)
+    }
+    else {
+      do { page = try await social.feedPage(community: community, cursor: cursor) }
+      catch {
+        guard compositions.owner == owner, feedCommunity == community else { return }
+        // A view that went away cancels its page; that is not a failure to show.
+        if error is CancellationError || (error as? URLError)?.code == .cancelled { return }
+        // "invalid" means the server has no pages; stop offering more instead of failing.
+        if (error as? SocialServiceError)?.code == "invalid" { state.feedCursor = nil } else { feedLoadFailed = true }
+        return
+      }
+    }
+    guard compositions.owner == owner, feedCommunity == community, state.feedCursor == cursor, let current = feedPostIDs else { return }
+    let feed = Self.mergePosts(state.posts.filter { current.contains($0.id) }, with: page.posts)
+    feedPostIDs = Set(feed.map(\.id)); state.feedCursor = page.next
+    state.posts = fixtureMode ? Self.mergePosts(state.posts, with: page.posts) : mergeActivePostSources(feed: feed)
+    save()
+  }
+  /// Hot ranks a fixed window of the newest posts (the window the feed ranked before it paged),
+  /// so pages loaded while reading never re-rank older posts above the member's position.
+  static let hotWindow = 150
+  /// Loads pages until the Hot window is full or the feed ends.
+  func fillFeedForHot() async {
+    guard !fillingFeed else { return }
+    fillingFeed = true
+    defer { fillingFeed = false }
+    for _ in 0..<10 {
+      let before = feedPostIDs?.count ?? 0
+      guard feedHasMore, before < Self.hotWindow, !Task.isCancelled else { return }
+      await loadMoreFeed()
+      guard !feedLoadFailed, (feedPostIDs?.count ?? 0) > before else { return }
+    }
+  }
+  /// Fixture pages come from `state`: posts of the feed's community older than the cursor.
+  private func fixtureFeedPage(after cursor: SocialPageCursor, excluding ids: Set<String>) -> SocialFeedPage {
+    let older = state.posts.filter { post in
+      let created = post.created.timeIntervalSince1970
+      return !ids.contains(post.id) && post.community == feedCommunity
+        && (created < cursor.beforeCreated || (created == cursor.beforeCreated && post.id < cursor.beforeID))
+    }.sorted { $0.created > $1.created }
+    let page = Array(older.prefix(30))
+    let next = older.count > page.count ? page.last.map { SocialPageCursor(beforeCreated: $0.created.timeIntervalSince1970, beforeID: $0.id) } : nil
+    return SocialFeedPage(posts: page, next: next)
+  }
+  /// More replies exist than are held, and the held ones do not reach the thread's first reply.
+  func hasEarlierReplies(_ post: Post) -> Bool {
+    guard let total = post.commentCount, total > post.comments.count else { return false }
+    guard let first = firstReplyIDs[post.id] else { return true }
+    return post.comments.min(by: { ($0.created, $0.id) < ($1.created, $1.id) })?.id != first
+  }
+  /// "Load earlier replies": the page before the oldest reply held for this post.
+  func loadEarlierComments(_ postID: String) async {
+    guard !fixtureMode, !loadingComments.contains(postID), let post = state.posts.first(where: { $0.id == postID }),
+      let oldest = post.comments.min(by: { ($0.created, $0.id) < ($1.created, $1.id) }) else { return }
+    let owner = compositions.owner
+    loadingComments.insert(postID)
+    defer { if compositions.owner == owner { loadingComments.remove(postID) } }
+    // A microsecond margin above the oldest reply makes Date rounding a duplicate, never a gap.
+    let cursor = SocialPageCursor(beforeCreated: oldest.created.timeIntervalSince1970 + 0.000_001, beforeID: oldest.id)
+    do {
+      let page = try await social.commentsPage(postID: postID, cursor: cursor)
+      guard compositions.owner == owner, let index = state.posts.firstIndex(where: { $0.id == postID }) else { return }
+      let held = Set(state.posts[index].comments.map(\.id))
+      state.posts[index].comments = page.comments.filter { !held.contains($0.id) } + state.posts[index].comments
+      if let total = page.commentCount { state.posts[index].commentCount = total }
+      // No older page: the held replies now start at the first reply. The server's count stays,
+      // so a mismatch never hides the button while replies are still missing.
+      if page.next == nil, let first = state.posts[index].comments.min(by: { ($0.created, $0.id) < ($1.created, $1.id) }) {
+        firstReplyIDs[postID] = first.id
+      }
+      save()
+    } catch { if compositions.owner == owner { notice = error.localizedDescription } }
+  }
+  /// A thread whose newest replies answer replies that are not loaded yet pages back (at most
+  /// three pages; a post accepts 200 replies) until those parents are present.
+  func loadMissingParents(_ postID: String) async {
+    for _ in 0..<3 {
+      guard let post = state.posts.first(where: { $0.id == postID }), hasEarlierReplies(post) else { return }
+      let held = Set(post.comments.map(\.id))
+      guard post.comments.contains(where: { $0.parentID.map { !held.contains($0) } ?? false }) else { return }
+      await loadEarlierComments(postID)
+      guard let after = state.posts.first(where: { $0.id == postID })?.comments.count, after > post.comments.count else { return }
+    }
+  }
+  /// An open ChatView follows its room: `room.messages after_seq` with the changes to held
+  /// messages every 3 s. While it is open, snapshots merge into the room instead of replacing it.
+  func followRoom(_ id: String) async {
+    markRoomOpened(id)
+    openRooms[id, default: 0] += 1
+    defer {
+      if let count = openRooms[id], count > 1 { openRooms[id] = count - 1 }
+      else { openRooms.removeValue(forKey: id); roomChangeClocks.removeValue(forKey: id) }
+    }
+    guard !fixtureMode else { return }
+    while !Task.isCancelled {
+      await syncRoom(id)
+      do { try await Task.sleep(for: .seconds(3)) } catch { break }
+    }
+  }
+  func markRoomOpened(_ id: String) {
+    var opened = state.roomOpened ?? [:]; opened[id] = .now; state.roomOpened = opened
+  }
+  func syncRoom(_ id: String) async {
+    guard !fixtureMode, connected, state.onboarded, !roomSyncUnsupported, incrementalSync, canAccessConversation(id),
+      let conversation = state.conversations.first(where: { $0.id == id }),
+      !(conversation.request && conversationMeta[id]?.kind != "dm") else { return }
+    let owner = compositions.owner
+    var after = conversation.messages.compactMap(\.sequence).max() ?? state.roomCursors?[id]
+    var changedSince = roomChangeClocks[id] ?? snapshotClock
+    for _ in 0..<5 {
+      do {
+        let page = try await social.roomMessages(roomID: id, afterSequence: after, changedSince: changedSince)
+        guard compositions.owner == owner, let index = state.conversations.firstIndex(where: { $0.id == id }) else { return }
+        // Changes only refresh messages already held; older history stays unloaded.
+        let held = Set(state.conversations[index].messages.map(\.id))
+        let updates = (page.changed ?? []).filter { held.contains($0.id) } + page.messages
+        if !updates.isEmpty {
+          let merged = Self.mergeMessages(state.conversations[index].messages, with: updates)
+          if merged != state.conversations[index].messages { state.conversations[index].messages = merged }
+        }
+        if let meta = page.meta { conversationMeta[id] = meta }
+        if let now = page.now { roomChangeClocks[id] = now; changedSince = now }
+        let last = state.conversations[index].messages.compactMap(\.sequence).max()
+        if let last { var cursors = state.roomCursors ?? [:]; cursors[id] = last; state.roomCursors = cursors }
+        save()
+        guard page.more == true, let last, last != after else { return }
+        after = last
+      } catch {
+        guard compositions.owner == owner else { return }
+        if (error as? SocialServiceError)?.code == "invalid" { roomSyncUnsupported = true }
+        return
+      }
+    }
+  }
+  /// The snapshot embeds each room's newest 50 messages.
+  static let roomMessageWindow = 50
+  /// A room may hold older messages than its window: "Earlier messages" pages them in.
+  func hasEarlierMessages(_ id: String) -> Bool {
+    guard !fixtureMode, !roomSyncUnsupported, incrementalSync, !roomHistoryComplete.contains(id),
+      let conversation = state.conversations.first(where: { $0.id == id }) else { return false }
+    return conversation.messages.count >= Self.roomMessageWindow
+  }
+  /// "Earlier messages": the page before the oldest message held in the room (`before_seq`).
+  func loadEarlierMessages(_ id: String) async {
+    guard !fixtureMode, !loadingEarlierMessages.contains(id), canAccessConversation(id),
+      let oldest = state.conversations.first(where: { $0.id == id })?.messages.compactMap(\.sequence).min() else { return }
+    let owner = compositions.owner
+    loadingEarlierMessages.insert(id)
+    defer { if compositions.owner == owner { loadingEarlierMessages.remove(id) } }
+    do {
+      let page = try await social.roomMessages(roomID: id, beforeSequence: oldest)
+      guard compositions.owner == owner, let index = state.conversations.firstIndex(where: { $0.id == id }) else { return }
+      if !page.messages.isEmpty { state.conversations[index].messages = Self.mergeMessages(state.conversations[index].messages, with: page.messages) }
+      if page.more != true { roomHistoryComplete.insert(id) }
+      save()
+    } catch { if compositions.owner == owner { notice = error.localizedDescription } }
   }
   /// Fixture journeys exercise the navigation that follows a server answer
   /// without a network: a post-originated request and a game-day room are
@@ -610,6 +1127,10 @@ extension AppStore {
     conversationMeta = [:]; attachments = []; organizations = []
     for owner in tagOwners.keys { social.releaseTagQuery(owner: owner) }
     tagOwners = [:]; tagPages = [:]; libraryOwners = [:]; libraryPages = [:]; feedPostIDs = nil
+    feedIDsCommunity = nil; feedNeedsReset = false; feedLoadFailed = false; loadingMoreFeed = false; loadingComments = []
+    feedDeltaRunning = false; roomSyncUnsupported = false; lastSnapshot = .distantPast
+    firstReplyIDs = [:]; fillingFeed = false; snapshotClock = nil; openRooms = [:]; roomChangeClocks = [:]
+    loadingEarlierMessages = []; roomHistoryComplete = []; feedGeneration += 1
     feedCommunity = .campus; social.feedCommunity = .campus; loadingCommunity = false
     pendingPost = nil; pendingComments = [:]; pendingUploads = [:]
     save()
@@ -638,7 +1159,8 @@ extension AppStore {
         } else { post.quote = PostQuote(id: quoting, unavailable: true) }
       }
       state.posts.insert(post, at: 0)
-      if save() { return true }; state.posts = previous; return false
+      feedPostIDs?.insert(post.id)
+      if save() { return true }; state.posts = previous; feedPostIDs?.remove(post.id); return false
     }
     let mediaKey = media.map { $0.klipy?.url ?? SHA256.hash(data: $0.data).map { String(format: "%02x", $0) }.joined() } ?? ""
     var payload: [String: Any] = ["text": features.text, "anonymous": anonymous, "community": community.rawValue, "acceptsDM": acceptsDM, "tags": features.tags]

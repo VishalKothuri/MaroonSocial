@@ -21,6 +21,7 @@
 		1E08485D020E8F02A184D15F /* VideoCompressionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA3FB216815EF3732B941937 /* VideoCompressionTests.swift */; };
 		1F3D24FF3427292C3E80B88C /* SportsServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 331395966FE4F0C56436F1B0 /* SportsServiceTests.swift */; };
 		1F7E3A8E0F19C0D3F5BD9451 /* TaggedPostsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E2AF7CD91EF2D3983B4CC04 /* TaggedPostsTests.swift */; };
+		2060B4358638FB59A246B446 /* FeedPagingUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD2A66E7AA3E863F3B118B27 /* FeedPagingUITests.swift */; };
 		210AD2DF8A11613A384EA022 /* InboxCountsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4CF9D4F78FA09C279234175 /* InboxCountsTests.swift */; };
 		244042327A35CA81DD6FB8BC /* KlipyRecents.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFDB8571620CE858FFF047BB /* KlipyRecents.swift */; };
 		2491407711D580AF88955376 /* KlipyPickerFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9CB3F0A04E301079B52269FA /* KlipyPickerFixture.swift */; };
@@ -174,6 +175,7 @@
 		CF1F15F47ADA93CC0E51A016 /* GameGestureUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B19747FD1FECA614D5674A2 /* GameGestureUITests.swift */; };
 		D0D833E6467B1579B7A877A8 /* CommunityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5D7EB5084E4F419B517CA6E /* CommunityView.swift */; };
 		D1EB3CD6B8A82505341167CA /* VerificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B70FF8CFA5AC9FB7F9B1A54D /* VerificationService.swift */; };
+		D2D3FD0CDC72E52BDACEA4CA /* FeedSyncTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A29D1C5BD6E429E90A020284 /* FeedSyncTests.swift */; };
 		D32BF0D95A299885A352F797 /* game-table.html in Resources */ = {isa = PBXBuildFile; fileRef = 651CACCDB04C3A3D1A5A4D27 /* game-table.html */; };
 		D3F01209B9DECB4C1CCF2C90 /* PushRoutingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF5A4459F2B27600BE58ED07 /* PushRoutingTests.swift */; };
 		D497C4D656CD5C237AEB9946 /* Klipy.example.json in Resources */ = {isa = PBXBuildFile; fileRef = A4088DB16E85DC769433A43B /* Klipy.example.json */; };
@@ -357,6 +359,7 @@
 		A05EBDFDDD2B81FC39E2714C /* ProfileActivityUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileActivityUITests.swift; sourceTree = "<group>"; };
 		A25E3C3583F72EDCFA3E4609 /* CommunitiesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommunitiesView.swift; sourceTree = "<group>"; };
 		A27EBD864695A2A26FAA0416 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A29D1C5BD6E429E90A020284 /* FeedSyncTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedSyncTests.swift; sourceTree = "<group>"; };
 		A4088DB16E85DC769433A43B /* Klipy.example.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = Klipy.example.json; sourceTree = "<group>"; };
 		A526B14452F2382717E40060 /* CommentThread.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommentThread.swift; sourceTree = "<group>"; };
 		A7018BEED3CC7513FCBF05AD /* SourcePostTagTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourcePostTagTests.swift; sourceTree = "<group>"; };
@@ -405,6 +408,7 @@
 		DC2CC6EC48A2CFA8C5ECAA3A /* AttachmentOffers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentOffers.swift; sourceTree = "<group>"; };
 		DCCEA5FF6E330465EC89A758 /* DiscoveryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoveryView.swift; sourceTree = "<group>"; };
 		DD265FF2A4FFA4FB85A1E5EB /* TagServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TagServiceTests.swift; sourceTree = "<group>"; };
+		DD2A66E7AA3E863F3B118B27 /* FeedPagingUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedPagingUITests.swift; sourceTree = "<group>"; };
 		DF4431B61DF5AC1C6314F0A3 /* CommunityLaunch.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = CommunityLaunch.storyboard; sourceTree = "<group>"; };
 		DF5A4459F2B27600BE58ED07 /* PushRoutingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushRoutingTests.swift; sourceTree = "<group>"; };
 		E0E5DEC4364F621BE5DAE089 /* GroupPhotoView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupPhotoView.swift; sourceTree = "<group>"; };
@@ -492,6 +496,7 @@
 				7A0E12E354CE324D01FAABA0 /* DurableCompositionsTests.swift */,
 				E90AE14E54F47AA9BD396E30 /* EmailAuthServiceTests.swift */,
 				4765E69C5CF3AFF0879EC9A3 /* FeedChromeStateTests.swift */,
+				A29D1C5BD6E429E90A020284 /* FeedSyncTests.swift */,
 				8913C08355CB700A06D06F6F /* GameMatchmakingTests.swift */,
 				B12CD5CAD3CC7EEDC4C1EF13 /* GameWebViewTests.swift */,
 				70F76686685FF26A2DA03F77 /* GroupCallServiceTests.swift */,
@@ -604,6 +609,7 @@
 				890A979E4B2BBEAE4EF2F68E /* CommunitiesUITests.swift */,
 				C612C1D1AF0EAB81107A70CA /* DiscoveryLiveUITests.swift */,
 				DBD333A869102E003CF3089B /* DurableDraftsUITests.swift */,
+				DD2A66E7AA3E863F3B118B27 /* FeedPagingUITests.swift */,
 				8B19747FD1FECA614D5674A2 /* GameGestureUITests.swift */,
 				554829754690129DFEC7317E /* GroupLiveUITests.swift */,
 				1662A99366ECED69C3775105 /* HapticsUITests.swift */,
@@ -919,6 +925,7 @@
 				F900465B1D49653087078969 /* DurableCompositionsTests.swift in Sources */,
 				2FFDE3F499C5F0DC86EAD179 /* EmailAuthServiceTests.swift in Sources */,
 				3C1A9B72B3D5DA516F30276A /* FeedChromeStateTests.swift in Sources */,
+				D2D3FD0CDC72E52BDACEA4CA /* FeedSyncTests.swift in Sources */,
 				726FF20786EEE1AEE4A84DB8 /* GameMatchmakingTests.swift in Sources */,
 				DB9A6EC0FE54483B55B67655 /* GameWebViewTests.swift in Sources */,
 				4D1EC56F4115A9E2A061A3B3 /* GroupCallServiceTests.swift in Sources */,
@@ -1081,6 +1088,7 @@
 				260B9947FE0A2F5981F6054C /* CommunitiesUITests.swift in Sources */,
 				E9013C739BA8F12604776D8E /* DiscoveryLiveUITests.swift in Sources */,
 				884D72668CB83773BBA7E7E3 /* DurableDraftsUITests.swift in Sources */,
+				2060B4358638FB59A246B446 /* FeedPagingUITests.swift in Sources */,
 				CF1F15F47ADA93CC0E51A016 /* GameGestureUITests.swift in Sources */,
 				7124938F16D6949194B65B5C /* GroupLiveUITests.swift in Sources */,
 				8A82AB314B121989F728FF2D /* HapticsUITests.swift in Sources */,

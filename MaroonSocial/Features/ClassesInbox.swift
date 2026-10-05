@@ -291,6 +291,15 @@ struct ChatView: View {
             if chat.anonymous { Label("Your username is hidden in this conversation", systemImage: "eye.slash").font(.caption2).foregroundStyle(.secondary).padding(.vertical, 8) }
             if pendingGroup { EmptyCard(icon: "person.2.badge.plus", title: "You’re invited to \(chat.title)", detail: "Choose your group alias and avatar when you accept. Messages and the member list become available after joining.") }
             else if displayedMessages.isEmpty { EmptyCard(icon: "bubble.left.and.bubble.right", title: "Say hello", detail: "Messages are shared with the members of this conversation.") }
+            if !pendingGroup && store.hasEarlierMessages(id) {
+              Button { Task { await store.loadEarlierMessages(id) } } label: {
+                HStack(spacing: 8) {
+                  if store.loadingEarlierMessages.contains(id) { ProgressView().controlSize(.small) }
+                  Text("Earlier messages").font(.caption.bold())
+                }.frame(maxWidth: .infinity, minHeight: 44)
+              }.buttonStyle(ControlPressStyle()).foregroundStyle(Palette.accentText)
+                .disabled(store.loadingEarlierMessages.contains(id)).accessibilityIdentifier("loadEarlierMessages")
+            }
             ForEach(pendingGroup ? [] : displayedMessages) { message in
               messageRow(message).id(message.id)
                 .transition(reduceMotion ? .identity : .asymmetric(insertion: .opacity.combined(with: .move(edge: .bottom)), removal: .identity))
@@ -388,7 +397,8 @@ struct ChatView: View {
       .sheet(isPresented: $gamePicker) { GameInviteSheet(roomID: id, onSent: { await store.refresh() }) }
       .sheet(isPresented: $notificationSettings) { RoomNotificationSettings(roomID: id) }
       .sheet(isPresented: $showOutbox) { PendingMessagesView(roomID: id) }
-      .navigationDestination(item: $sourcePost) { PostDetailView(id: $0.id).appHapticOnOpen().toolbar(.visible, for: .navigationBar) }
+      // The source post may be older than the loaded feed; the library destination fetches it by id.
+      .navigationDestination(item: $sourcePost) { LibraryPostDestination(id: $0.id).appHapticOnOpen().toolbar(.visible, for: .navigationBar) }
       .onAppear { if draftOwner.isEmpty { draftOwner = store.compositions.owner } }
       .persistentDraft("message:" + id, value: savedDraft)
       .sheet(isPresented: $groupInfo) { GroupManageView(roomID: id) }
@@ -400,6 +410,8 @@ struct ChatView: View {
       }
       .attachmentOffers(offers, service: SharedMemeService(social: store.social, fixtureMode: store.fixtureMode))
       .task { await store.markRead(id) }
+      // Only the open conversation polls; new messages arrive as `room.messages after_seq`.
+      .task(id: id) { await store.followRoom(id) }
       .onChange(of: chat?.id) { _, value in
         if value == nil {
           focused = false; text = ""; media = nil; item = nil; replyTo = nil
