@@ -6,7 +6,8 @@ import XCTest
   override func setUpWithError() throws { continueAfterFailure = false }
   func testPoolAndPongPullBackGesturesStartAndCompleteActualShots() {
     let app = XCUIApplication()
-    app.launchArguments = ["--uitesting"]
+    // 8 Ball and Cup Pong are hidden in the app; this journey turns them back on.
+    app.launchArguments = ["--uitesting", "--enable-hidden-features"]
     app.launch()
     let username = app.textFields["username"]
     XCTAssertTrue(username.waitForExistence(timeout: 10))

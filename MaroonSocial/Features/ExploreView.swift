@@ -10,8 +10,11 @@ struct ExploreView: View {
           NavigationLink { RandomChatView().appHapticOnOpen().toolbar(.visible, for: .navigationBar) } label: {
             featureTile("Meet people", detail: "Interests · Text & video", icon: "person.2")
           }
-          NavigationLink { TagView().appHapticOnOpen().toolbar(.visible, for: .navigationBar) } label: {
-            featureTile("Campus Tag", detail: "Create or join a lobby", icon: "location.north.circle")
+          // Campus Tag is hidden (FeatureAvailability); "Meet people" fills the row.
+          if FeatureAvailability.isCampusTagAvailable() {
+            NavigationLink { TagView().appHapticOnOpen().toolbar(.visible, for: .navigationBar) } label: {
+              featureTile("Campus Tag", detail: "Create or join a lobby", icon: "location.north.circle")
+            }
           }
         }.buttonStyle(.plain)
         NavigationLink { CommunitiesView(social: store.social, fixtureMode: store.fixtureMode).appHapticOnOpen().toolbar(.visible, for: .navigationBar) } label: {
@@ -33,7 +36,7 @@ struct ExploreView: View {
           }
         }
         HStack { Text("Games").font(.headline); Spacer(); NavigationLink("Online matches") { OnlineGamesListView().appHapticOnOpen().toolbar(.visible, for: .navigationBar) }.font(.subheadline) }
-        ForEach(["8 Ball", "Chess", "Cup Pong"], id: \.self) { game in
+        ForEach(["8 Ball", "Chess", "Cup Pong"].filter { FeatureAvailability.isGameAvailable(title: $0) }, id: \.self) { game in
           NavigationLink { GameLobbyView(kind: game).appHapticOnOpen().toolbar(.visible, for: .navigationBar) } label: {
             HStack(spacing: 12) {
               Avatar(symbol: game == "Chess" ? "crown.fill" : game == "8 Ball" ? "8.circle.fill" : "cup.and.saucer.fill")

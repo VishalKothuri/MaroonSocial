@@ -90,6 +90,15 @@ enum GroupGameOpponents {
     }
     catch { self.error = error.localizedDescription }
   }
+  /// Game id → server kind for every match on both endpoints (used to hide notices of hidden kinds).
+  func kinds(using social: SocialService) async throws -> [String: String] {
+    async let previous = request("list", [:], social)
+    async let hosted = request("list", [:], social, endpoint: "web-pool")
+    let (old, new) = try await (previous, hosted)
+    var result: [String: String] = [:]
+    for item in (old.games ?? []) + (new.games ?? []) { result[item.id] = item.kind }
+    return result
+  }
   func act(_ action: String, using social: SocialService) async {
     guard let game, !busy else { return }; busy = true; error = nil
     defer { busy = false }

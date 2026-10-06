@@ -310,8 +310,25 @@ struct LocalState: Codable {
         request: true, anonymous: true),
       Conversation(
         id: "demo-deleted-post-chat", title: "Anonymous conversation", subtitle: "Shared dm conversation",
-        messages: [Message(author: "Them", text: "Thanks for the study room tip!")], anonymous: true),
+        messages: [Self.fixtureHiddenGameInvitation, Self.fixtureHiddenGameInvitationReply, Message(author: "Them", text: "Thanks for the study room tip!")], anonymous: true),
     ]
+  }
+  /// An older 8 Ball invitation, as the server writes it. 8 Ball is hidden, so the chat
+  /// shows a non-tappable "isn’t available" row for it (HiddenFeaturesUITests).
+  static var fixtureHiddenGameInvitation: Message {
+    var message = Message(author: "Them", text: "Pool invitation. Accept to start.", game: "8 Ball")
+    message.id = "demo-hidden-game-invitation"
+    message.gameSessionID = "6f1c2a5e-7b0d-4f8e-9a1b-3c4d5e6f7a8b"
+    message.created = .now.addingTimeInterval(-900)
+    return message
+  }
+  /// A reply that quotes the hidden invitation: the quote shows the unavailable copy, never the server body.
+  static var fixtureHiddenGameInvitationReply: Message {
+    var message = Message(author: "Them", text: "Are you free after class?")
+    message.id = "demo-hidden-game-invitation-reply"
+    message.replyTo = fixtureHiddenGameInvitation.id
+    message.created = .now.addingTimeInterval(-600)
+    return message
   }
   /// `--uitesting-feed-pages`: 40 older fixture posts so the feed has more than one page.
   /// Only the newest 30 posts start in the feed; `loadMoreFeed` pages the rest from `state`.
@@ -549,7 +566,8 @@ extension AppStore {
     defer { polling = false }
     await connect()
     if connected && !fixtureMode {
-      await tag.restoreSession()
+      // Campus Tag is hidden: no session restore, so no Tag polling or location request.
+      if FeatureAvailability.isCampusTagAvailable() { await tag.restoreSession() }
       await PushService.shared.configure(social: social)
     }
     await courseTerms.refresh()

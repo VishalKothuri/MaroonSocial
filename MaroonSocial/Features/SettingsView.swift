@@ -76,7 +76,7 @@ struct SettingsView: View {
           Button("Delete account permanently", role: .destructive) { Task {
             if await store.deleteAccount() { AppHaptics.shared.play(.success); dismiss() } else { AppHaptics.shared.play(.error) }
           } }
-        } message: { Text("This cannot be undone. Your account will immediately lose access to chats, games, and Tag.") }
+        } message: { Text(FeatureAvailability.isCampusTagAvailable() ? "This cannot be undone. Your account will immediately lose access to chats, games, and Tag." : "This cannot be undone. Your account will immediately lose access to chats and games.") }
     }
   }
   private var accountName: some View { Text("@\(store.state.username)").font(.headline) }

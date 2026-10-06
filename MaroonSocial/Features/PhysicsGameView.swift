@@ -127,7 +127,9 @@ struct GameInviteSheet: View {
   let roomID: String
   var onSent: (() async -> Void)? = nil
   @State private var service = GameService()
-  @State private var kind = "pool"
+  /// Only kinds FeatureAvailability allows are offered; with 8 Ball and Cup Pong hidden that is Chess.
+  private let options = FeatureAvailability.availableGameKinds()
+  @State private var kind = FeatureAvailability.availableGameKinds().first ?? "chess"
   @State private var nonce = UUID().uuidString
   @State private var sending = false
   @State private var error: String?
@@ -148,18 +150,19 @@ struct GameInviteSheet: View {
           }.accessibilityIdentifier("gameOpponentPicker")
           Text(opponents.isEmpty ? "Another member must join this chat before you can invite them." : "Only the selected member can accept. Others in the chat can see the invitation.").font(.caption).foregroundStyle(.secondary)
         }
-        ForEach(["pool", "pong", "chess"], id: \.self) { option in
+        ForEach(options, id: \.self) { option in
           Button { kind = option; nonce = UUID().uuidString } label: {
             HStack(spacing: 15) {
               Image(systemName: option == "pool" ? "circle.fill" : option == "pong" ? "cup.and.saucer.fill" : "crown.fill").frame(width: 32)
               VStack(alignment: .leading) { Text(OnlineGame.title(option)).font(.headline); Text(option == "pool" ? "Real collisions. Plan your next shot." : option == "pong" ? "Arc, bounce, and clear six cups." : "Classic rules. Your move.").font(.caption).foregroundStyle(.secondary) }
               Spacer(); Image(systemName: kind == option ? "checkmark.circle.fill" : "circle")
             }.padding().background(Palette.surface.opacity(0.65), in: RoundedRectangle(cornerRadius: 18))
-          }.buttonStyle(.plain)
+          }.buttonStyle(.plain).accessibilityIdentifier("gameInviteOption-\(option)")
         }
         if let error { Text(error).foregroundStyle(.red).font(.callout) }
         Button { Task {
           guard !isGroup || opponents.contains(where: { $0.memberKey == opponent }) else { error = "Choose a current group member to invite."; return }
+          guard FeatureAvailability.isGameAvailable(kind: kind) else { error = FeatureAvailability.unavailableMessage(for: kind); return }
           sending = true; defer { sending = false }
           do { _ = try await service.invite(room: roomID, kind: kind, nonce: nonce, opponentMemberKey: isGroup ? opponent : nil, using: store.social); await onSent?(); dismiss() }
           catch { self.error = error.localizedDescription }
@@ -178,12 +181,14 @@ struct GroupGameInvitationCard: View {
   @State private var unavailable = false
   var body: some View {
     VStack(alignment: .leading, spacing: 5) {
-      if let information, information.canOpen {
+      if let information, !FeatureAvailability.isGameAvailable(kind: information.kind) {
+        UnavailableGameRow(game: information.kind)
+      } else if let information, information.canOpen {
         NavigationLink { OnlineGameView(sessionID: sessionID) } label: {
           Label(information.status == "pending" ? "Open \(title) invitation" : "Open \(title)", systemImage: "gamecontroller.fill").font(.headline)
         }
       } else { Label(title, systemImage: "gamecontroller.fill").font(.headline) }
-      if let information {
+      if let information, FeatureAvailability.isGameAvailable(kind: information.kind) {
         Text(information.players.joined(separator: " · ")).font(.caption)
         Text(information.status == "pending" ? "Waiting for the invited player" : information.status.capitalized).font(.caption).foregroundStyle(.secondary)
       } else if unavailable { Text("This invitation is unavailable.").font(.caption).foregroundStyle(.secondary) }
@@ -195,7 +200,7 @@ struct GroupGameInvitationCard: View {
         while !Task.isCancelled {
           do { information = try await GameService().invitation(sessionID, using: store.social); unavailable = false }
           catch { if !Task.isCancelled { information = nil; unavailable = true }; return }
-          guard information?.status == "pending" else { return }
+          guard information?.status == "pending", FeatureAvailability.isGameAvailable(kind: information?.kind ?? "") else { return }
           do { try await Task.sleep(for: .seconds(15)) } catch { return }
         }
       }
@@ -216,7 +221,11 @@ struct OnlineGameView: View {
   }
   var body: some View {
     VStack(spacing: 0) {
-      if let game = service.game {
+      if let game = service.game, !FeatureAvailability.isGameAvailable(kind: game.kind) {
+        // A hidden kind (old invitation, push, deep link) never opens the table or the hosted pool.
+        ContentUnavailableView(FeatureAvailability.unavailableMessage(for: game.kind), systemImage: "gamecontroller", description: Text("This game is turned off for now. Chess is still available from Explore."))
+          .accessibilityIdentifier("hiddenGameUnavailable")
+      } else if let game = service.game {
         if game.status == "pending" {
           VStack(spacing: 18) {
             Image(systemName: "gamecontroller.fill").font(.system(size: 70)).foregroundStyle(Color(red: 0.35, green: 0.10, blue: 0.16))
@@ -239,8 +248,8 @@ struct OnlineGameView: View {
       } else { ProgressView("Opening match…").frame(maxWidth: .infinity, maxHeight: .infinity) }
       if let error = service.error { HStack { Text(error).font(.caption); Spacer(); Button("Retry") { Task { service.error = nil; await service.fetch(sessionID, using: store.social) } } }.padding(10).background(Color.orange.opacity(0.15)) }
     }.background(Palette.paper).tint(Palette.accentText)
-      .navigationTitle(service.game?.title ?? "Match").navigationBarTitleDisplayMode(.inline).hidesTabBarWhenPushed()
-      .toolbar { if service.game?.status == "active" && service.game?.usesHostedPool != true { ToolbarItem(placement: .topBarTrailing) { Button("Resign") { resign = true }.font(.caption) } } }
+      .navigationTitle(service.game.map { FeatureAvailability.isGameAvailable(kind: $0.kind) ? $0.title : "Match" } ?? "Match").navigationBarTitleDisplayMode(.inline).hidesTabBarWhenPushed()
+      .toolbar { if service.game?.status == "active" && service.game?.usesHostedPool != true && FeatureAvailability.isGameAvailable(kind: service.game?.kind ?? "") { ToolbarItem(placement: .topBarTrailing) { Button("Resign") { resign = true }.font(.caption) } } }
       .confirmationDialog("Resign this match?", isPresented: $resign, titleVisibility: .visible) { Button("Resign", role: .destructive) { Task { await service.act("forfeit", using: store.social) } } } message: { Text("Your opponent will win. Leaving this screen keeps the match active.") }
       .sheet(isPresented: $rematch) { if let game = service.game { GameInviteSheet(roomID: game.roomID).presentationDetents([.medium, .large]) } }
       .task(id: scenePhase) {
@@ -248,6 +257,7 @@ struct OnlineGameView: View {
         await service.fetch(sessionID, using: store.social)
         while !Task.isCancelled {
           if service.game?.usesHostedPool == true && service.game?.status != "pending" { break }
+          if let kind = service.game?.kind, !FeatureAvailability.isGameAvailable(kind: kind) { break }
           try? await Task.sleep(for: .seconds(2)); if Task.isCancelled { break }; if !service.busy { await service.fetch(sessionID, using: store.social) } }
       }
   }
@@ -255,13 +265,26 @@ struct OnlineGameView: View {
 struct OnlineGamesListView: View {
   @Environment(AppStore.self) private var store
   @State private var service = GameService()
+  /// Matches of hidden kinds (8 Ball, Cup Pong) stay on the server but are not listed.
+  private var games: [OnlineGame] { service.games.filter { FeatureAvailability.isGameAvailable(kind: $0.kind) } }
   var body: some View {
     ScrollView {
       LazyVStack(spacing: 12) {
-        if service.games.isEmpty { ContentUnavailableView("No matches yet", systemImage: "gamecontroller", description: Text("Tap Find a player in a game lobby, or send a game invitation from a direct or group chat.")) }
-        ForEach(service.games) { game in NavigationLink { OnlineGameView(sessionID: game.id) } label: { HStack(spacing: 15) { Image(systemName: game.kind == "chess" ? "crown.fill" : "gamecontroller.fill").font(.title2); VStack(alignment: .leading, spacing: 5) { Text(game.title + " · " + game.opponent).font(.headline); Text(game.detail).font(.caption).foregroundStyle(.secondary) }; Spacer(); if game.yourTurn || game.canAccept { Circle().fill(.orange).frame(width: 9, height: 9) }; Image(systemName: "chevron.right").font(.caption) }.padding(18).background(Palette.surface.opacity(0.7), in: RoundedRectangle(cornerRadius: 18)) }.buttonStyle(.plain) }
+        if games.isEmpty { ContentUnavailableView("No matches yet", systemImage: "gamecontroller", description: Text("Tap Find a player in a game lobby, or send a game invitation from a direct or group chat.")) }
+        ForEach(games) { game in NavigationLink { OnlineGameView(sessionID: game.id) } label: { HStack(spacing: 15) { Image(systemName: game.kind == "chess" ? "crown.fill" : "gamecontroller.fill").font(.title2); VStack(alignment: .leading, spacing: 5) { Text(game.title + " · " + game.opponent).font(.headline); Text(game.detail).font(.caption).foregroundStyle(.secondary) }; Spacer(); if game.yourTurn || game.canAccept { Circle().fill(.orange).frame(width: 9, height: 9) }; Image(systemName: "chevron.right").font(.caption) }.padding(18).background(Palette.surface.opacity(0.7), in: RoundedRectangle(cornerRadius: 18)) }.buttonStyle(.plain) }
         if let error = service.error { Text(error).foregroundStyle(.red).font(.callout) }
       }.padding()
     }.background(Palette.paper).navigationTitle("My matches").task { await service.list(using: store.social) }.maroonRefreshable(scope: "games") { await service.list(using: store.social) }
+  }
+}
+
+/// Shown in place of an invitation or match for a hidden game kind: not tappable, secondary.
+struct UnavailableGameRow: View {
+  let game: String
+  var body: some View {
+    Label(FeatureAvailability.unavailableMessage(for: game), systemImage: "gamecontroller")
+      .font(.subheadline).foregroundStyle(.secondary)
+      .accessibilityElement(children: .combine)
+      .accessibilityIdentifier("hiddenGameInvitation")
   }
 }

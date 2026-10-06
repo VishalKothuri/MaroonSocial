@@ -30,8 +30,14 @@ supabase secrets set NAME=value --project-ref myxbghfbapbfffkpndwo
 | `R2_CDN_PURGE_TOKEN` (with the CDN) | Cloudflare API token with only Zone → Cache Purge on that zone | Purging deleted post media from the CDN | CDN URLs are not issued |
 | `REALTIME_JWT_SECRET` | Supabase dashboard → Project Settings → API → JWT secret (or an imported signing key). Set it only after `20261005200000_realtime_pokes.sql` and `20261005210000_realtime_pokes_review_fixes.sql` are applied | Realtime pokes for chats, inbox and game-day chat | Chats and inbox keep polling every few seconds |
 | `CF_REALTIME_APP_ID`, `CF_REALTIME_APP_SECRET` (later) | Cloudflare Realtime → SFU app | SFU for group calls | Group calls keep the current path |
+| `EMAIL_PROVIDER` | `brevo` (default) or `resend` | Sends TAMU mailbox verification and recovery codes | Verification and email recovery show "unavailable" |
+| `BREVO_API_KEY` or `RESEND_API_KEY` | Brevo → SMTP & API → API keys, or Resend → API Keys (match `EMAIL_PROVIDER`) | Email delivery | Same as above |
+| `EMAIL_SENDER` | A sender address verified with that provider, e.g. `verify@<your domain>` | Email delivery | Same as above |
+| `VERIFICATION_HMAC_SECRET` | Any long random string you generate (e.g. `openssl rand -hex 32`) | Hashes verification codes | Same as above |
 
 Order for R2: apply the revocation migration, set the four `R2_*` credentials (and `R2_PRIVATE_BUCKET` if chats should use R2), then `MEDIA_BACKEND=r2`, and redeploy the functions. The CDN comes last: zone id and purge token first, then `R2_PUBLIC_BASE_URL`. Switching `MEDIA_BACKEND` back off is safe because every object records its backend in its path.
+
+App-side file (not a Supabase secret): image search in the post composer uses Google Programmable Search. Copy `MaroonSocial/Resources/ImageSearch.example.json` to `MaroonSocial/Resources/ImageSearch.json` (gitignored) and fill `apiKey` (Google Cloud → Custom Search JSON API key) and `searchEngineID` (programmablesearchengine.google.com, image search on). Until then the image search sheet shows that search is unavailable. `Klipy.json` is already in place.
 
 Dashboard-only setup (no secret): create the R2 bucket, attach the custom domain, add a Cache Rule "Eligible for cache / respect origin" on that hostname, and enable Smart Tiered Cache. After Realtime is confirmed working, turn off Realtime "Allow public access" in Supabase.
 

@@ -14,9 +14,11 @@ final class MaroonSocialUITests: XCTestCase {
     }
   }
 
-  private func launch(onboard: Bool = true, accessibilityText: Bool = false) -> XCUIApplication {
+  private func launch(onboard: Bool = true, accessibilityText: Bool = false, hiddenFeatures: Bool = false) -> XCUIApplication {
     let app = XCUIApplication()
     app.launchArguments = ["--uitesting"]
+    // 8 Ball, Cup Pong and Campus Tag are hidden in the app; their journeys turn them back on.
+    if hiddenFeatures { app.launchArguments += ["--enable-hidden-features"] }
     if accessibilityText { app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"] }
     app.launch()
     let username = app.textFields["username"]
@@ -357,7 +359,7 @@ final class MaroonSocialUITests: XCTestCase {
   }
 
   func testLocalPhysicsGameControlsAndReplay() {
-    let app = launch()
+    let app = launch(hiddenFeatures: true)
     openGame("8 Ball", app: app)
     let shotButton = app.webViews.buttons["Take shot"]
     XCTAssertTrue(shotButton.waitForExistence(timeout: 15))

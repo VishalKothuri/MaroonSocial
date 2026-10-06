@@ -5,8 +5,13 @@ import SwiftUI
 struct GameView: View {
   let kind: String
   var body: some View {
-    Group { if kind == "Chess" { ChessView() } else { PhysicsGameView(kind: kind) } }.navigationTitle(
-      kind
+    Group {
+      if !FeatureAvailability.isGameAvailable(title: kind) {
+        ContentUnavailableView(FeatureAvailability.unavailableMessage(for: kind), systemImage: "gamecontroller", description: Text("This game is turned off for now. Chess is still available from Explore."))
+          .accessibilityIdentifier("hiddenGameUnavailable")
+      } else if kind == "Chess" { ChessView() } else { PhysicsGameView(kind: kind) }
+    }.navigationTitle(
+      FeatureAvailability.isGameAvailable(title: kind) ? kind : ""
     ).navigationBarTitleDisplayMode(.inline).hidesTabBarWhenPushed()
   }
 }

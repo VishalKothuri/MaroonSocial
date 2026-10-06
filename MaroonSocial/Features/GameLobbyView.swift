@@ -12,7 +12,12 @@ struct GameLobbyView: View {
   }
   @ViewBuilder
   var body: some View {
-    if title == "8 Ball" && !store.fixtureMode {
+    if !FeatureAvailability.isGameAvailable(title: title) {
+      // Reached for a hidden kind (deep link, stale state): no hosted pool, no matchmaking.
+      ContentUnavailableView(FeatureAvailability.unavailableMessage(for: title), systemImage: "gamecontroller", description: Text("This game is turned off for now. Chess is still available from Explore."))
+        .accessibilityIdentifier("hiddenGameUnavailable")
+        .appBackground().navigationTitle("").navigationBarTitleDisplayMode(.inline).hidesTabBarWhenPushed()
+    } else if title == "8 Ball" && !store.fixtureMode {
       WebPoolView()
     } else {
       classicLobby

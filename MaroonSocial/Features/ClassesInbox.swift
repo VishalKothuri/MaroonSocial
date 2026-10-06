@@ -58,7 +58,7 @@ struct InboxView: View {
               Image(systemName: "gamecontroller.fill").font(.system(size: 19, weight: .semibold)).foregroundStyle(Palette.accentText)
               Text("Game activity").font(.subheadline.weight(.semibold)).foregroundStyle(Palette.ink)
               Spacer()
-              let unread = gameActivity.items.filter { !$0.read }.count
+              let unread = gameActivity.visibleItems.filter { !$0.read }.count
               if unread > 0 { InboxBadge(count: unread, request: false) }
               Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(Palette.secondary)
             }.padding(.horizontal, 20).padding(.vertical, 14).background(Palette.surface)
@@ -117,6 +117,7 @@ struct InboxView: View {
   private func latestMessage(_ chat: Conversation) -> String {
     guard let message = chat.messages.last else { return chat.request ? "Invitation to chat" : "Start the conversation" }
     if message.deleted == true { return "Message deleted" }
+    if let game = message.game, !FeatureAvailability.isGameAvailable(title: game) { return FeatureAvailability.unavailableMessage(for: game) }
     if !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return message.text }
     return message.game != nil ? "Game invitation" : "Photo or GIF"
   }
@@ -430,6 +431,17 @@ struct ChatView: View {
       }
       .toolbar { ToolbarItem(placement: .topBarTrailing) { if focused { KeyboardDismissButton { focused = false } } } }
   }
+  /// The server writes the invitation body ("Pool invitation. Accept to start."); a hidden kind shows only its unavailable row.
+  static func isHiddenGameInvitation(_ message: Message) -> Bool {
+    guard message.gameSessionID != nil, let game = message.game else { return false }
+    return !FeatureAvailability.isGameAvailable(title: game)
+  }
+  /// The text a message shows wherever its text appears: the bubble, reply quotes and the reply banner.
+  /// A hidden-kind invitation shows its unavailable copy instead of the server body; the stored text is untouched.
+  static func displayText(_ message: Message) -> String {
+    guard isHiddenGameInvitation(message), let game = message.game else { return message.text }
+    return FeatureAvailability.unavailableMessage(for: game)
+  }
   private func messageRow(_ message: Message) -> some View {
     let mine = store.isMine(message)
     return HStack(alignment: .bottom) {
@@ -439,16 +451,19 @@ struct ChatView: View {
           HStack(spacing: 6) { GroupPhotoAvatar(roomID: id, memberKey: message.memberKey ?? "unavailable", token: message.avatar ?? "maroon", size: 24); Text(mine ? "\(message.author) · You" : message.author).font(.caption2.bold()).foregroundStyle(Palette.accentText) }
         } else if !mine || chat?.anonymous == true { Text(ChatParticipantLabel.name(author: message.author, mine: mine, anonymous: chat?.anonymous == true)).font(.caption2.bold()).foregroundStyle(Palette.accentText) }
         if let reply = message.replyTo, let original = chat?.messages.first(where: { $0.id == reply }) {
-          Text(original.text).font(.caption).lineLimit(2).padding(8).frame(maxWidth: .infinity, alignment: .leading)
+          Text(Self.displayText(original)).font(.caption).lineLimit(2).padding(8).frame(maxWidth: .infinity, alignment: .leading)
             .background(Palette.ink.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
         }
         if let attachmentID = message.attachmentID { RemoteMedia(attachmentID: attachmentID).frame(maxWidth: 230, maxHeight: 220) }
         else if let media = message.media { AttachmentPreview(media: media).frame(width: 210, height: 180) }
-        if let session = message.gameSessionID {
+        if let game = message.game, !FeatureAvailability.isGameAvailable(title: game) {
+          // Hidden kinds (8 Ball, Cup Pong) keep their message but lose every way into the game.
+          UnavailableGameRow(game: game)
+        } else if let session = message.gameSessionID {
           if meta?.kind == "group" { GroupGameInvitationCard(sessionID: session, title: message.game ?? "Game") }
           else { NavigationLink { OnlineGameView(sessionID: session) } label: { Label("Open \(message.game ?? "game")", systemImage: "gamecontroller.fill").font(.headline) } }
         } else if let game = message.game { NavigationLink { GameView(kind: game) } label: { Label("Play \(game)", systemImage: "gamecontroller") } }
-        if !message.text.isEmpty { Text(message.text).textSelection(.enabled).foregroundStyle(message.deleted == true ? .secondary : Palette.ink) }
+        if !message.text.isEmpty && !Self.isHiddenGameInvitation(message) { Text(message.text).textSelection(.enabled).foregroundStyle(message.deleted == true ? .secondary : Palette.ink) }
         if let reactions = message.reactions, !reactions.isEmpty {
           (dynamicTypeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4)) : AnyLayout(HStackLayout(spacing: 4))) { ForEach(reactions.keys.sorted(), id: \.self) { emoji in
             Button { react(message.id, emoji) } label: { Text("\(emoji) \(reactions[emoji] ?? 0)").font(.caption).padding(.horizontal, 6).frame(minWidth: 44, minHeight: 44).background(Palette.surface.opacity(0.7), in: Capsule()) }
@@ -460,7 +475,8 @@ struct ChatView: View {
         .contextMenu {
           if message.deleted != true {
             Button("Reply", systemImage: "arrowshape.turn.up.left") { replyTo = message; restoredReplyID = nil; focused = true }
-            Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = message.text }
+            // A hidden-kind invitation has nothing worth copying; its server body stays out of the pasteboard.
+            if !Self.isHiddenGameInvitation(message) { Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = message.text } }
             ForEach(["❤️", "👍", "😂", "👀"], id: \.self) { emoji in Button(emoji) { react(message.id, emoji) } }
             if mine { Button("Delete message", systemImage: "trash", role: .destructive) { Task { _ = await store.mutate("room.delete", ["room_id": id, "message_id": message.id]) } } }
             Button("Report message", systemImage: "flag", role: .destructive) { Task { _ = await store.mutate("report", ["target_type": "message", "target_id": message.id, "reason": "Message report"]) } }
@@ -480,7 +496,7 @@ struct ChatView: View {
       }
       if let error = store.compositions.error { Text(error).font(.caption).foregroundStyle(Palette.secondary) }
       if let replyTo {
-        HStack { Text("Replying to: \(replyTo.text)").lineLimit(1).font(.caption); Spacer(); Button { self.replyTo = nil; restoredReplyID = nil } label: { Image(systemName: "xmark").frame(width: 44, height: 44) }.accessibilityLabel("Cancel reply") }
+        HStack { Text("Replying to: \(Self.displayText(replyTo))").lineLimit(1).font(.caption); Spacer(); Button { self.replyTo = nil; restoredReplyID = nil } label: { Image(systemName: "xmark").frame(width: 44, height: 44) }.accessibilityLabel("Cancel reply") }
       }
       if let media {
         HStack { AttachmentPreview(media: media).frame(width: 44, height: 44); Text(media.kind == .video ? "Video attached" : media.kind == .gif ? "GIF attached" : "Photo attached").font(.caption); Spacer(); if media.kind == .image { Button { AppHaptics.shared.play(.impact); focused = false; editImage = true } label: { Text("Edit").frame(minHeight: 44) }.accessibilityLabel("Edit image").accessibilityIdentifier("messageEditImage") }; Button { self.media = nil; item = nil } label: { Text("Remove").frame(minHeight: 44) }.accessibilityLabel("Remove attachment") }
