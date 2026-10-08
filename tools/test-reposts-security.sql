@@ -5,7 +5,7 @@ set local role service_role;
 do $$
 declare
  ha text:=encode(extensions.gen_random_bytes(32),'hex');hb text:=encode(extensions.gen_random_bytes(32),'hex');hc text:=encode(extensions.gen_random_bytes(32),'hex');
- a uuid;b uuid;c uuid;src uuid;anon_src uuid;quote_id uuid;second_quote uuid;chain uuid;nsfw_src uuid;own_quote uuid;reported uuid;relay uuid;nonce_id uuid:=gen_random_uuid();out jsonb;obj jsonb;snap jsonb;name_a text;name_c text;
+ a uuid;b uuid;c uuid;src uuid;anon_src uuid;quote_id uuid;second_quote uuid;chain uuid;nsfw_src uuid;own_quote uuid;reported uuid;relay uuid;commentary uuid;commentary_nonce uuid:=gen_random_uuid();nonce_id uuid:=gen_random_uuid();out jsonb;obj jsonb;snap jsonb;name_a text;name_c text;
 begin
  if has_function_privilege('anon','social_private.quote_view(uuid,uuid)','EXECUTE')or has_function_privilege('authenticated','social_private.quote_view(uuid,uuid)','EXECUTE')or has_column_privilege('anon','social_private.posts','quoted_post','SELECT')or has_column_privilege('authenticated','social_private.posts','quoted_post','SELECT')then raise exception 'Private quote projection exposed';end if;
  name_a:='quote_a_'||substr(ha,1,8);name_c:='quote_c_'||substr(hc,1,8);
@@ -26,7 +26,16 @@ begin
  -- Exact retry returns the same post; a changed quote on the same nonce is a conflict.
  out:=public.social_gateway('post.create',hb,jsonb_build_object('text','','anonymous',false,'nonce',nonce_id,'quoted_post_id',src));if out->>'resource_id'is distinct from quote_id::text then raise exception 'Quote retry not idempotent %',out;end if;
  out:=public.social_gateway('post.create',hb,jsonb_build_object('text','','anonymous',false,'nonce',nonce_id,'quoted_post_id',anon_src));if out->>'code'is distinct from 'conflict'then raise exception 'Changed quote retry accepted %',out;end if;
- out:=public.social_gateway('post.create',hb,jsonb_build_object('text','','anonymous',false,'nonce',nonce_id));if out->>'code'is distinct from 'conflict'then raise exception 'Dropped quote retry accepted %',out;end if;
+ -- Dropping the quote from an empty-body quote leaves an empty post, which validation rejects before the nonce is looked up.
+ out:=public.social_gateway('post.create',hb,jsonb_build_object('text','','anonymous',false,'nonce',nonce_id));if out->>'code'is distinct from 'invalid'or out?'resource_id'then raise exception 'Dropped quote retry accepted %',out;end if;
+ if not exists(select 1 from social_private.posts where id=quote_id and quoted_post=src and body=''and not deleted)then raise exception 'Dropped quote retry changed the original quote';end if;
+ -- With commentary, a retry that drops the quote is a valid post on its own, so the nonce must report a conflict.
+ out:=public.social_gateway('post.create',hc,jsonb_build_object('text','Commentary on a quote','anonymous',false,'nonce',commentary_nonce,'quoted_post_id',src));commentary:=(out->>'resource_id')::uuid;
+ if commentary is null then raise exception 'Commentary quote failed %',out;end if;
+ out:=public.social_gateway('post.create',hc,jsonb_build_object('text','Commentary on a quote','anonymous',false,'nonce',commentary_nonce));if out->>'code'is distinct from 'conflict'then raise exception 'Dropped quote retry with commentary accepted %',out;end if;
+ if not exists(select 1 from social_private.posts where id=commentary and quoted_post=src and not deleted)then raise exception 'Dropped quote retry changed the commentary quote';end if;
+ -- Remove it through the gateway so the later repost counts see only the suite's original quotes.
+ out:=public.social_gateway('post.delete',hc,jsonb_build_object('post_id',commentary));if out?'error'then raise exception 'Commentary quote cleanup failed %',out;end if;
  -- Unknown, malformed and non-string quote targets are rejected before anything is written.
  out:=public.social_gateway('post.create',hb,jsonb_build_object('text','ghost','quoted_post_id',gen_random_uuid()));if out->>'code'is distinct from 'invalid'then raise exception 'Nonexistent quote accepted %',out;end if;
  out:=public.social_gateway('post.create',hb,'{"text":"ghost","quoted_post_id":"not-a-uuid"}');if out->>'code'is distinct from 'invalid'then raise exception 'Malformed quote id accepted %',out;end if;

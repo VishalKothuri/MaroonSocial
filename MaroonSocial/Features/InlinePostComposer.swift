@@ -11,6 +11,10 @@ struct InlinePostComposer: View {
   /// The sheet variant (QuotePostComposerSheet) keeps a separate draft from the feed's inline composer.
   var draftKey = "post"
   var quoting: String? = nil
+  /// The topic the feed is showing: a new post starts in it (a restored draft keeps its own).
+  var browsedTopic: String? = nil
+  /// Called with the published post's topic, before `onPublished`.
+  var onPublishedTopic: ((String?) -> Void)? = nil
   let onPublished: () -> Void
   @State private var text = ""
   @State private var anonymous = true
@@ -38,6 +42,8 @@ struct InlinePostComposer: View {
   @State private var tagsText = ""
   @State private var optionsHeight: CGFloat = 220
   @State private var quotedPostID: String?
+  /// One topic per post. Required only while topics are available (older servers accept none).
+  @State private var topic: String?
   private var tagValues: [String] { tagsText.split(whereSeparator: { $0.isWhitespace || $0 == "," }).map(String.init) }
   private var validation: Result<ValidatedPostFeatures, Error> {
     Result { try PostFeatureRules.validate(text: text, poll: pollEnabled ? poll : nil, linkURL: linkEnabled ? link : nil, tags: tagsEnabled ? tagValues : [], hasQuote: quotedPostID != nil) }
@@ -55,15 +61,23 @@ struct InlinePostComposer: View {
     quotedPostID.map { id in store.state.posts.first { $0.id == id }.map(PostQuote.init(quoting:)) ?? PostQuote(id: id, unavailable: true) }
   }
   private var target: Community { draftCommunity ?? community }
-  private var canSend: Bool { !sending && !loadingMedia && (try? validation.get()) != nil }
+  /// The chosen topic while the catalog still lists it; never sent to a server without topics.
+  private var chosenTopic: String? {
+    guard store.topicsAvailable, let topic, store.topics.contains(where: { $0.slug == topic }) else { return nil }
+    return topic
+  }
+  private var topicSatisfied: Bool { TopicCatalog.canPublish(topic: chosenTopic, topicsAvailable: store.topicsAvailable, catalog: store.topics) }
+  private var canSend: Bool { !sending && !loadingMedia && topicSatisfied && (try? validation.get()) != nil }
+  private var tagsTitle: String { store.topicsAvailable ? "Hashtags" : "Tags" }
   private var savedDraft: Binding<CompositionDraft> {
-    Binding(get: { CompositionDraft(text: text, media: media, fields: ["anonymous": String(anonymous), "acceptsDM": String(acceptsDM), "community": target.rawValue, "pollEnabled": String(pollEnabled), "linkEnabled": String(linkEnabled), "link": link, "tagsEnabled": String(tagsEnabled), "tags": tagsText, "quotedPostID": quotedPostID ?? ""], poll: poll, nonce: "post", hasContent: persistsContent) }, set: { draft in
+    Binding(get: { CompositionDraft(text: text, media: media, fields: ["anonymous": String(anonymous), "acceptsDM": String(acceptsDM), "community": target.rawValue, "pollEnabled": String(pollEnabled), "linkEnabled": String(linkEnabled), "link": link, "tagsEnabled": String(tagsEnabled), "tags": tagsText, "quotedPostID": quotedPostID ?? "", "topic": topic ?? ""], poll: poll, nonce: "post", hasContent: persistsContent) }, set: { draft in
       text = draft.text; media = draft.media; anonymous = draft.fields["anonymous"] != "false"; acceptsDM = draft.fields["acceptsDM"] != "false"
       draftCommunity = draft.fields["community"].flatMap(Community.init(rawValue:))
       pollEnabled = draft.fields["pollEnabled"] == "true"; poll = draft.poll ?? PostPollDraft()
       linkEnabled = draft.fields["linkEnabled"] == "true"; link = draft.fields["link"] ?? ""
       tagsEnabled = draft.fields["tagsEnabled"] == "true"; tagsText = draft.fields["tags"] ?? ""
       quotedPostID = draft.fields["quotedPostID"].flatMap { $0.isEmpty ? nil : $0 }
+      topic = draft.fields["topic"].flatMap { $0.isEmpty ? nil : $0 }
     })
   }
   var body: some View {
@@ -79,6 +93,8 @@ struct InlinePostComposer: View {
       .task {
         guard let quoting else { return }
         quotedPostID = quoting
+        // The sheet is always expanded, so it pre-selects here (a restored draft keeps its topic).
+        if topic == nil { topic = browsedTopic }
         // The sheet starts ready to type, like the inline repost path.
         try? await Task.sleep(for: .milliseconds(350)); focused = .body
       }
@@ -90,7 +106,12 @@ struct InlinePostComposer: View {
         if value {
           AppHaptics.shared.play(.impact)
           if draftCommunity == nil { draftCommunity = community }
+          preselectTopic()
         } else { focused = nil }
+      }
+      .onChange(of: store.topicComposeRequest) { _, value in
+        guard quoting == nil, value != nil, expanded else { return }
+        preselectTopic()
       }
       .onChange(of: item) { _, value in if value != nil { expand(focus: false); focused = nil } }
       .onDisappear { focused = nil }
@@ -128,7 +149,7 @@ struct InlinePostComposer: View {
     Menu {
       Button("Add poll", systemImage: "chart.bar.xaxis") { addPoll() }.accessibilityIdentifier("postAddPollMenu")
       Button("Add link", systemImage: "link") { addLink() }
-      Button("Add tags", systemImage: "number") { addTags() }
+      Button("Add " + tagsTitle.lowercased(), systemImage: "number") { addTags() }
       Divider()
       Button("Photo, GIF, or video", systemImage: "photo") {
         if expanded { AppHaptics.shared.play(.impact) }
@@ -184,7 +205,11 @@ struct InlinePostComposer: View {
   private var optionsPanel: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 8) {
+        // The toolbar (with the keyboard dismiss button) stays first; the topic row follows, open by default.
         featureToolbar
+        if store.topicsAvailable {
+          TopicChipRow(topics: store.topics, selection: Binding(get: { chosenTopic }, set: { topic = $0 }))
+        }
         if let quote { quoteRow(quote) }
         if pollEnabled { pollEditor }
         if linkEnabled { linkEditor }
@@ -209,7 +234,7 @@ struct InlinePostComposer: View {
         HStack(spacing: 12) {
           featureButton("Poll", symbol: "chart.bar.xaxis", selected: pollEnabled, id: "postAddPoll", action: addPoll)
           featureButton("Link", symbol: "link", selected: linkEnabled, id: "postAddLink", action: addLink)
-          featureButton("Tags", symbol: "number", selected: tagsEnabled, id: "postAddTags", action: addTags)
+          featureButton(tagsTitle, symbol: "number", selected: tagsEnabled, id: "postAddTags", action: addTags)
         }.fixedSize(horizontal: true, vertical: false)
       }.scrollBounceBehavior(.basedOnSize)
       if focused != nil { KeyboardDismissButton { focused = nil } }
@@ -264,11 +289,11 @@ struct InlinePostComposer: View {
   }
   private var tagsEditor: some View {
     VStack(alignment: .leading, spacing: 4) {
-      editorHeading("Tags") { tagsEnabled = false; focused = nil }
+      editorHeading(tagsTitle) { tagsEnabled = false; focused = nil }
       TextField("campus, study_group", text: $tagsText).textInputAutocapitalization(.never).autocorrectionDisabled()
-        .focused($focused, equals: .tags).accessibilityIdentifier("postTags").accessibilityLabel("Post tags")
+        .focused($focused, equals: .tags).accessibilityIdentifier("postTags").accessibilityLabel(store.topicsAvailable ? "Post hashtags" : "Post tags")
         .padding(10).background(Palette.elevated, in: RoundedRectangle(cornerRadius: 9))
-      Text("Up to 5 tags, separated by spaces or commas.").font(.caption).foregroundStyle(Palette.secondary)
+      Text(store.topicsAvailable ? "Up to 5 hashtags, separated by spaces or commas." : "Up to 5 tags, separated by spaces or commas.").font(.caption).foregroundStyle(Palette.secondary)
     }
   }
   private func quoteRow(_ quote: PostQuote) -> some View {
@@ -320,20 +345,31 @@ struct InlinePostComposer: View {
   private func addPoll() { if expanded && !pollEnabled { AppHaptics.shared.play(.selection) }; expand(focus: false); pollEnabled = true; focused = .question }
   private func addLink() { if expanded && !linkEnabled { AppHaptics.shared.play(.selection) }; expand(focus: false); linkEnabled = true; focused = .link }
   private func addTags() { if expanded && !tagsEnabled { AppHaptics.shared.play(.selection) }; expand(focus: false); tagsEnabled = true; focused = .tags }
+  /// Opening the composer: "Post in <topic>" sets its topic; otherwise a draft without a topic
+  /// starts in the browsed one.
+  private func preselectTopic() {
+    if let request = store.topicComposeRequest { topic = request; store.topicComposeRequest = nil }
+    else if topic == nil { topic = browsedTopic }
+  }
   private func resetDraft() {
-    text = ""; media = nil; item = nil; loadingMedia = false; error = nil; quotedPostID = nil
+    text = ""; media = nil; item = nil; loadingMedia = false; error = nil; quotedPostID = nil; topic = nil
     pollEnabled = false; poll = PostPollDraft(); linkEnabled = false; link = ""; tagsEnabled = false; tagsText = ""
   }
-  private func close() { focused = nil; expanded = false; draftCommunity = nil }
+  private func close() {
+    focused = nil; expanded = false; draftCommunity = nil
+    // Without a draft, the next opening starts in whatever topic is browsed then.
+    if !hasDraft { topic = nil }
+  }
   private func send() {
     guard draftOwner == store.compositions.owner, canSend else { return }; AppHaptics.shared.play(.impact); sending = true; focused = nil; error = nil
     Task {
       guard await store.compositions.saveDraft(savedDraft.wrappedValue,key:draftKey,owner:draftOwner), draftOwner == store.compositions.owner else { sending=false;return }
-      let succeeded = await store.createPost(text: text.trimmingCharacters(in: .whitespacesAndNewlines), anonymous: anonymous, community: target, acceptsDM: acceptsDM, media: media, poll: pollEnabled ? poll : nil, linkURL: linkEnabled ? link : nil, tags: tagsEnabled ? tagValues : [], quoting: quotedPostID)
+      let succeeded = await store.createPost(text: text.trimmingCharacters(in: .whitespacesAndNewlines), anonymous: anonymous, community: target, acceptsDM: acceptsDM, media: media, poll: pollEnabled ? poll : nil, linkURL: linkEnabled ? link : nil, tags: tagsEnabled ? tagValues : [], quoting: quotedPostID, topic: chosenTopic)
       guard draftOwner == store.compositions.owner else { return }
       if succeeded {
         AppHaptics.shared.play(.success)
-        resetDraft(); sending = false; close(); onPublished()
+        let posted = chosenTopic
+        resetDraft(); sending = false; close(); onPublishedTopic?(posted); onPublished()
       } else { AppHaptics.shared.play(.error); sending = false; error = store.notice ?? "Your post could not be sent. Your draft is saved here; tap Send to retry." }
     }
   }

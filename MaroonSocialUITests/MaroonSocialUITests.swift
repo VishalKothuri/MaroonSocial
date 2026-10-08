@@ -87,6 +87,8 @@ final class MaroonSocialUITests: XCTestCase {
     XCTAssertFalse(app.buttons["publishPost"].isEnabled)
     post.tap(); post.typeText("Testing our campus conversation")
     XCTAssertEqual(post.value as? String, "Testing our campus conversation")
+    XCTAssertFalse(app.buttons["publishPost"].isEnabled, "On All, a topic is required")
+    app.pickPostTopic()
     XCTAssertTrue(app.buttons["publishPost"].isEnabled)
     shot(app, "Post editor typed text")
     app.buttons["publishPost"].tap()

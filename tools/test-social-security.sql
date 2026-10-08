@@ -4,7 +4,7 @@ do $$
 declare
  ha text:=replace(gen_random_uuid()::text,'-','')||replace(gen_random_uuid()::text,'-','');
  hb text:=replace(gen_random_uuid()::text,'-','')||replace(gen_random_uuid()::text,'-','');
- aid uuid;bid uuid;oid uuid;activity text;room text;orgroom text;mid text;attachment uuid;out jsonb;visible jsonb;
+ aid uuid;bid uuid;oid uuid;activity text;room text;orgroom text;mid text;attachment uuid;out jsonb;visible jsonb;course text;
 begin
  if has_function_privilege('anon','public.social_gateway(text,text,jsonb)','EXECUTE') or has_function_privilege('authenticated','public.social_gateway(text,text,jsonb)','EXECUTE') or has_schema_privilege('anon','social_private','USAGE')or has_schema_privilege('authenticated','social_private','USAGE')then raise exception 'Private member boundary exposed';end if;
  if exists(select 1 from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='social_private'and c.relkind='r'and not c.relrowsecurity)then raise exception 'Private table has no RLS';end if;
@@ -40,8 +40,12 @@ begin
  out:=public.social_gateway('organization.update',ha,jsonb_build_object('organization_id',oid,'about','Denied edit'));if out->>'code'<>'forbidden'then raise exception 'Suspended org profile edit allowed';end if;
  out:=public.social_gateway('room.send',ha,jsonb_build_object('room_id',orgroom,'text','Denied suspended message'));if out->>'code'<>'forbidden'then raise exception 'Suspended org can still message';end if;
  visible:=social_private.snapshot(bid);if exists(select 1 from jsonb_array_elements(visible->'activities')x where x->>'id'=activity)then raise exception 'Suspended org promotion still published';end if;
- out:=public.social_gateway('course.join',ha,'{"code":"TEST 999","title":"Synthetic regression","term":"Test term"}');room:=out->>'resource_id';
- out:=public.social_gateway('course.join',hb,'{"code":"TEST 999","title":"Synthetic regression","term":"Test term"}');
+ -- Course rooms only open for official catalog courses; use one with no room yet this term.
+ select code into course from course_private.catalog c where not exists(select 1 from social_private.rooms where id=c.code||'-Fall 2026')order by code limit 1;
+ if course is null then raise exception 'No unused catalog course for the shared-room fixture';end if;
+ out:=public.social_gateway('course.join',ha,jsonb_build_object('code',course,'term','Fall 2026'));room:=out->>'resource_id';
+ if room is null then raise exception 'Course join failed %',out;end if;
+ out:=public.social_gateway('course.join',hb,jsonb_build_object('code',course,'term','Fall 2026'));if out?'error'then raise exception 'Second course join failed %',out;end if;
  out:=public.social_gateway('room.send',ha,jsonb_build_object('room_id',room,'text','Synthetic image'));mid:=out->>'resource_id';
  insert into social_private.attachments(owner,room,message,kind,mime,size,path,ready)values(aid,room,mid::uuid,'image','image/png',1,'synthetic/'||ha,true)returning id into attachment;
  out:=public.social_gateway('attachment.read',hb,jsonb_build_object('attachment_id',attachment));if out?'error'then raise exception 'Authorized shared-room media rejected';end if;

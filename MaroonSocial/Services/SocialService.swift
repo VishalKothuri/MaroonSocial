@@ -304,23 +304,39 @@ struct SocialServiceError: Error, Decodable, LocalizedError {
     return try await task.value
   }
   /// One keyset page of the selected community, newest first (30 by default, at most 50).
-  func feedPage(community: Community, cursor: SocialPageCursor?, limit: Int = 30) async throws -> SocialFeedPage {
+  /// `topic` narrows the page to one topic; it is sent only when set (a server without topics never sees it).
+  func feedPage(community: Community, cursor: SocialPageCursor?, limit: Int = 30, topic: String? = nil) async throws -> SocialFeedPage {
     var payload: [String: Any] = ["community": community.rawValue, "limit": min(50, max(1, limit))]
     if let cursor { payload.merge(cursor.payload) { _, new in new } }
+    if let topic { payload["topic"] = topic }
     let page = try await queued("feed.page", payload: payload, as: SocialFeedPage.self)
-    guard page.posts.count <= 50 else { throw URLError(.badServerResponse) }
+    guard page.posts.count <= 50, topic == nil || page.posts.allSatisfy({ $0.deleted == true || $0.topic == topic }) else { throw URLError(.badServerResponse) }
     return page
   }
   /// Posts changed after `since` (new ones, or ones in `knownIDs`) and known ids that are gone.
-  func feedDelta(community: Community, since: Double, knownIDs: [String]) async throws -> SocialFeedDelta {
-    try await queued("feed.delta", payload: ["community": community.rawValue, "since": since, "known_ids": Array(knownIDs.prefix(300))], as: SocialFeedDelta.self)
+  /// With a topic, `removed` also lists known posts whose topic no longer matches.
+  func feedDelta(community: Community, since: Double, knownIDs: [String], topic: String? = nil) async throws -> SocialFeedDelta {
+    var payload: [String: Any] = ["community": community.rawValue, "since": since, "known_ids": Array(knownIDs.prefix(300))]
+    if let topic { payload["topic"] = topic }
+    return try await queued("feed.delta", payload: payload, as: SocialFeedDelta.self)
   }
-  /// Current copies of held feed posts (at most 50 per call) and the ids that are gone.
-  func feedPosts(community: Community, ids: [String]) async throws -> SocialFeedPosts {
+  /// Current copies of held feed posts (at most 50 per call) and the ids that are gone (or, with a
+  /// topic, no longer in it).
+  func feedPosts(community: Community, ids: [String], topic: String? = nil) async throws -> SocialFeedPosts {
     let requested = Array(ids.prefix(50))
-    let page = try await queued("feed.posts", payload: ["community": community.rawValue, "ids": requested], as: SocialFeedPosts.self)
+    var payload: [String: Any] = ["community": community.rawValue, "ids": requested]
+    if let topic { payload["topic"] = topic }
+    let page = try await queued("feed.posts", payload: payload, as: SocialFeedPosts.self)
     guard page.posts.count <= requested.count else { throw URLError(.badServerResponse) }
     return page
+  }
+  /// `topics.list`: the active topics in catalog order with their 7-day counts in `community`.
+  /// A server that predates topics answers with an error ("Unknown social action.").
+  func topics(community: Community) async throws -> [Topic] {
+    struct Payload: Decodable { var topics: [Topic] }
+    let result = try await queued("topics.list", payload: ["community": community.rawValue], as: Payload.self)
+    guard result.topics.count <= 64 else { throw URLError(.badServerResponse) }
+    return result.topics
   }
   /// Older replies of one post, returned oldest first.
   func commentsPage(postID: String, cursor: SocialPageCursor?, limit: Int = 50) async throws -> SocialCommentsPage {

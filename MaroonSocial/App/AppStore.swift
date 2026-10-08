@@ -30,6 +30,34 @@ struct LocalState: Codable {
   var roomCursors: [String: Int]? = nil
   /// When each room was last opened (or first seen); drives message eviction.
   var roomOpened: [String: Date]? = nil
+  /// The last catalog `topics.list` returned (active topics, in order). It makes topics available
+  /// at launch while the catalog refreshes; a server that answers without topics clears it.
+  var topicCatalog: [Topic]? = nil
+}
+
+/// One feed the home screen can show: a community, and a topic or nil for All.
+struct FeedKey: Hashable {
+  var community: Community
+  var topic: String?
+}
+/// Per-key feed bookkeeping. The All key keeps today's persisted fields (`feedPostIDs`,
+/// `LocalState.feedCursor`/`feedSince`, `loadingCommunity`); topic keys live in memory only.
+struct FeedKeyState: Equatable {
+  var ids: Set<String> = []
+  /// Keyset position of the next older page; nil once the end is loaded.
+  var cursor: SocialPageCursor? = nil
+  /// Server clock `feed.delta` asks from; nil when the server has no deltas.
+  var since: Double? = nil
+  var loading = false
+  /// The first page failed (shown with a retry while nothing is held).
+  var error: String? = nil
+  /// A first page arrived. Until then the feed shows its loading state, never the empty state.
+  var loaded = false
+  /// The last older page failed; the end row offers "Load more posts".
+  var moreFailed = false
+  /// The feed shows its loading state: a page is on its way, or nothing has been asked yet. A first
+  /// page that failed shows its error and Retry instead (nothing retries it on its own).
+  var showsLoading: Bool { loading || (!loaded && error == nil) }
 }
 
 /// Encodes a set as a sorted array (the same JSON as before). Swift may iterate two equal sets in
@@ -100,6 +128,18 @@ struct LocalState: Codable {
   private(set) var diskWrites = 0
   private(set) var feedCommunity = Community.campus
   private(set) var loadingCommunity = false
+  /// Runtime half of topic availability: true only after `topics.list` succeeded (or while a catalog
+  /// cached from an earlier success refreshes). Fixture mode always has topics.
+  private(set) var topicsLoaded = false
+  /// The active topics in catalog order, with the current community's 7-day counts.
+  private(set) var topics: [Topic] = []
+  /// The topic the home feed shows; nil is All. Never remembered between launches.
+  private(set) var feedTopic: String?
+  /// Topic feeds keyed by community and topic (in memory only).
+  private(set) var topicFeeds: [FeedKey: FeedKeyState] = [:]
+  /// "Post in <topic>" asks the feed's inline composer to open with this topic.
+  var topicComposeRequest: String?
+  private(set) var topicsRetryAt = Date.distantPast
   private(set) var tagPages: [SocialTagQuery: SocialTagPage] = [:]
   private var tagOwners: [UUID: SocialTagQuery] = [:]
   private var libraryOwners: [UUID: SocialLibraryQuery] = [:]
@@ -154,6 +194,11 @@ struct LocalState: Codable {
       feedPostIDs = Set(ids); feedIDsCommunity = feedCommunity
     } else {
       state.feedPostIDs = nil; state.feedCommunity = nil; state.feedCursor = nil; state.feedSince = nil
+    }
+    if fixtureMode {
+      if !arguments.contains(Self.noTopicsArgument) { topics = Self.fixtureTopics; topicsLoaded = true }
+    } else if let cached = state.topicCatalog, !cached.isEmpty {
+      topics = TopicCatalog.active(cached); topicsLoaded = !topics.isEmpty
     }
     if fixtureMode {
       organizations = [OrganizationAccessFixture.managedOrganization, OrganizationAccessFixture.invitingOrganization]
@@ -284,6 +329,15 @@ struct LocalState: Codable {
     orphan.quote = PostQuote(id: "demo-deleted-post", unavailable: true)
     // Appended so tests that read the first seeded post and its reply keep their fixture; the feed sorts by date.
     state.posts.append(contentsOf: [quoted, orphan])
+    // Topics: the seeded posts spread across the launch topics; the missing-quote post keeps none.
+    for (index, topic) in ["aggie_life", "aggie_life", "academics", "housing", "academics"].enumerated() { state.posts[index].topic = topic }
+    // A day old, so they sit below the other seeded posts and past the first page of `--uitesting-feed-pages`.
+    let dayOld = Date.now.addingTimeInterval(-86_400)
+    for (offset, fixture) in Self.fixtureTopicPosts.enumerated() {
+      var post = Post(id: fixture.id, author: fixture.author, text: fixture.text, score: fixture.score, created: dayOld.addingTimeInterval(Double(-offset) * 60), acceptsDM: true)
+      post.topic = fixture.topic
+      state.posts.append(post)
+    }
     state.activities = [
       Activity(
         title: "Coffee, then absolutely no plans", kind: .hangout, host: "demo-espresso",
@@ -312,6 +366,20 @@ struct LocalState: Codable {
         id: "demo-deleted-post-chat", title: "Anonymous conversation", subtitle: "Shared dm conversation",
         messages: [Self.fixtureHiddenGameInvitation, Self.fixtureHiddenGameInvitationReply, Message(author: "Them", text: "Thanks for the study room tip!")], anonymous: true),
     ]
+  }
+  static let fixtureTopicPosts: [(id: String, author: String, text: String, score: Int, topic: String)] = [
+    ("demo-sports-post", "demo-yell", "Midnight Yell this Friday: who's saving seats?", 31, "sports"),
+    ("demo-question-post", "demo-finals", "Is Evans open all night during finals week?", 14, "questions"),
+    ("demo-meme-post", "demo-bus", "Me sprinting for the bus that was never going to wait", 22, "memes"),
+    ("demo-confession-post", "demo-lost", "Third year and I still can't find my way around the Zach building.", 9, "confessions"),
+  ]
+  /// Launch argument for UI journeys that need a server without topics (no strip, pills or topic row).
+  static let noTopicsArgument = "--uitesting-no-topics"
+  /// Fixture `topics.list`: the launch topics with sample 7-day counts. Confessions and Memes fall
+  /// under the fold threshold, so the strip shows a "More" menu.
+  static var fixtureTopics: [Topic] {
+    let counts = ["academics": 12, "aggie_life": 9, "questions": 7, "housing": 6, "sports": 8, "relationships": 5, "confessions": 3, "memes": 2]
+    return TopicCatalog.active(TopicCatalog.fallback).map { var topic = $0; topic.recentCount = counts[topic.slug] ?? 0; return topic }
   }
   /// An older 8 Ball invitation, as the server writes it. 8 Ball is hidden, so the chat
   /// shows a non-tappable "isn’t available" row for it (HiddenFeaturesUITests).
@@ -495,6 +563,10 @@ extension AppStore {
     guard community != feedCommunity else { return }
     feedCommunity = community; social.feedCommunity = community
     guard !fixtureMode else { return }
+    // The topic stays selected across communities; its counts and the new key load beside the snapshot.
+    if topicsAvailable {
+      Task { await refreshTopics(); if let topic = feedTopic, feedCommunity == community { await loadTopicFeed(FeedKey(community: community, topic: topic)) } }
+    }
     loadingCommunity = true
     defer { if feedCommunity == community { loadingCommunity = false } }
     // Wait for any old feed request, then fetch after the selection changed. A mutation in
@@ -571,6 +643,7 @@ extension AppStore {
       await PushService.shared.configure(social: social)
     }
     await courseTerms.refresh()
+    if connected { await refreshTopics() }
     // Pokes for the inbox and open rooms while the app is active; inert in fixture mode. Until the
     // member channel joins (or after 10 s without a socket) open rooms keep their 3 s polling.
     let pokes = Task { await realtime.run() }
@@ -587,6 +660,7 @@ extension AppStore {
       if snapshotRequested || !incrementalSync || feedIDsCommunity != feedCommunity || Date.now.timeIntervalSince(lastSnapshot) >= Self.reconciliationInterval { await refresh() }
       else if tab == 0 { await syncFeedDelta() }
       if connected && connectionError == nil { await flushOutbox() }
+      if connected && Date.now >= topicsRetryAt { await refreshTopics() }
       courseTerms.advanceClock()
       if Date.now.timeIntervalSince(calendarRefresh) >= 300 { await courseTerms.refresh(); calendarRefresh = .now }
     }
@@ -594,7 +668,10 @@ extension AppStore {
   static let reconciliationInterval: TimeInterval = 60
   /// The server answered the last snapshot with a delta clock, so deltas and pages exist.
   var incrementalSync: Bool { state.feedSince != nil }
-  var feedHasMore: Bool { feedPostIDs != nil && state.feedCursor != nil }
+  var feedHasMore: Bool {
+    if let key = topicFeedKey { return !fixtureMode && topicFeeds[key]?.cursor != nil }
+    return feedPostIDs != nil && state.feedCursor != nil
+  }
   func apply(_ response: SocialResponse) {
     guard let snapshot = response.snapshot else { return }
     state.username = snapshot.username
@@ -627,6 +704,9 @@ extension AppStore {
       // A server without incremental reads sends no clock: no deltas and no paging.
       if snapshot.serverNow == nil { state.feedSince = nil; state.feedCursor = nil }
       feedPostIDs = Set(feed.map(\.id)); feedIDsCommunity = feedCommunity; feedNeedsReset = false
+      // The page's current copies also place retagged posts in the loaded topic tabs (the topic
+      // deltas, which run while a topic is shown, never carry an older post retagged in).
+      placeInTopicFeeds(snapshot.posts)
     }
     let activeQueries = Set(tagOwners.values)
     tagPages = tagPages.filter { activeQueries.contains($0.key) }
@@ -701,6 +781,12 @@ extension AppStore {
         if let index = result.firstIndex(where: { $0.id == post.id }) { if !Self.isOlder(post, than: result[index]) { result[index] = post } }
         else { result.append(post) }
       }
+    }
+    // Topic feeds keep their posts in the canonical list (in memory; only All is persisted).
+    let topicIDs = topicFeeds.values.reduce(into: Set<String>()) { $0.formUnion($1.ids) }
+    if !topicIDs.isEmpty {
+      let present = Set(result.map(\.id))
+      result.append(contentsOf: state.posts.filter { topicIDs.contains($0.id) && !present.contains($0.id) })
     }
     return result
   }
@@ -836,7 +922,14 @@ extension AppStore {
       connectionError = nil
       connected = true
       return response
-    } catch { if compositions.owner == owner { notice = error.localizedDescription }; return nil }
+    } catch {
+      guard compositions.owner == owner else { return nil }
+      notice = error.localizedDescription
+      // A topic refused on a write ("Choose an available topic.": disabled since the catalog was
+      // read) refreshes the catalog, so its chip goes away and the composer asks for a new pick.
+      if payload["topic"] is String, (error as? SocialServiceError)?.code == "invalid" { await refreshTopics() }
+      return nil
+    }
   }
   @discardableResult func mutate(_ action: String, _ payload: [String: Any] = [:]) async -> Bool {
     guard await perform(action, payload) != nil else { return false }
@@ -851,6 +944,7 @@ extension AppStore {
   /// and join the feed; removed ids leave every cache. A truncated delta, or one asking this
   /// member to resync, refetches the held pages instead of collapsing the feed.
   func syncFeedDelta() async {
+    if let key = topicFeedKey { await syncTopicFeedDelta(key); return }
     guard !fixtureMode, connected, state.onboarded, !feedDeltaRunning, let since = state.feedSince, feedPostIDs != nil else { return }
     // A feed still showing another community waits for that community's snapshot: a delta would
     // ask for the new community with the old feed's ids and report every one of them removed.
@@ -902,6 +996,7 @@ extension AppStore {
       if !page.posts.isEmpty && held.isDisjoint(with: page.posts.map(\.id)) {
         let feed = page.posts
         feedPostIDs = Set(feed.map(\.id)); state.feedCursor = page.next; feedGeneration += 1
+        placeInTopicFeeds(feed)
         state.posts = mergeActivePostSources(feed: Self.mergePosts(state.posts.filter { feedPostIDs?.contains($0.id) == true }, with: feed))
         save()
       } else {
@@ -919,13 +1014,34 @@ extension AppStore {
     if !removed.isEmpty {
       for key in tagPages.keys { tagPages[key]?.posts.removeAll { removed.contains($0.id) } }
       for key in libraryPages.keys { libraryPages[key]?.posts.removeAll { removed.contains($0.id) } }
+      // Gone from All (deleted, hidden, blocked or moved): gone from every topic of the community too.
+      for key in topicFeeds.keys where key.community == feedCommunity { topicFeeds[key]?.ids.subtract(removed) }
     }
+    placeInTopicFeeds(delta.changed.filter { !removed.contains($0.id) })
     state.posts = mergeActivePostSources(feed: feed)
     if advanceClock { state.feedSince = delta.now }
     save()
   }
+  /// Current copies from All join the loaded tab of their topic and leave the community's other
+  /// topic tabs. Topic deltas carry only held or newer posts, so an older post retagged into a
+  /// topic (an author's `post.topic`, an operator's `topic.set`) reaches that tab this way. A
+  /// deleted post, or one whose topic was cleared, leaves every topic tab.
+  func placeInTopicFeeds(_ posts: [Post]) {
+    guard !topicFeeds.isEmpty else { return }
+    for post in posts {
+      let topic = post.deleted == true ? nil : post.topic
+      for key in topicFeeds.keys where key.community == post.community {
+        if key.topic != nil, key.topic == topic {
+          if topicFeeds[key]?.loaded == true { topicFeeds[key]?.ids.insert(post.id) }
+        } else {
+          topicFeeds[key]?.ids.remove(post.id)
+        }
+      }
+    }
+  }
   /// Scroll end: the next keyset page of the selected community.
   func loadMoreFeed() async {
+    if let key = topicFeedKey { await loadMoreTopicFeed(key); return }
     guard !loadingMoreFeed, let cursor = state.feedCursor, let ids = feedPostIDs else { return }
     let owner = compositions.owner, community = feedCommunity
     loadingMoreFeed = true; feedLoadFailed = false
@@ -962,10 +1078,10 @@ extension AppStore {
     fillingFeed = true
     defer { fillingFeed = false }
     for _ in 0..<10 {
-      let before = feedPostIDs?.count ?? 0
+      let before = currentFeedCount
       guard feedHasMore, before < Self.hotWindow, !Task.isCancelled else { return }
       await loadMoreFeed()
-      guard !feedLoadFailed, (feedPostIDs?.count ?? 0) > before else { return }
+      guard !currentFeedLoadFailed, currentFeedCount > before else { return }
     }
   }
   /// Fixture pages come from `state`: posts of the feed's community older than the cursor.
@@ -1221,13 +1337,17 @@ extension AppStore {
     pokeQueue = []; snapshotRequested = false; typingSent = [:]; typingSeen = [:]; realtime.restart()
     loadingEarlierMessages = []; roomHistoryComplete = []; feedGeneration += 1
     feedCommunity = .campus; social.feedCommunity = .campus; loadingCommunity = false
+    feedTopic = nil; topicFeeds = [:]; topicComposeRequest = nil; topicsRetryAt = .distantPast
+    if !fixtureMode { topics = []; topicsLoaded = false }
     pendingPost = nil; pendingComments = [:]; pendingUploads = [:]
     save()
   }
   func owns(_ post: Post) -> Bool { fixtureMode ? post.author == state.username : ownPostIDs.contains(post.id) }
   func isMine(_ message: Message) -> Bool { fixtureMode ? message.author == state.username : ownMessageIDs.contains(message.id) }
-  func createPost(text: String, anonymous: Bool, community: Community, acceptsDM: Bool, media: MediaAttachment? = nil, poll: PostPollDraft? = nil, linkURL: String? = nil, tags: [String] = [], quoting: String? = nil) async -> Bool {
+  func createPost(text: String, anonymous: Bool, community: Community, acceptsDM: Bool, media: MediaAttachment? = nil, poll: PostPollDraft? = nil, linkURL: String? = nil, tags: [String] = [], quoting: String? = nil, topic requestedTopic: String? = nil) async -> Bool {
     guard !creatingPost else { return false }
+    // A server without topics never receives one.
+    let topic = topicsAvailable ? requestedTopic : nil
     let features: ValidatedPostFeatures
     do { features = try PostFeatureRules.validate(text: text, poll: poll, linkURL: linkURL, tags: tags, hasQuote: quoting != nil) }
     catch { notice = error.localizedDescription; return false }
@@ -1237,7 +1357,7 @@ extension AppStore {
     if fixtureMode {
       var post = Post(author: state.username, anonymous: anonymous, community: community, text: features.text, acceptsDM: acceptsDM)
       post.setVote(1)  // Your own post starts with your upvote, like the server's.
-      post.media = media; post.linkURL = features.linkURL; post.tags = features.tags.isEmpty ? nil : features.tags
+      post.media = media; post.linkURL = features.linkURL; post.tags = features.tags.isEmpty ? nil : features.tags; post.topic = topic
       if let draft = features.poll {
         post.poll = PostPoll(question: draft.question, options: draft.options.map { PostPollOption(text: $0) }, endsAt: .now.addingTimeInterval(Double(draft.durationHours) * 3600))
       }
@@ -1255,6 +1375,7 @@ extension AppStore {
     var payload: [String: Any] = ["text": features.text, "anonymous": anonymous, "community": community.rawValue, "acceptsDM": acceptsDM, "tags": features.tags]
     if let link = features.linkURL { payload["link_url"] = link }
     if let quoting { payload["quoted_post_id"] = quoting }
+    if let topic { payload["topic"] = topic }
     if let draft = features.poll { payload["poll"] = ["question": draft.question, "options": draft.options, "duration_hours": draft.durationHours] }
     // Stable structured encoding prevents a changed poll/link/tag draft from reusing
     // the previous post's idempotency nonce, including after an upload retry.
@@ -1293,6 +1414,8 @@ extension AppStore {
     }
     guard compositions.owner == owner else { return false }
     if let reference = media?.klipy { Task { await KlipyService().share(reference) } }
+    // The new post joins its topic's feed now; the next topic delta confirms it.
+    if let topic, let id = pendingPost?.id, state.posts.contains(where: { $0.id == id }) { topicFeeds[FeedKey(community: community, topic: topic)]?.ids.insert(id) }
     pendingPost = nil
     await compositions.removeDraft("pending-post", owner: owner)
     return true
@@ -1550,5 +1673,184 @@ extension AppStore {
   /// Queued pokes for `room` that only ask for a read of it; a read starting now answers them.
   private func dropQueuedRoomPokes(_ room: String) {
     pokeQueue.removeAll { $0.room == room && ($0.kind == .change || $0.kind == .typing || $0.kind == .resync) }
+  }
+}
+
+// MARK: Topic feeds
+extension AppStore {
+  /// Compile-time switch and a successful `topics.list`. Without both, the feed, composer and cards
+  /// look and behave as before topics: no strip, no topic row, no required topic, no pills.
+  var topicsAvailable: Bool { FeatureAvailability.topicsEnabled && topicsLoaded }
+  /// The key the home feed shows.
+  var currentFeedKey: FeedKey { FeedKey(community: feedCommunity, topic: topicsAvailable ? feedTopic : nil) }
+  /// The selected topic's key, or nil while the home feed shows All.
+  var topicFeedKey: FeedKey? { currentFeedKey.topic == nil ? nil : currentFeedKey }
+  /// Ids that belong to a key; nil means every held post (fixture mode, or a feed before its first page).
+  func feedIDs(for key: FeedKey) -> Set<String>? {
+    guard key.topic != nil else { return feedPostIDs }
+    return fixtureMode ? nil : topicFeeds[key]?.ids ?? []
+  }
+  /// One view of every key. All reports today's fields; a topic key that never loaded is not loaded.
+  func feedState(for key: FeedKey) -> FeedKeyState {
+    guard key.topic != nil else {
+      let current = key.community == feedCommunity
+      return FeedKeyState(ids: current ? feedPostIDs ?? [] : [], cursor: current ? state.feedCursor : nil, since: current ? state.feedSince : nil,
+        loading: current && loadingCommunity, loaded: current && !loadingCommunity, moreFailed: current && feedLoadFailed)
+    }
+    if fixtureMode { return FeedKeyState(loaded: true) }
+    return topicFeeds[key] ?? FeedKeyState()
+  }
+  var currentFeedLoadFailed: Bool { topicFeedKey.map { topicFeeds[$0]?.moreFailed ?? false } ?? feedLoadFailed }
+  var currentFeedCursor: SocialPageCursor? { topicFeedKey.map { topicFeeds[$0]?.cursor } ?? state.feedCursor }
+  private var currentFeedCount: Int { topicFeedKey.map { topicFeeds[$0]?.ids.count ?? 0 } ?? feedPostIDs?.count ?? 0 }
+  /// How the app draws a slug (the server's row, else the bundled colours and emoji).
+  func topicDisplay(_ slug: String) -> Topic { TopicCatalog.display(slug, in: topics) }
+
+  /// Selects the home feed's topic (nil is All). A first visit loads the key's first page; returning
+  /// to All asks All for what changed meanwhile. Unknown or inactive slugs select All.
+  @discardableResult func selectTopic(_ slug: String?) -> Task<Void, Never>? {
+    let next = topicsAvailable ? slug.flatMap { value in topics.contains { $0.slug == value } ? value : nil } : nil
+    guard next != feedTopic else { return nil }
+    feedTopic = next
+    if let next {
+      let key = FeedKey(community: feedCommunity, topic: next)
+      return Task { _ = await loadTopicFeed(key) }
+    }
+    return Task { await syncFeedDelta() }
+  }
+  /// `topics.list` for the current community. Success makes topics available and resets a selected
+  /// topic the catalog no longer lists (catalog drift). An answer that the action is unknown (a server
+  /// without topics) turns topics off; a network failure keeps the cached catalog.
+  func refreshTopics() async {
+    guard FeatureAvailability.topicsEnabled, !fixtureMode, state.onboarded else { return }
+    let owner = compositions.owner, community = feedCommunity
+    topicsRetryAt = .now.addingTimeInterval(Self.topicsRefreshInterval)
+    do {
+      let list = try await social.topics(community: community)
+      guard compositions.owner == owner else { return }
+      // The community changed meanwhile: these counts are for the old one, so ask again soon
+      // instead of waiting out the refresh interval (topics would stay off on a first launch).
+      guard feedCommunity == community else { topicsRetryAt = .distantPast; return }
+      applyTopicCatalog(list)
+    } catch {
+      guard compositions.owner == owner, !(error is CancellationError) else { return }
+      if let code = (error as? SocialServiceError)?.code, ["invalid", "not_found"].contains(code) { disableTopics() }
+      else { topicsRetryAt = .now.addingTimeInterval(Self.topicsRetryInterval) }
+    }
+  }
+  static let topicsRefreshInterval: TimeInterval = 300
+  static let topicsRetryInterval: TimeInterval = 60
+  func applyTopicCatalog(_ list: [Topic]) {
+    let active = TopicCatalog.active(list)
+    // A catalog with every topic switched off is a server without topics: nothing to pick, so
+    // nothing may be required.
+    guard !active.isEmpty else { disableTopics(); return }
+    let slugs = Set(active.map(\.slug))
+    topics = active; topicsLoaded = true; state.topicCatalog = active
+    if let selected = feedTopic, !slugs.contains(selected) { feedTopic = nil }
+    // A topic the server dropped takes its cached feed with it.
+    topicFeeds = topicFeeds.filter { key, _ in key.topic.map(slugs.contains) ?? true }
+    save()
+  }
+  private func disableTopics() {
+    topics = []; topicsLoaded = false; state.topicCatalog = nil
+    feedTopic = nil; topicFeeds = [:]
+    save()
+  }
+  /// The first page of a topic feed. `reset` reloads a key that already loaded (pull to refresh, resync).
+  /// Returns true only when this call read the first page.
+  @discardableResult func loadTopicFeed(_ key: FeedKey, reset: Bool = false) async -> Bool {
+    guard topicsAvailable, let topic = key.topic else { return false }
+    if fixtureMode { return false }
+    var entry = topicFeeds[key] ?? FeedKeyState()
+    guard !entry.loading, reset || !entry.loaded || entry.error != nil else { return false }
+    entry.loading = true; entry.error = nil; topicFeeds[key] = entry
+    let owner = compositions.owner
+    // Deltas start from the clock read before the page, so nothing between the two is missed.
+    let clock = snapshotClock ?? state.feedSince
+    do {
+      let page = try await social.feedPage(community: key.community, cursor: nil, topic: topic)
+      guard compositions.owner == owner, topicFeeds[key] != nil else { return false }
+      state.posts = Self.mergePosts(state.posts, with: page.posts)
+      topicFeeds[key] = FeedKeyState(ids: Set(page.posts.map(\.id)), cursor: page.next, since: clock, loaded: true)
+      save()
+      return true
+    } catch {
+      guard compositions.owner == owner, topicFeeds[key] != nil else { return false }
+      topicFeeds[key]?.loading = false
+      if error is CancellationError || (error as? URLError)?.code == .cancelled { return false }
+      // "Choose an available topic.": the catalog drifted; the refresh resets to All.
+      if (error as? SocialServiceError)?.code == "invalid" { await refreshTopics() }
+      topicFeeds[key]?.error = error.localizedDescription
+      return false
+    }
+  }
+  /// The next page of any key (a pushed topic feed pages its own key).
+  func loadMoreFeed(for key: FeedKey) async {
+    if key.topic == nil { await loadMoreFeed() } else { await loadMoreTopicFeed(key) }
+  }
+  /// Scroll end inside a topic: its next keyset page.
+  private func loadMoreTopicFeed(_ key: FeedKey) async {
+    guard topicsAvailable, !fixtureMode, !loadingMoreFeed, let topic = key.topic, let entry = topicFeeds[key], entry.loaded, let cursor = entry.cursor else { return }
+    let owner = compositions.owner
+    loadingMoreFeed = true; topicFeeds[key]?.moreFailed = false
+    defer { if compositions.owner == owner { loadingMoreFeed = false } }
+    do {
+      let page = try await social.feedPage(community: key.community, cursor: cursor, topic: topic)
+      guard compositions.owner == owner, topicFeeds[key]?.cursor == cursor else { return }
+      state.posts = Self.mergePosts(state.posts, with: page.posts)
+      topicFeeds[key]?.ids.formUnion(page.posts.map(\.id)); topicFeeds[key]?.cursor = page.next
+      save()
+    } catch {
+      guard compositions.owner == owner, topicFeeds[key] != nil else { return }
+      if error is CancellationError || (error as? URLError)?.code == .cancelled { return }
+      if (error as? SocialServiceError)?.code == "invalid" { topicFeeds[key]?.cursor = nil } else { topicFeeds[key]?.moreFailed = true }
+    }
+  }
+  /// `feed.delta` for a topic: changed posts join or update it, and `removed` (gone, or retagged
+  /// away) leaves only this topic. A truncated or resync answer reloads the topic's first page.
+  private func syncTopicFeedDelta(_ key: FeedKey) async {
+    guard topicsAvailable, !fixtureMode, connected, state.onboarded, !feedDeltaRunning, let topic = key.topic,
+      let entry = topicFeeds[key], entry.loaded, !entry.loading, let since = entry.since else { return }
+    let owner = compositions.owner
+    feedDeltaRunning = true
+    defer { if compositions.owner == owner { feedDeltaRunning = false } }
+    do {
+      let held = state.posts.filter { entry.ids.contains($0.id) }.sorted { $0.created > $1.created }.prefix(300).map(\.id)
+      let delta = try await social.feedDelta(community: key.community, since: since, knownIDs: held, topic: topic)
+      guard compositions.owner == owner, topicFeeds[key]?.since == since else { return }
+      if delta.truncated == true || delta.resync == true {
+        // `removed` is complete; `changed` may not be, so the clock moves only once the first page
+        // has been read again. A failed reload keeps it, and the next delta asks again.
+        applyTopicFeedDelta(key, SocialFeedDelta(changed: [], removed: delta.removed, now: delta.now), advanceClock: false)
+        feedDeltaRunning = false
+        if await loadTopicFeed(key, reset: true) { topicFeeds[key]?.since = delta.now }
+        return
+      }
+      applyTopicFeedDelta(key, delta)
+    } catch {
+      guard compositions.owner == owner else { return }
+      if (error as? SocialServiceError)?.code == "invalid" { topicFeeds[key]?.since = nil; await refreshTopics() }
+    }
+  }
+  func applyTopicFeedDelta(_ key: FeedKey, _ delta: SocialFeedDelta, advanceClock: Bool = true) {
+    guard var entry = topicFeeds[key] else { return }
+    let removed = Set(delta.removed)
+    let changed = delta.changed.filter { !removed.contains($0.id) }
+    entry.ids.subtract(removed)
+    for post in changed where post.community == key.community {
+      if post.deleted == true || post.topic == key.topic { entry.ids.insert(post.id) } else { entry.ids.remove(post.id) }
+    }
+    if advanceClock { entry.since = delta.now }
+    topicFeeds[key] = entry
+    state.posts = Self.mergePosts(state.posts, with: changed)
+    save()
+  }
+  /// Pull to refresh: the snapshot, the catalog and the selected topic's first page.
+  func refreshFeed() async {
+    await refreshAndWait()
+    guard !fixtureMode else { return }
+    if topicsLoaded || Date.now >= topicsRetryAt { await refreshTopics() }
+    if let key = topicFeedKey { await loadTopicFeed(key, reset: true) }
   }
 }

@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""Incremental sync against the deployed edge function with four synthetic accounts.
+"""Incremental sync against the deployed edge function with five synthetic accounts.
 Proves keyset pages under inserts, deltas for votes/replies/deletes, that renames, blocks and
 bookmarks move nothing a third party could use to link anonymous posts, per-member resync,
 feed.posts, removals for hidden and blocked posts, room.messages after_seq with changes to held
 messages, input ranges, account deletion, anonymity and clamped limits.
+Members may create 5 posts per 15 minutes, so the fixture posts are spread over a and e; a keeps
+the posts it deletes, renames over and is deleted with (posts[2], posts[6], named_a).
 Credentials stay in memory and every account is deleted in `finally`.
 """
 import json, pathlib, time, urllib.request, urllib.error, uuid
-config=json.loads(pathlib.Path('MaroonSocial/Resources/Backend.json').read_text())
+import runner_backend
+config=runner_backend.load()
 tokens={}; label='fs'+uuid.uuid4().hex[:9]; community='Graduates'
 def call(action,token=None,**payload):
     headers={'Content-Type':'application/json','apikey':config['publishableKey']}
@@ -25,9 +28,11 @@ def clock(token):
     """A fresh delta clock: everything before it is older than the five-second overlap."""
     return ok('feed.delta',token,community=community,since=0,known_ids=[])['now']
 try:
-    for name in 'abcd':tokens[name]=ok('register',username=label+name,adult=True)['token']
-    a,b,c,d=tokens['a'],tokens['b'],tokens['c'],tokens['d']
-    posts=[ok('post.create',a,text=f'Synthetic feed sync {n}',anonymous=True,community=community,acceptsDM=True)['resource_id'] for n in range(7)]
+    for name in 'abcde':tokens[name]=ok('register',username=label+name,adult=True)['token']
+    a,b,c,d,e=tokens['a'],tokens['b'],tokens['c'],tokens['d'],tokens['e']
+    # a: posts 0, 2, 5, 6 and named_a (5 posts, the 15-minute limit); e: posts 1, 3, 4.
+    authors=[a,e,a,e,e,a,a]
+    posts=[ok('post.create',authors[n],text=f'Synthetic feed sync {n}',anonymous=True,community=community,acceptsDM=True)['resource_id'] for n in range(7)]
     named_a=ok('post.create',a,text='Named post before a rename',anonymous=False,community=community)['resource_id']
     c_named=ok('post.create',c,text='Named post from a soon-blocked member',anonymous=False,community=community)['resource_id']
     c_anon=ok('post.create',c,text='Anonymous post from a soon-blocked member',anonymous=True,community=community)['resource_id']

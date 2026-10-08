@@ -6,12 +6,13 @@ Credentials stay in memory. Both accounts are deleted in `finally`; the post is
 soft-deleted by the author during the run and tombstoned again by account deletion.
 """
 import json
+import runner_backend
 import pathlib
 import urllib.error
 import urllib.request
 import uuid
 
-CONFIG = json.loads(pathlib.Path('MaroonSocial/Resources/Backend.json').read_text())
+CONFIG = runner_backend.load()
 tokens = []
 label = 'sp' + uuid.uuid4().hex[:9]
 

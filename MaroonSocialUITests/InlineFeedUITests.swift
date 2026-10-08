@@ -40,6 +40,7 @@ import XCTest
     XCTAssertTrue(app.alerts["Discard this post draft?"].waitForExistence(timeout: 3))
     app.alerts.buttons["Keep editing"].tap()
     XCTAssertEqual(editor.value as? String, "Inline post draft stays here")
+    app.pickPostTopic()
     app.buttons["publishPost"].tap()
     XCTAssertTrue(app.buttons["Inline post draft stays here"].waitForExistence(timeout: 5))
     XCTAssertTrue(app.buttons["Create post"].exists)
@@ -56,6 +57,7 @@ import XCTest
     app.buttons["Create post"].tap()
     let editor = app.textViews["postText"]; XCTAssertTrue(editor.waitForExistence(timeout: 3))
     editor.tap(); editor.typeText(String(repeating: "A longer campus conversation makes this feed scrollable. ", count: 12))
+    app.pickPostTopic()
     app.buttons["publishPost"].tap()
     XCTAssertTrue(app.buttons["Create post"].waitForExistence(timeout: 3))
     let feed = app.scrollViews["communityFeed"]

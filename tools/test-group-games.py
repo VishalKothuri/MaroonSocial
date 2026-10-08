@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Three independent clients prove named group-game binding and observer boundaries."""
 import json,pathlib,time,urllib.request,urllib.error,uuid,os
-config=json.loads(pathlib.Path('MaroonSocial/Resources/Backend.json').read_text());tokens=[];room=None
+import runner_backend
+config=runner_backend.load();tokens=[];room=None
 def call(endpoint,action,token=None,**payload):
  headers={'Content-Type':'application/json','apikey':config['publishableKey']}
  if token:headers['X-Social-Token']=token
@@ -24,7 +25,7 @@ try:
   joined=ok('communities','join_code',token,invite_code=code,alias=['Comet','Orbit'][index],member_avatar='sky');keys.append(next(x['member_key']for x in joined['members']if x['is_me']))
  assert call('games','invite',a,room=room,kind='chess',nonce=str(uuid.uuid4()))[0]==400
  nonce=str(uuid.uuid4());payload=dict(room=room,kind='chess',nonce=nonce,opponent_member_key=keys[0])
- game=ok('games','invite',a,**payload)['game'];assert game['status']=='pending'and game['rules']=='maroon-games-2.1.0'
+ game=ok('games','invite',a,**payload)['game'];assert game['status']=='pending'and game['rules']=='maroon-games-2.2.0'
  assert ok('games','invite',a,**payload)['game']['id']==game['id']
  changed=dict(payload);changed['opponent_member_key']=keys[1];assert call('games','invite',a,**changed)[0]==400
  card=ok('games','card',c,id=game['id'])['invitation'];assert card['status']=='pending'and card['canOpen']is False and 'state'not in card and 'replay'not in card

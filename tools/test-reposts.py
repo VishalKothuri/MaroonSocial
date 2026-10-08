@@ -3,7 +3,8 @@
 Credentials stay in memory; only generated post IDs are retained for fixture cleanup.
 """
 import json, pathlib, urllib.request, urllib.error, uuid, os
-config=json.loads(pathlib.Path('MaroonSocial/Resources/Backend.json').read_text())
+import runner_backend
+config=runner_backend.load()
 tokens=[]; resources={'posts':[]}; label='rp'+uuid.uuid4().hex[:9]
 def call(action,token=None,**payload):
     headers={'Content-Type':'application/json','apikey':config['publishableKey']}

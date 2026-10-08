@@ -3,7 +3,8 @@
 Never alters a real organization or account; both accounts deleted in finally.
 """
 import base64,json,pathlib,sys,time,urllib.request,urllib.error,uuid
-config=json.loads(pathlib.Path('MaroonSocial/Resources/Backend.json').read_text());fixture=pathlib.Path(sys.argv[1]);data=json.loads(fixture.read_text());people=data['people'];org=data['organization'];ids=[]
+import runner_backend
+config=runner_backend.load();fixture=pathlib.Path(sys.argv[1]);data=json.loads(fixture.read_text());people=data['people'];org=data['organization'];ids=[]
 def call(endpoint,action,token,**payload):
  request=urllib.request.Request(config['url']+'/functions/v1/'+endpoint,data=json.dumps(dict(action=action,**payload)).encode(),headers={'Content-Type':'application/json','apikey':config['publishableKey'],'X-Social-Token':token})
  try:
@@ -35,7 +36,7 @@ try:
  ok('activity-plans','poster.remove',a,activity_id=event);assert not ok('activity-plans','poster.read',b,activity_id=event)['has_poster']
  print('PASS verified admin publication, nonadmin denial, same promotion on retry, real sanitized JPEG poster read/removal, organization byline hides admin usernames')
 finally:
- pathlib.Path('build/synthetic-media/plan-receipts.json').write_text(json.dumps({'activities':ids,'organization':org}))
+ runner_backend.receipt('build/synthetic-media/plan-receipts.json').write_text(json.dumps({'activities':ids,'organization':org}))
  for person in people:
   status,result=call('social','account.delete',person['token']);assert status==200,result
  fixture.unlink(missing_ok=True)

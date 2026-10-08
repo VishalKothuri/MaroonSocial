@@ -5,7 +5,8 @@ the other account, checks ownership and reporting rules, and deletes both
 accounts in finally. Never prints keys or credentials.
 """
 import base64,json,pathlib,struct,urllib.request,urllib.error,uuid,zlib
-config=json.loads(pathlib.Path('MaroonSocial/Resources/Backend.json').read_text())
+import runner_backend
+config=runner_backend.load()
 
 def png(width=24,height=16,rgb=(80,0,0)):
  raw=b''.join(b'\x00'+bytes(rgb)*width for _ in range(height))

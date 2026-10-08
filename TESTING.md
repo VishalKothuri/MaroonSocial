@@ -273,6 +273,7 @@ python3 tools/test-course-catalog.py
 python3 tools/test-comment-votes.py
 python3 tools/test-reposts.py
 python3 tools/test-feed-sync.py
+python3 tools/test-topics.py   # skips cleanly until the topic migrations and the social function are deployed
 python3 tools/test-communities.py
 python3 tools/test-group-identities.py
 python3 tools/test-group-games.py
@@ -288,6 +289,27 @@ Run the SQL security scripts through an authorized database connector; their syn
 Keep simulator code signing enabled. Normal ad-hoc signing supports Keychain; an unsigned simulator binary can fail secure credential storage. Do not add service-role keys, SMTP credentials or TURN secrets to the public `Backend.json`.
 
 UI tests use `preview-state-ui-tests.json`, separate from the user’s local state. `--uitesting` resets only fixtures; `--uitesting-preserve` verifies a fixture relaunch. Native AppStore tests use temporary directories. Live scripts close sessions/delete synthetic accounts in cleanup where supported; some tombstoned content or reports can remain under normal retention. Use their exact fixture receipts for scoped operator cleanup, not broad deletes. SQL rollback suites leave no committed fixtures.
+
+## SQL suites on the local Supabase stack
+
+Every `tools/test-*.sql` suite is self-contained: it creates its own synthetic members and rows inside `begin … rollback` and needs no live data. Run them against a local database built from the migration files while developing (the Supabase MCP `execute_sql` tool declines them because they write). The suites change nothing outside their transaction, so the owner may also run the ones `SETUP-KEYS.md` lists once against the live database after applying a migration. One exception: `tools/test-topics-plan.sql` checks query plans and needs `ANALYZE`, whose page and row estimates are written outside the transaction and survive the rollback (the file re-analyzes after it). Run it only on a local stack, never against the live project:
+
+```sh
+supabase start                                   # local stack (Docker)
+supabase db reset --local --no-seed              # rebuild from supabase/migrations, in filename order
+for f in tools/test-*.sql; do
+  if docker exec -i supabase_db_MaroonSocial psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q < "$f" >/dev/null 2>&1
+  then echo "OK   $f"; else echo "FAIL $f"; fi
+done
+```
+
+A suite prints `PASS …` notices as it goes and stops at the first failed assertion with a non-zero exit. To check a file against the live state first, rebuild only up to the live history (`supabase db reset --local --version 20261005135428 --no-seed`) and apply the new file with `psql`.
+
+October 6, 2026 (local stack, all migrations through `20261006220000`): all 39 suites pass, twice in a row. That includes the new `tools/test-topics-security.sql`. It covers: privileges; the catalog seed; unknown, inactive and adult-only topics refused; nonce conflicts on the topic; 80 Sports posts paging in 3 pages with no duplicates; deleting a post or an account clears its stored topic (topic pages and topic deltas no longer return it); a nonce retry still returns a post whose topic was disabled after it was created; `post.topic` rules; deltas and resyncs reporting retagged-away posts; `topics.list` counts that exclude hidden, blocked, deleted, old, other-community and unjoined adult posts; the 5-per-15-minutes limit; audited operator commands; whole-word filtering in posts, polls, tags and replies; and the backfill rule. `tools/test-topics-plan.sql` (local only) checks that the topic page uses `posts_topic_feed` and that a page with neither community nor topic runs only the All branch (the topic branches are skipped by one-time filters instead of scanning posts). It prepares `feed_page`'s own statement with a forced generic plan on 3,000 analyzed rows, and uses no planner overrides.
+
+October 7, 2026 (local stack rebuilt from the migration files after the review fixes): all 40 suites pass, including the new local-only `tools/test-topics-plan.sql`; `tools/test-topics.py`, `tools/test-feed-sync.py` and `tools/test-reposts.py` pass against the local `social` function.
+
+Live runners on the local stack: every `tools/test-*.py` runner loads its target through `tools/runner_backend.py`. With no environment it uses the app's backend (`MaroonSocial/Resources/Backend.json`, the live project), as before. `MAROON_API_URL` (a base URL serving `/functions/v1/<name>`, plus `/auth/v1` and `/rest/v1` for the runners that use them) and `MAROON_API_KEY` (its publishable/anon key) override it; set both or neither, or the runner exits before any request. Each runner prints `Target backend: <host> (from …)` to stderr before it creates anything, so check that line. With an override, receipts that runners normally write under `build/` go to `$TMPDIR/maroon-override-<name>` instead, so a local run never replaces a live run's cleanup receipt. `supabase functions serve` currently fails to boot its runtime ("failed to determine entrypoint") on this machine, so serve functions with deno instead: `SUPABASE_URL=http://127.0.0.1:54321 SUPABASE_SERVICE_ROLE_KEY=<local service-role key> DENO_SERVE_ADDRESS=tcp:127.0.0.1:<port> deno run --allow-net --allow-env --allow-read supabase/functions/<name>/index.ts`, one port per function. A runner that calls only `social` can use that server directly as `MAROON_API_URL`; runners that call several functions or `/auth/v1` need a small local proxy that sends `/functions/v1/<name>` to that function's port and everything else to `http://127.0.0.1:54321`. Example: `MAROON_API_URL=http://127.0.0.1:8000 MAROON_API_KEY=<local anon key> python3 tools/test-topics.py`. `tools/test-topics.py` prints `SKIP …` and exits 0 against a server without topics. Members may create 5 posts per 15 minutes (`20261006220000`), so runners spread their fixture posts across synthetic accounts (`tools/test-feed-sync.py` uses a fifth account).
 
 ## Media storage backend (Supabase Storage or Cloudflare R2)
 

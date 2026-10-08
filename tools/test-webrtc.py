@@ -6,6 +6,7 @@ Run only against a project you operate. Two temporary guest identities are creat
 they leave in finally, and their one-way token hashes are saved for operator cleanup.
 """
 import argparse
+import runner_backend
 import asyncio
 import hashlib
 import json
@@ -144,7 +145,7 @@ async def receive_description(api, peer, kind, expected_candidates):
 
 
 async def main(args):
-    config = json.loads(Path(args.config).read_text())
+    config = runner_backend.load(args.config)
     apis = [ChatPeer(config), ChatPeer(config)]
     peers = []
     consumers = []

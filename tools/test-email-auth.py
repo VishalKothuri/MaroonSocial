@@ -6,8 +6,9 @@ Execute --cleanup <fixture> SQL even after failures. Never enable the public gat
 Temporary credentials are private mode-0600 files and are never printed by --run.
 """
 import argparse, hashlib, json, os, pathlib, secrets, tempfile, time, urllib.request, urllib.error, uuid
+import runner_backend
 ROOT=pathlib.Path(__file__).resolve().parents[1]
-CONFIG=json.loads((ROOT/'MaroonSocial/Resources/Backend.json').read_text())
+CONFIG=runner_backend.load()
 def prepare():
     peers=[]
     for suffix in ('a','b'):

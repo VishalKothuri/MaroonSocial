@@ -8,7 +8,8 @@ applies the realtime_pokes migrations, run with EXPECT_REALTIME=1: the answer mu
 server). The token itself is never printed. One synthetic account, deleted in `finally`.
 """
 import base64, json, os, pathlib, time, urllib.request, urllib.error, uuid
-config=json.loads(pathlib.Path('MaroonSocial/Resources/Backend.json').read_text())
+import runner_backend
+config=runner_backend.load()
 tokens=[]; label='rt'+uuid.uuid4().hex[:9]
 def call(action,token=None,**payload):
     headers={'Content-Type':'application/json','apikey':config['publishableKey']}

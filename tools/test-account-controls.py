@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Live caller-private account controls regression, synthetic identities only."""
 import json,pathlib,time,uuid,urllib.request,urllib.error
+import runner_backend
 ROOT=pathlib.Path(__file__).resolve().parents[1]
-CONFIG=json.loads((ROOT/'MaroonSocial/Resources/Backend.json').read_text())
+CONFIG=runner_backend.load()
 accounts=[]
 resources=[]
 def request(endpoint,action,token=None,**payload):
@@ -17,7 +18,7 @@ def ok(endpoint,action,token=None,**payload):
     assert code==200,(action,code,result.get('error'))
     if result.get('resource_id'):
         resources.append({'action':action,'id':result['resource_id']})
-        (ROOT/'build/account-controls-test-fixtures.json').write_text(json.dumps(resources))
+        runner_backend.receipt(ROOT/'build/account-controls-test-fixtures.json').write_text(json.dumps(resources))
     return result
 def main():
     suffix=uuid.uuid4().hex[:8]

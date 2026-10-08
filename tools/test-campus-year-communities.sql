@@ -7,6 +7,8 @@ begin
  insert into social_private.members(token_hash,username,adult,network_hash)values(ha,'cohorta_'||substr(ha,1,8),true,ha)returning id into a;
  insert into social_private.members(token_hash,username,adult,network_hash)values(hb,'cohortb_'||substr(hb,1,8),true,hb)returning id into b;
  foreach community in array array['Texas A&M','Freshmen','Sophomores','Juniors','Seniors','Graduates']loop
+  -- Age the earlier fixture posts past the 5-posts-per-15-minutes limit (created_at moves no change marker).
+  update social_private.posts set created_at=created_at-interval '15 minutes' where author=a;
   out:=public.social_gateway('post.create',ha,jsonb_build_object('text','Cohort test','community',community,'anonymous',true,'tags',jsonb_build_array(tag_value),'feed_community',community));
   if out?'error'then raise exception 'Create failed for %: %',community,out;end if;
   post_id:=(out->>'resource_id')::uuid;
@@ -19,11 +21,13 @@ begin
   if out?'error'then raise exception 'Vote failed';end if;
  end loop;
  -- Busy freshman traffic cannot push a main-campus post out of its own window.
- insert into social_private.posts(author,nonce,community,body,created_at)select a,gen_random_uuid(),'Freshmen','Busy cohort fixture',now()+make_interval(secs=>i)from generate_series(1,160)i;
+ insert into social_private.posts(author,nonce,community,body,created_at)select b,gen_random_uuid(),'Freshmen','Busy cohort fixture',now()+make_interval(secs=>i)from generate_series(1,160)i;
  out:=public.social_gateway('snapshot',hb,jsonb_build_object('feed_community','Texas A&M'));
  if not exists(select 1 from jsonb_array_elements(out->'snapshot'->'posts')p where p->'tags' ? tag_value)then raise exception 'Main feed starved by cohort traffic';end if;
  update social_private.members set nsfw_enabled=true where id=a;
+ update social_private.posts set created_at=created_at-interval '15 minutes' where author=a;
  out:=public.social_gateway('post.create',ha,jsonb_build_object('text','Adult only','community','NSFW'));private_post:=(out->>'resource_id')::uuid;
+ if private_post is null then raise exception 'Adult post failed: %',out;end if;
  if social_private.can_read_post(b,private_post)then raise exception 'Cohorts bypassed NSFW gate';end if;
  out:=public.social_gateway('snapshot',hb,jsonb_build_object('feed_community','NSFW'));
  if jsonb_array_length(out->'snapshot'->'posts')<>0 then raise exception 'Unjoined adult feed leaked';end if;

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Real API checks with isolated temporary accounts; no camera, push provider, or tokens logged."""
 import json,urllib.request,urllib.error,pathlib,time,uuid
-cfg=json.loads(pathlib.Path('MaroonSocial/Resources/Backend.json').read_text());base=cfg['url'];key=cfg['publishableKey'];accounts=[]
+import runner_backend
+cfg=runner_backend.load();base=cfg['url'];key=cfg['publishableKey'];accounts=[]
 def req(endpoint,action,token=None,web=None,origin=None,**payload):
  h={'Content-Type':'application/json','apikey':key}
  if token:h['X-Social-Token']=token

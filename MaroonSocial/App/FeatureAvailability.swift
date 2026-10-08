@@ -15,6 +15,10 @@ enum FeatureAvailability {
   static let hiddenGameKinds: Set<String> = ["pool", "pong"]
   /// Campus Tag (lobbies, location sharing, the active-match banner).
   static let campusTagEnabled = false
+  /// Topic feeds (the topic strip, post pills, the composer's topic row). Compile-time switch;
+  /// the store also needs a successful `topics.list` (`AppStore.topicsAvailable`), so a server
+  /// without topics keeps today's feed, composer and cards.
+  static let topicsEnabled = true
   /// Every game kind the app knows, in display order.
   static let allGameKinds = ["pool", "pong", "chess"]
 

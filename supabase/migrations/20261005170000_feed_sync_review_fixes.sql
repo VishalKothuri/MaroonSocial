@@ -7,7 +7,8 @@
 --   quotes of it; a suspension touches what visibly loses or regains a score, poll or quote,
 --   including posts the member voted on; a block touches only the votes between the two members.
 --   Bookmarks touch nothing (saved is per viewer), rewriting already-deleted posts, replies or
---   messages touches nothing (they show placeholders), and attachment changes reach quoting posts.
+--   messages touches nothing (they show placeholders), neither do votes or poll votes on a
+--   deleted post (it projects no score or poll), and attachment changes reach quoting posts.
 -- * What only one member sees (a block either way, a hidden post, their own rename) sets that
 --   member's feed_resyncs marker. Their own feed.delta answers resync:true and the client
 --   refetches the posts it holds with the new feed.posts read.
@@ -51,6 +52,10 @@ begin
  if tg_table_name='comment_votes' then ids:=array(select post from social_private.comments where id=any(keys));
  elsif tg_table_name='poll_votes' then ids:=array(select post from social_private.polls where id=any(keys));
  end if;
+ -- A deleted post projects score 0, vote 0 and no poll, so votes on it (account deletion
+ -- removes the member's votes, including the automatic upvote on their own long-deleted
+ -- posts) change nothing anyone sees.
+ if tg_table_name in('votes','poll_votes') then ids:=array(select id from social_private.posts where id=any(ids) and not deleted);end if;
  if cardinality(ids)>0 then perform social_private.touch_posts(ids);end if;
  return null;
 end $$;
@@ -79,6 +84,9 @@ create trigger comments_touch_post_update after update on social_private.comment
   or (not new.deleted and (old.body is distinct from new.body or old.anonymous is distinct from new.anonymous or old.author is distinct from new.author or old.parent_id is distinct from new.parent_id)))
  execute function social_private.touch_post_from_row();
 
+-- Message change marker (before touch_messages: a SQL function body is checked when it is created).
+-- Existing rows take the migration time (a constant default, so no table rewrite).
+alter table social_private.messages add column if not exists changed_at timestamptz not null default now();
 create or replace function social_private.touch_messages(p_ids uuid[]) returns void language sql set search_path='' as $$
  update social_private.messages set changed_at=clock_timestamp() where id=any(p_ids)
 $$;
@@ -193,9 +201,7 @@ end $$;
 drop trigger if exists hidden_resync on social_private.hidden;
 create trigger hidden_resync after insert or delete on social_private.hidden for each row execute function social_private.hidden_resync();
 
--- Message change marker -----------------------------------------------------------------------
--- Existing rows take the migration time (a constant default, so no table rewrite).
-alter table social_private.messages add column if not exists changed_at timestamptz not null default now();
+-- Message change marker (the column is added above, before touch_messages) ---------------------
 create index if not exists messages_room_changed on social_private.messages(room,changed_at);
 create or replace function social_private.messages_touch_self() returns trigger language plpgsql set search_path='' as $$
 begin new.changed_at:=clock_timestamp();return new;end $$;

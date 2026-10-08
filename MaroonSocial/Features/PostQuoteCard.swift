@@ -58,13 +58,16 @@ struct PostQuoteCard: View {
 /// draft key; the Community feed keeps the inline path through `AppStore.quoteRequest`.
 struct QuotePostComposerSheet: View {
   @Environment(\.dismiss) private var dismiss
+  @Environment(AppStore.self) private var store
   let post: Post
+  /// Like the inline composer, a quote starts in the topic the home feed is browsing.
+  private var browsedTopic: String? { store.topicsAvailable && store.feedCommunity == post.community ? store.feedTopic : nil }
   var body: some View {
     VStack(spacing: 0) {
       Text("Quote post").font(.headline).padding(.top, 16).padding(.bottom, 4)
       // One draft per quoted post, so text written for one quote never reappears on another.
       InlinePostComposer(community: post.community, expanded: Binding(get: { true }, set: { if !$0 { dismiss() } }),
-        draftKey: "post:quote:" + post.id, quoting: post.id) { dismiss() }
+        draftKey: "post:quote:" + post.id, quoting: post.id, browsedTopic: browsedTopic) { dismiss() }
       Spacer(minLength: 0)
     }.appBackground().presentationDetents([.large]).presentationDragIndicator(.visible)
   }

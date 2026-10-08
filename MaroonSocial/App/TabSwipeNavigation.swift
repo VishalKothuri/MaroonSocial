@@ -347,6 +347,9 @@ extension View {
 struct CommunitySortSwipeNavigation: UIViewRepresentable {
   @Binding var selection: String
   let enabled: Bool
+  /// Names the feed page on screen. A new page is a new scroll view, so a change re-attaches once
+  /// the outgoing page has left (it slides or fades out first).
+  var page = ""
 
   func makeCoordinator() -> Coordinator { Coordinator() }
   func makeUIView(context: Context) -> Probe {
@@ -359,6 +362,10 @@ struct CommunitySortSwipeNavigation: UIViewRepresentable {
     context.coordinator.enabled = enabled
     context.coordinator.select = { selection = $0 }
     context.coordinator.attach(from: probe)
+    if context.coordinator.page != page {
+      context.coordinator.page = page
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak probe] in if let probe { probe.attach?(probe) } }
+    }
   }
   static func dismantleUIView(_ probe: Probe, coordinator: Coordinator) { probe.attach = nil; coordinator.detach() }
 
@@ -373,6 +380,7 @@ struct CommunitySortSwipeNavigation: UIViewRepresentable {
   @MainActor final class Coordinator: NSObject, UIGestureRecognizerDelegate {
     var selection = "New"
     var enabled = true
+    var page = ""
     var select: ((String) -> Void)?
     private weak var scroll: UIScrollView?
     private weak var tabs: UITabBarController?
@@ -387,9 +395,12 @@ struct CommunitySortSwipeNavigation: UIViewRepresentable {
     func attach(from probe: UIView) {
       guard let window = probe.window else { detach(); return }
       tabs = window.rootViewController.flatMap(Self.findTabs)
+      // The probe is the feed's background, so the feed is the scroll view under its center. That
+      // skips sideways scrollers elsewhere in the screen (the header's topic strip).
+      let center = probe.convert(CGPoint(x: probe.bounds.midX, y: probe.bounds.midY), to: nil)
       var ancestor = probe.superview
       while let view = ancestor {
-        if let candidate = Self.findScroll(in: view) {
+        if let candidate = Self.findScroll(in: view, containing: center) {
           if candidate !== scroll { pan.view?.removeGestureRecognizer(pan); scroll = candidate; candidate.addGestureRecognizer(pan) }
           return
         }
@@ -397,9 +408,9 @@ struct CommunitySortSwipeNavigation: UIViewRepresentable {
       }
     }
     func detach() { pan.view?.removeGestureRecognizer(pan); scroll = nil; tabs = nil }
-    private static func findScroll(in view: UIView) -> UIScrollView? {
-      if let scroll = view as? UIScrollView { return scroll }
-      for child in view.subviews { if let scroll = findScroll(in: child) { return scroll } }
+    private static func findScroll(in view: UIView, containing point: CGPoint) -> UIScrollView? {
+      if let scroll = view as? UIScrollView, scroll.convert(scroll.bounds, to: nil).contains(point) { return scroll }
+      for child in view.subviews { if let scroll = findScroll(in: child, containing: point) { return scroll } }
       return nil
     }
     private static func findTabs(in controller: UIViewController) -> UITabBarController? {

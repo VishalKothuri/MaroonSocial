@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Live synthetic clients verify server tag discovery and community isolation."""
 import json
+import runner_backend
 import os
 import pathlib
 import urllib.error
 import urllib.request
 import uuid
 
-config = json.loads(pathlib.Path('MaroonSocial/Resources/Backend.json').read_text())
+config = runner_backend.load()
 label = 'tq' + uuid.uuid4().hex[:9]
 tag = label + '_topic'
 tokens = []
@@ -53,7 +54,9 @@ try:
     assert result['tag'] == tag and {p['id'] for p in result['posts']} == {campus, other}
     assert [p['id'] for p in result['posts']] == [other, campus]
     full = ok('snapshot', b)['snapshot']['posts']
-    assert next(p for p in result['posts'] if p['id'] == campus) == next(p for p in full if p['id'] == campus)
+    # syncedAt is the server time of each response, so it is the one key allowed to differ.
+    def serialized(post): return {key: value for key, value in post.items() if key != 'syncedAt'}
+    assert serialized(next(p for p in result['posts'] if p['id'] == campus)) == serialized(next(p for p in full if p['id'] == campus))
     assert all(p['author'] == 'Anonymous' for p in result['posts'])
     print('PASS three-client server tag query, normalized tag, newest order and exact shared serializer', flush=True)
 
@@ -62,7 +65,8 @@ try:
     ok('post.vote', b, post_id=campus, value=1)
     ok('post.save', b, post_id=campus, saved=True)
     canonical = next(p for p in ok('posts.tag', b, tag=tag, community='Texas A&M')['posts'] if p['id'] == campus)
-    assert canonical['vote'] == 1 and canonical['score'] == 1 and canonical['saved']
+    # A post starts with its author's upvote, so b's vote makes the score 2.
+    assert canonical['vote'] == 1 and canonical['score'] == 2 and canonical['saved']
     assert canonical['poll']['myOptionID'] == option and canonical['poll']['totalVotes'] == 1
     print('PASS tag results reflect canonical post/poll votes and bookmarks', flush=True)
 

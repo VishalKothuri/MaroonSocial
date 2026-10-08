@@ -9,7 +9,8 @@ closed DM/group rooms remain as tombstones by design and are recorded with one-w
 credential hashes in the receipt for scoped operator cleanup (tools/social-admin.py).
 """
 import concurrent.futures,hashlib,json,os,pathlib,threading,time,urllib.error,urllib.request,uuid
-config=json.loads(pathlib.Path('MaroonSocial/Resources/Backend.json').read_text())
+import runner_backend
+config=runner_backend.load()
 tokens=[];rooms=[];receipt=pathlib.Path('/tmp/maroon-call-admission-race-receipt.json');instance={}
 def save():
  data={'test':'cross-call-admission-race','token_hashes':[hashlib.sha256(t.encode()).hexdigest()for t in tokens],'rooms':rooms}

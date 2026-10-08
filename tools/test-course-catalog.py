@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Live course activity smoke test using disposable members. Does not create course rooms."""
 import json
+import runner_backend
 import pathlib
 import time
 import urllib.error
 import urllib.request
 
-config = json.loads(pathlib.Path('MaroonSocial/Resources/Backend.json').read_text())
+config = runner_backend.load()
 tokens = []
 
 def call(endpoint, payload, token=None):

@@ -1,3 +1,4 @@
+import MaroonCore
 import SwiftUI
 import UIKit
 
@@ -271,5 +272,31 @@ struct KeyboardDismissButton: View {
         .font(.system(size: 18, weight: .medium)).frame(minWidth: 44, minHeight: 44)
     }.buttonStyle(.plain).accessibilityLabel("Hide keyboard")
       .accessibilityIdentifier("hideKeyboard")
+  }
+}
+
+extension Palette {
+  /// Readable maroon for text, underlines and scores on dark: 5.47:1 on paper, 4.85:1 on surface.
+  static let maroonBright = Color(red: 0xD0 / 255, green: 0x6A / 255, blue: 0x73 / 255) // #D06A73
+}
+/// Base values for the topic strip, pills and chips; views scale them with @ScaledMetric.
+enum TopicMetrics {
+  static let chipHeight: CGFloat = 32   // visual height of a composer chip (tap target stays 44)
+  static let tagHeight: CGFloat = 22    // visual height of a topic pill on a card
+  static let underline: CGFloat = 2.5
+  static let tabGap: CGFloat = 20
+  static let edgeFade: CGFloat = 24
+}
+extension Topic {
+  /// Text and underline tone.
+  var textColor: Color { Color(hex: textHex) ?? Palette.secondary }
+  /// Opaque fill drawn on `surface`.
+  var fillColor: Color { Color(hex: fillHex) ?? Palette.elevated }
+}
+extension Color {
+  /// `#RRGGBB` (the topic catalog's format); nil for anything else.
+  init?(hex: String) {
+    guard hex.count == 7, hex.first == "#", let value = UInt32(hex.dropFirst(), radix: 16) else { return nil }
+    self.init(red: Double((value >> 16) & 0xFF) / 255, green: Double((value >> 8) & 0xFF) / 255, blue: Double(value & 0xFF) / 255)
   }
 }

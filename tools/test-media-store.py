@@ -14,8 +14,9 @@ two runs (before/after a deploy) can be compared byte for byte.
     python3 tools/test-media-store.py --baseline # pre-phase-2 deployment: stop before known_attachment_id
 """
 import base64, hashlib, json, pathlib, struct, subprocess, sys, tempfile, urllib.error, urllib.request, uuid, zlib
+import runner_backend
 
-config = json.loads(pathlib.Path('MaroonSocial/Resources/Backend.json').read_text())
+config = runner_backend.load()
 label = 'ms' + uuid.uuid4().hex[:9]
 tokens = []
 digests = {}

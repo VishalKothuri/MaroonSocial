@@ -10,6 +10,8 @@ declare
 begin
  insert into social_private.members(token_hash,username,adult,network_hash)values(ha,'evt_a_'||substr(ha,1,8),true,ha)returning id into aid;
  insert into social_private.members(token_hash,username,adult,network_hash)values(hb,'evt_b_'||substr(hb,1,8),true,hb)returning id into bid;
+ -- A fresh database has no campus snapshot yet; start one so the fixture events have a home.
+ insert into public.campus_cache(id,payload)values('current','{}'::jsonb)on conflict(id)do nothing;
  update public.campus_cache set payload=jsonb_set(payload,'{events}',coalesce(payload->'events','[]'::jsonb)||jsonb_build_array(
   jsonb_build_object('id',v_event_id,'category','Campus','title','Synthetic campus event','starts',now_epoch+3600),
   jsonb_build_object('id',sports_id,'category','Sports','title','Synthetic sports event','starts',now_epoch+1200),

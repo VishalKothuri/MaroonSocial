@@ -43,24 +43,39 @@ Dashboard-only setup (no secret): create the R2 bucket, attach the custom domain
 
 ## Database changes waiting for approval
 
-Schema changes are applied by the owner. These migration files are in `supabase/migrations/` but are not yet on the database:
+Schema changes are applied by the owner. These migration files are in `supabase/migrations/` but are not yet on the database (the live history ends at `20261005135428`). Apply them in this order; `supabase db push` uses filename order:
 
-| File | What it enables | Verify after applying |
-|---|---|---|
-| `20261005160000_feed_sync_incremental.sql` | Incremental feed (only new or changed posts every few seconds), 30-post pages with infinite scroll, "Load earlier replies", per-chat message catch-up | Apply together with the next file, in this order |
-| `20261005170000_feed_sync_review_fixes.sql` | Review fixes for the file above: no change clock that could link anonymous posts to accounts, per-member resync instead, message edits/reactions/unsends in the catch-up, input range checks | `python3 tools/test-feed-sync.py`, then `psql … -f tools/test-feed-sync-security.sql` |
-| `20261005190000_r2_media_revocation.sql` | Deleted posts and attachments queue their R2 objects for deletion and CDN purge. Apply it before setting `MEDIA_BACKEND=r2` | `psql … -f tools/test-r2-media-revocation.sql` |
-| `20261005200000_realtime_pokes.sql` | Realtime pokes for chats, the inbox and game-day chat (id-only signals; the app then fetches the new messages) | Apply together with the next file, in this order |
-| `20261005210000_realtime_pokes_review_fixes.sql` | Review fixes for the file above: pending group invitees get no message pokes, receiving needs the same TAMU verification as the app, and calls, DM answers, membership and room changes poke open chats | `psql … -f tools/test-realtime-security.sql`, then `EXPECT_REALTIME=1 python3 tools/test-realtime-token.py` after setting `REALTIME_JWT_SECRET` |
+| Order | File | What it enables | Verify after applying |
+|---|---|---|---|
+| 1 | `20261005160000_feed_sync_incremental.sql` | Incremental feed (only new or changed posts every few seconds), 30-post pages with infinite scroll, "Load earlier replies", per-chat message catch-up | Apply together with the next file, in this order |
+| 2 | `20261005170000_feed_sync_review_fixes.sql` | Review fixes for the file above: no change clock that could link anonymous posts to accounts, per-member resync instead, message edits/reactions/unsends in the catch-up, input range checks. **Corrected in place twice on October 6** (it had never been applied): `messages.changed_at` is now added before `touch_messages`, which needs it, and votes or poll votes on an already-deleted post no longer move that post's change marker (deleting an account used to move its long-deleted posts) | `python3 tools/test-feed-sync.py`, then `psql … -f tools/test-feed-sync-security.sql` |
+| 3 | `20261005190000_r2_media_revocation.sql` | Deleted posts and attachments queue their R2 objects for deletion and CDN purge. Apply it before setting `MEDIA_BACKEND=r2` | `psql … -f tools/test-r2-media-revocation.sql` |
+| 4 | `20261005200000_realtime_pokes.sql` | Realtime pokes for chats, the inbox and game-day chat (id-only signals; the app then fetches the new messages) | Apply together with the next file, in this order |
+| 5 | `20261005210000_realtime_pokes_review_fixes.sql` | Review fixes for the file above: pending group invitees get no message pokes, receiving needs the same TAMU verification as the app, and calls, DM answers, membership and room changes poke open chats | `psql … -f tools/test-realtime-security.sql`, then `EXPECT_REALTIME=1 python3 tools/test-realtime-token.py` after setting `REALTIME_JWT_SECRET` |
+| 6 | `20261006100000_gateway_activity_lock_alias.sql` | **Fixes a live bug:** editing, approving or cancelling a plan currently fails with "column reference r.id is ambiguous" | `psql … -f tools/test-activity-plans-security.sql` and `tools/test-social-security.sql` |
+| 7 | `20261006101000_external_media_optional_feed_community.sql` | **Fixes a live bug:** attaching KLIPY media without `feed_community` (older callers) fails with "Choose an available community." | `psql … -f tools/test-klipy-security.sql` |
+| 8 | `20261006200000_post_topics.sql` | Topic catalog (8 launch topics active, 6 reserve topics off), one optional topic per post, `topic` in every post read, topic in the data export and in post reports, and a backfill that gives existing posts a topic from their tags | Apply together with the next two files, in this order |
+| 9 | `20261006210000_topic_feed_sync.sql` | Topic pages, deltas and resyncs (`topic` on `feed.page`, `feed.delta`, `feed.posts`), `topics.list` with 7-day counts, `post.topic` for authors, and the operator commands `topic.set`, `topic.disable` and `topic.enable` | — |
+| 10 | `20261006220000_post_text_filter.sql` | A whole-word denylist (stored as hashes; extend it with the operator's `filter.add` / `filter.remove`) for posts and replies, and at most 5 new posts per 15 minutes on top of the 10-per-minute burst | `psql … -f tools/test-topics-security.sql`, then deploy the `social` function and run `python3 tools/test-topics.py` |
 
-Apply them in filename order (`supabase db push` does this). The realtime file depends on the two feed-sync files.
+Dependencies:
 
-Apply the two feed-sync files back to back and never the first one alone: on its own it would publish a raw change clock that the second file removes.
+- Files 6 and 7 apply cleanly straight onto the live database, with or without files 1–5. They fix bugs users can hit today.
+- Apply the two feed-sync files (1 and 2) back to back and never the first one alone: on its own it would publish a raw change clock that the second file removes.
+- The realtime files (4 and 5) depend on the two feed-sync files.
+- The topic files (8–10) depend on the two feed-sync files (they patch `post_json` and `feed_sync`) and on file 6 (they patch the current gateway text).
+- After the topic files are applied, deploy the `social` edge function (it adds `topics.list` and `post.topic` to its action list): `supabase functions deploy social`. Until then the app keeps its feed without topics.
+- After file 10, a member who creates a sixth post within 15 minutes gets "Take a moment before posting again." The runners `tools/test-feed-sync.py`, `tools/test-post-extras.py` and `tools/test-reposts.py` spread their fixture posts so that each synthetic account stays within 5 posts per 15 minutes (`test-feed-sync.py` uses a fifth account), so they pass with file 10 applied (checked on the local stack).
+- The `psql … -f tools/test-*-security.sql` checks in the last column run inside one transaction that rolls back, and change nothing outside it, so they are safe to run once as the database owner after applying. `tools/test-topics-plan.sql` is the exception: its query-plan check needs `ANALYZE`, whose table estimates survive the rollback, so it runs only on a local stack (see TESTING.md).
 
-Apply with the Supabase CLI from the repository root. Link once, preview, then push; `db push` applies every local migration the database does not have yet and asks for the database password:
+Apply with the Supabase CLI from the repository root. Link once, mark the course catalog file as applied (its data is on the database, but the history does not list `20261004012836`, so `db push` would try to run it again), preview, then push. `db push` applies every local migration the database does not have yet and asks for the database password:
 
 ```bash
 supabase link --project-ref myxbghfbapbfffkpndwo
+```
+
+```bash
+supabase migration repair --status applied 20261004012836 --linked
 ```
 
 ```bash
@@ -71,6 +86,6 @@ supabase db push --linked --dry-run
 supabase db push --linked
 ```
 
-The dry run should list only the pending files above. You can also paste a file's contents into the Supabase SQL editor.
+The dry run should list only the pending files above. You can also paste a file's contents into the Supabase SQL editor, in the same order.
 
 Until they are applied, the app detects the older server and keeps its previous full-refresh behaviour, so nothing breaks.

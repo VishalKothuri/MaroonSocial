@@ -42,6 +42,7 @@ import XCTest
     app.buttons["klipyCancel"].tap()
     let editor = app.textViews["postText"]
     XCTAssertTrue(editor.waitForExistence(timeout: 3)); XCTAssertEqual(editor.value as? String, "Keep this draft")
+    app.pickPostTopic()
     XCTAssertTrue(app.buttons["publishPost"].isEnabled)
   }
   func testOfflineMasonryKeepsImageAspectsAndPreviewDoesNotAttachOrRecordRecent() {
@@ -69,6 +70,7 @@ import XCTest
     let editor = app.textViews["postText"]
     XCTAssertTrue(editor.waitForExistence(timeout: 3)); XCTAssertEqual(editor.value as? String, "Keep this draft")
     XCTAssertFalse(app.buttons["Remove attachment"].exists)
+    app.pickPostTopic()
     XCTAssertTrue(app.buttons["publishPost"].isEnabled)
   }
   func testOfflineSearchGIFConfirmationRecentsAndClearPreserveUnsentDraft() {

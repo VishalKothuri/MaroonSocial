@@ -3,13 +3,14 @@
 No announcements are published. Credentials stay in memory and test accounts are deleted.
 """
 import json
+import runner_backend
 import os
 import pathlib
 import urllib.error
 import urllib.request
 import uuid
 
-config = json.loads(pathlib.Path('MaroonSocial/Resources/Backend.json').read_text())
+config = runner_backend.load()
 label = 'aq' + uuid.uuid4().hex[:9]
 tokens = []
 posts = []

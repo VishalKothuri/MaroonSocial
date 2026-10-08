@@ -12,6 +12,16 @@ import XCTest
   private func reveal(_ element: XCUIElement, in app: XCUIApplication) {
     let panel = app.scrollViews["postOptions"]
     for _ in 0..<5 { if element.isHittable { return }; panel.swipeUp(velocity: .slow) }
+    // The topic row makes the panel taller than its band above the keyboard, so a whole swipe can
+    // carry a field past it. Then drag in short, held steps toward the field.
+    for _ in 0..<10 {
+      if element.isHittable { return }
+      let keyboard = app.keyboards.firstMatch
+      let bottom = keyboard.exists ? min(panel.frame.maxY, keyboard.frame.minY) : panel.frame.maxY
+      let center = (panel.frame.minY + bottom) / 2
+      let start = app.windows.firstMatch.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: panel.frame.midX, dy: center))
+      start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: element.frame.midY > center ? -70 : 70)), withVelocity: .slow, thenHoldForDuration: 0.3)
+    }
     XCTAssertTrue(element.isHittable)
   }
   private func fill(_ id: String, _ text: String, in app: XCUIApplication) {
@@ -22,6 +32,7 @@ import XCTest
     XCTAssertFalse(app.buttons["publishPost"].isEnabled)
     fill("pollQuestion", "Where should we study?", in: app)
     fill("pollOption0", "Library", in: app); fill("pollOption1", "Coffee", in: app)
+    app.pickPostTopic()
     XCTAssertTrue(app.buttons["publishPost"].isEnabled)
     app.buttons["publishPost"].tap()
     XCTAssertTrue(app.staticTexts["Where should we study?"].waitForExistence(timeout: 5))
@@ -40,6 +51,7 @@ import XCTest
     // Return to the compact feature toolbar, preserving the URL draft.
     app.scrollViews["postOptions"].swipeDown(velocity: .slow)
     app.buttons["postAddTags"].tap(); fill("postTags", "#Campus, study_group", in: app)
+    app.pickPostTopic()
     app.buttons["publishPost"].tap()
     XCTAssertTrue(app.buttons["postLinkCard"].waitForExistence(timeout: 5))
     let tag = app.buttons["postTag-campus"]; XCTAssertTrue(tag.waitForExistence(timeout: 3)); tag.tap()

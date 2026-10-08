@@ -4,7 +4,8 @@ No fabricated moderation reports, ad impressions/clicks, or provider share event
 All three temporary social accounts and their references are deleted in finally.
 """
 import json,pathlib,urllib.request,urllib.error,urllib.parse,uuid,sys
-config=json.loads(pathlib.Path('MaroonSocial/Resources/Backend.json').read_text())
+import runner_backend
+config=runner_backend.load()
 key=json.loads(pathlib.Path('MaroonSocial/Resources/Klipy.json').read_text())['appKey'].strip()
 assert key,'Save a KLIPY mobile app key first.'
 

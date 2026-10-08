@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Exercise live Tag with synthetic identities and synthetic coordinates only."""
 import json,pathlib,time,uuid,urllib.request,urllib.error
+import runner_backend
 ROOT=pathlib.Path(__file__).resolve().parents[1]
-CONFIG=json.loads((ROOT/'MaroonSocial/Resources/Backend.json').read_text())
+CONFIG=runner_backend.load()
 fixtures=[]
 def request(endpoint,action,token=None,**payload):
     req=urllib.request.Request(CONFIG['url']+'/functions/v1/'+endpoint,data=json.dumps(dict(action=action,**payload)).encode(),headers={'Content-Type':'application/json','apikey':CONFIG['publishableKey'],**({'X-Social-Token':token} if token else {})})
@@ -25,7 +26,7 @@ def main():
     lobby=request('tag-game','create',seeker,nonce=nonce,title='Synthetic QA lobby',area='Synthetic test coordinates only',capacity=2,duration_seconds=300,hide_seconds=30,radius_m=300)
     assert lobby.get('state')=='lobby',lobby
     lid=lobby['lobby']['id'];code=lobby['lobby']['code']
-    (ROOT/'build/tag-test-fixtures.json').write_text(json.dumps({'lobby':lid,'names':[x[0] for x in fixtures]}))
+    runner_backend.receipt(ROOT/'build/tag-test-fixtures.json').write_text(json.dumps({'lobby':lid,'names':[x[0] for x in fixtures]}))
     def call(token,action,**kw): return request('tag-game',action,token,lobby=lid,**kw)
     joined=request('tag-game','join',hider,code=code)
     assert len(joined['players'])==2,joined
@@ -81,7 +82,7 @@ def main():
     assert reported.get('state')=='idle',reported
     blocked=request('tag-game','join',hider,code=safety['lobby']['code'])
     assert blocked.get('code')=='blocked',blocked
-    (ROOT/'build/tag-test-fixtures.json').write_text(json.dumps({'lobby':lid,'report_lobby':safety_id,'report_reason':reason,'names':[x[0] for x in fixtures]}))
+    runner_backend.receipt(ROOT/'build/tag-test-fixtures.json').write_text(json.dumps({'lobby':lid,'report_lobby':safety_id,'report_reason':reason,'names':[x[0] for x in fixtures]}))
     print('PASS context-bound report, immediate leave, persistent block rejects rejoin',flush=True)
     print(json.dumps({'passed':True,'fixture_lobby':lid,'fixture_users':[x[0] for x in fixtures]}),flush=True)
 if __name__=='__main__':

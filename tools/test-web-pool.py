@@ -3,7 +3,8 @@
 Only generated QA accounts are created and deleted. No service secret required.
 """
 import concurrent.futures,hashlib,json,pathlib,subprocess,time,urllib.request,urllib.error,uuid
-cfg=json.loads(pathlib.Path('MaroonSocial/Resources/Backend.json').read_text());tokens=[];scopes=[]
+import runner_backend
+cfg=runner_backend.load();tokens=[];scopes=[]
 def call(endpoint,action,credential=None,scope=None,origin=None,**data):
  h={'Content-Type':'application/json','apikey':cfg['publishableKey']}
  if credential:h['X-Social-Token']=credential

@@ -3,7 +3,8 @@
 Creates/deletes only exact synthetic accounts; no private credentials logged.
 """
 import concurrent.futures,json,pathlib,time,urllib.request,urllib.error,uuid
-cfg=json.loads(pathlib.Path('MaroonSocial/Resources/Backend.json').read_text());tokens=[];scopes=[]
+import runner_backend
+cfg=runner_backend.load();tokens=[];scopes=[]
 def call(endpoint,action,index=0,scoped=False,**data):
  h={'Content-Type':'application/json','apikey':cfg['publishableKey']}
  if tokens:

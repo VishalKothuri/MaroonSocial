@@ -80,6 +80,7 @@
 		562E10EC7FF67A090454AB6E /* RepostTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 713BF83B63ED8BB56DA70215 /* RepostTests.swift */; };
 		56FB119460A8923B18E0E395 /* SocialService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C626066A7931BF12A3CF0C42 /* SocialService.swift */; };
 		595F2F02E3DFA1F8712042B6 /* AppStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B388BF08164FE8F9892900B6 /* AppStoreTests.swift */; };
+		59B67FD8AC46C23398E2AE54 /* TopicFeedTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5AA3114E7189298CABFE7BD /* TopicFeedTests.swift */; };
 		5B7A5C5E511885B8E191BDB6 /* ImageLibraryServicesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07F75B70B0A5BEA98618BD3F /* ImageLibraryServicesTests.swift */; };
 		5BC099D80316C0CE27074553 /* InlineFeedUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDA752AD34DDDBE634A9D71D /* InlineFeedUITests.swift */; };
 		5C4CCF959427686759FAB428 /* ExploreView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E99690E8D217372CC8A267B /* ExploreView.swift */; };
@@ -142,6 +143,7 @@
 		98564E52EBFA20AF7F527429 /* DiscoveryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCCEA5FF6E330465EC89A758 /* DiscoveryView.swift */; };
 		98D9F023008BCC57D636DA0B /* GroupPhotoCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 136FC44214E72C309DE6B75C /* GroupPhotoCache.swift */; };
 		9A5D6EBBB2F4FF842F518635 /* RefreshGateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21BB5F85AF00096299A29D0A /* RefreshGateTests.swift */; };
+		9E25713B9AA6F37439F52FBA /* TopicViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 658F0E73EAB4E865ABE62AD8 /* TopicViews.swift */; };
 		A2D15353EAB6552BB4B94434 /* CommunitiesServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9E9A44122F42FDAF2AFD0E7 /* CommunitiesServiceTests.swift */; };
 		A2D39CF5266E401A2F9399A9 /* ActivityPlansServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1171D4797625B80CEC29C630 /* ActivityPlansServiceTests.swift */; };
 		A3042E9C020306BB6026E4D3 /* AppStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54F506ADB32C93EBB9F2D2F5 /* AppStore.swift */; };
@@ -159,6 +161,7 @@
 		B405575610C96A9A3CF042B2 /* OrganizationAdminUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300C2FC4574AE492F2E8D483 /* OrganizationAdminUITests.swift */; };
 		B770FD5769AD379D0C9014E9 /* SportsScoresView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6AF821A58EB4EA99211DE10 /* SportsScoresView.swift */; };
 		B91B89E4B3804DEE8D1F7432 /* CourseCatalogService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A9E2875C9F557297D833798 /* CourseCatalogService.swift */; };
+		BA24E41B82DFCF9A55B801FF /* TopicUITestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 426F81259F588A30A2FCEFAA /* TopicUITestSupport.swift */; };
 		BA71CD41DE55F82646559CFA /* StartupPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34B59D7C52AA8C20F55FEB21 /* StartupPresentation.swift */; };
 		BD288CCBD6455FBAAD5388F5 /* AccountControlsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F39190E14D09E208B3E8209F /* AccountControlsService.swift */; };
 		BD8D0DF4298C0FA6B862122B /* KlipyPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CEF149D51375542A7C9DD98 /* KlipyPickerView.swift */; };
@@ -190,6 +193,7 @@
 		D542912C72EBF363F1466E00 /* GroupGameIdentityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51278D93E99AC33E548E9621 /* GroupGameIdentityTests.swift */; };
 		D54DFCB8F8CD04E8E9C863E2 /* MessageRequestScope.swift in Sources */ = {isa = PBXBuildFile; fileRef = F356D3DC05261AC03BC1C36D /* MessageRequestScope.swift */; };
 		D5EAE2F4BCFE355B194D71ED /* MediaStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FFB60875039680532F66BBD /* MediaStoreTests.swift */; };
+		D711E5FC7A5370F7BFC681CD /* TopicFeedsUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E94446B69A237BF4A9B54B70 /* TopicFeedsUITests.swift */; };
 		D76852A142C11AF0EADE4E82 /* PushRouting.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCEEB43C37EF521F974932C3 /* PushRouting.swift */; };
 		D8CE0B51CF2A25375E99E13F /* CourseCatalog.json in Resources */ = {isa = PBXBuildFile; fileRef = 313336C148784AD913CB3172 /* CourseCatalog.json */; };
 		DB9A6EC0FE54483B55B67655 /* GameWebViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B12CD5CAD3CC7EEDC4C1EF13 /* GameWebViewTests.swift */; };
@@ -283,6 +287,7 @@
 		3F912A7136DAC11A3F019A37 /* MaroonCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = MaroonCore; path = MaroonCore; sourceTree = SOURCE_ROOT; };
 		419A37DFCD698DA0FDC4B3B6 /* CommentThreadTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommentThreadTests.swift; sourceTree = "<group>"; };
 		4232CD9E917A556D5051E434 /* SourcePostTag.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourcePostTag.swift; sourceTree = "<group>"; };
+		426F81259F588A30A2FCEFAA /* TopicUITestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TopicUITestSupport.swift; sourceTree = "<group>"; };
 		42EA1C02C89C4BBA531A749D /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		431D552184B9C2DAC1665539 /* PhysicsGameView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhysicsGameView.swift; sourceTree = "<group>"; };
 		4469DB5E76BB6B3F85905A38 /* GameService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameService.swift; sourceTree = "<group>"; };
@@ -312,6 +317,7 @@
 		62C51939380FE304DF7DD2F2 /* MaroonSocialUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = MaroonSocialUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		651CACCDB04C3A3D1A5A4D27 /* game-table.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = "game-table.html"; sourceTree = "<group>"; };
 		6526115F6189F7BD5666436C /* TagLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TagLifecycleTests.swift; sourceTree = "<group>"; };
+		658F0E73EAB4E865ABE62AD8 /* TopicViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TopicViews.swift; sourceTree = "<group>"; };
 		66E4837DD050F73616051416 /* TagView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TagView.swift; sourceTree = "<group>"; };
 		66E8019E918104F455ACB9F9 /* RealtimeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeService.swift; sourceTree = "<group>"; };
 		6924E953A834D57450655DCD /* Game-Licenses.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Game-Licenses.txt"; sourceTree = "<group>"; };
@@ -415,6 +421,7 @@
 		D2D435EAB844CCEFAF23FA01 /* EmailLoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmailLoginView.swift; sourceTree = "<group>"; };
 		D47691C295916DFA32C4E94A /* PostDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PostDetailView.swift; sourceTree = "<group>"; };
 		D537F61C3F1907A97DC3AFFE /* RoomCallService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomCallService.swift; sourceTree = "<group>"; };
+		D5AA3114E7189298CABFE7BD /* TopicFeedTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TopicFeedTests.swift; sourceTree = "<group>"; };
 		D5CDDEFB6ADD99C73E625CA6 /* InboxUnreadUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxUnreadUITests.swift; sourceTree = "<group>"; };
 		D5D7EB5084E4F419B517CA6E /* CommunityView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommunityView.swift; sourceTree = "<group>"; };
 		D7AEB72B94995492B1EC5B60 /* game-states.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "game-states.json"; sourceTree = "<group>"; };
@@ -435,6 +442,7 @@
 		E6AF821A58EB4EA99211DE10 /* SportsScoresView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SportsScoresView.swift; sourceTree = "<group>"; };
 		E6D369B0B9973832C82FABC8 /* KlipyThumbnailTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KlipyThumbnailTests.swift; sourceTree = "<group>"; };
 		E90AE14E54F47AA9BD396E30 /* EmailAuthServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmailAuthServiceTests.swift; sourceTree = "<group>"; };
+		E94446B69A237BF4A9B54B70 /* TopicFeedsUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TopicFeedsUITests.swift; sourceTree = "<group>"; };
 		E9B9310EDE70760BAB7F3C20 /* PostFeaturesUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PostFeaturesUITests.swift; sourceTree = "<group>"; };
 		EA3FB216815EF3732B941937 /* VideoCompressionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoCompressionTests.swift; sourceTree = "<group>"; };
 		EB4ACAB47C32660141DCBCA8 /* campus.jpg */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; path = campus.jpg; sourceTree = "<group>"; };
@@ -553,6 +561,7 @@
 				5E2AF7CD91EF2D3983B4CC04 /* TaggedPostsTests.swift */,
 				6526115F6189F7BD5666436C /* TagLifecycleTests.swift */,
 				DD265FF2A4FFA4FB85A1E5EB /* TagServiceTests.swift */,
+				D5AA3114E7189298CABFE7BD /* TopicFeedTests.swift */,
 				7385C20F0678CC72E8EF3064 /* VerificationServiceTests.swift */,
 				EA3FB216815EF3732B941937 /* VideoCompressionTests.swift */,
 				38FA58B30512812EA25ECD6C /* WebPoolHostedTests.swift */,
@@ -652,6 +661,8 @@
 				36CF3A6BB18AE2EAC7B2673A /* SourcePostTagUITests.swift */,
 				F1A2DFCB35833D58C824B3AD /* SyntheticMediaUITests.swift */,
 				EFF322BB730215D99777BD0A /* TabNavigationUITests.swift */,
+				E94446B69A237BF4A9B54B70 /* TopicFeedsUITests.swift */,
+				426F81259F588A30A2FCEFAA /* TopicUITestSupport.swift */,
 				73405A725A02F1B821F94C77 /* WebPoolLiveUITests.swift */,
 			);
 			path = MaroonSocialUITests;
@@ -733,6 +744,7 @@
 				E6AF821A58EB4EA99211DE10 /* SportsScoresView.swift */,
 				45B128239698B0067C542959 /* StudySeriesView.swift */,
 				66E4837DD050F73616051416 /* TagView.swift */,
+				658F0E73EAB4E865ABE62AD8 /* TopicViews.swift */,
 				968F0688CEC6EAE3747D5562 /* VerificationView.swift */,
 				063D262DB4408A5BF8075E54 /* VideoAttachmentView.swift */,
 				D92F627562DBFDE3EA820853 /* VideoChatWebView.swift */,
@@ -991,6 +1003,7 @@
 				91E639F8E55B29D5E85501DB /* TagLifecycleTests.swift in Sources */,
 				905DC999F22EB390B29D4BCE /* TagServiceTests.swift in Sources */,
 				1F7E3A8E0F19C0D3F5BD9451 /* TaggedPostsTests.swift in Sources */,
+				59B67FD8AC46C23398E2AE54 /* TopicFeedTests.swift in Sources */,
 				464697C603A525110A3875C9 /* VerificationServiceTests.swift in Sources */,
 				1E08485D020E8F02A184D15F /* VideoCompressionTests.swift in Sources */,
 				558A58AD72884F7BC2A75CB1 /* WebPoolHostedTests.swift in Sources */,
@@ -1104,6 +1117,7 @@
 				7BDB1ACDFE033145CEF0B442 /* TagView.swift in Sources */,
 				6C4FA958845D7817165231BB /* TaggedPostLease.swift in Sources */,
 				B32832968570603CB67DAB81 /* Theme.swift in Sources */,
+				9E25713B9AA6F37439F52FBA /* TopicViews.swift in Sources */,
 				D1EB3CD6B8A82505341167CA /* VerificationService.swift in Sources */,
 				37018AB7280F54972734BE0D /* VerificationView.swift in Sources */,
 				814A9630BF750182E2E46855 /* VideoAttachmentView.swift in Sources */,
@@ -1141,6 +1155,8 @@
 				49935FC5FBD24DD2ACBF82B1 /* SourcePostTagUITests.swift in Sources */,
 				686BF6A69644B2156A91AD9C /* SyntheticMediaUITests.swift in Sources */,
 				44759CB13CAF8ACD5016C7EC /* TabNavigationUITests.swift in Sources */,
+				D711E5FC7A5370F7BFC681CD /* TopicFeedsUITests.swift in Sources */,
+				BA24E41B82DFCF9A55B801FF /* TopicUITestSupport.swift in Sources */,
 				83F90FF2DFAB682B36AC6130 /* WebPoolLiveUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

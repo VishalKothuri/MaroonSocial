@@ -39,6 +39,7 @@ import XCTest
     XCTAssertTrue(app.textViews["postText"].exists)
     let composerQuote = options.descendants(matching: .any)["postQuote-demo-coffee-post"].firstMatch
     XCTAssertTrue(composerQuote.waitForExistence(timeout: 3))
+    app.pickPostTopic()
     XCTAssertTrue(app.buttons["publishPost"].isEnabled, "A quote alone is a complete post")
     app.buttons["removeQuote"].tap()
     XCTAssertFalse(composerQuote.exists)
@@ -49,6 +50,7 @@ import XCTest
     XCTAssertTrue(composerQuote.waitForExistence(timeout: 3))
     let editor = app.textViews["postText"]
     editor.tap(); editor.typeText("Quoting the coffee rule")
+    app.pickPostTopic()
     app.buttons["publishPost"].tap()
     let published = app.buttons["Quoting the coffee rule"]
     XCTAssertTrue(published.waitForExistence(timeout: 5))
@@ -74,6 +76,8 @@ import XCTest
     XCTAssertTrue(app.staticTexts["Quote post"].waitForExistence(timeout: 3))
     let composerQuote = app.scrollViews["postOptions"].descendants(matching: .any)["postQuote-demo-coffee-post"].firstMatch
     XCTAssertTrue(composerQuote.waitForExistence(timeout: 3))
+    XCTAssertFalse(app.buttons["publishPost"].isEnabled, "The quote sheet needs a topic too")
+    app.pickPostTopic()
     XCTAssertTrue(app.buttons["publishPost"].isEnabled)
     app.buttons["closePostComposer"].tap()
     XCTAssertFalse(app.staticTexts["Quote post"].waitForExistence(timeout: 2))

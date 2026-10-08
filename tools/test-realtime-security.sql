@@ -26,7 +26,10 @@ begin
  if not has_function_privilege('authenticated','realtime_access.can_receive(text)','EXECUTE') then raise exception 'Policy wrapper not callable by authenticated';end if;
  if exists(select 1 from pg_policy where polrelid='realtime.messages'::regclass and polcmd in ('a','w','*') and 'authenticated'::regrole=any(polroles)) then raise exception 'Clients may broadcast';end if;
  if not exists(select 1 from pg_policy where polrelid='realtime.messages'::regclass and polname='maroon members receive their topics' and polcmd='r') then raise exception 'Receive policy missing';end if;
- if exists(select 1 from information_schema.role_table_grants where grantee='authenticated' and table_schema not in ('realtime','information_schema','pg_catalog','storage','graphql','graphql_public','extensions','auth','vault') and not (table_schema='public' and table_name='campus_cache')) then raise exception 'A realtime token would open more than the channels';end if;
+ -- supabase_functions is the platform's database-webhook schema: the local image creates it (owned by
+ -- supabase_admin, never by a migration) and the hosted project does not have it. It is not an API schema.
+ if exists(select 1 from information_schema.role_table_grants where grantee='authenticated' and table_schema not in ('realtime','information_schema','pg_catalog','storage','graphql','graphql_public','extensions','auth','vault') and not (table_schema='public' and table_name='campus_cache')
+  and not (table_schema='supabase_functions' and exists(select 1 from pg_namespace where nspname='supabase_functions' and pg_get_userbyid(nspowner)='supabase_admin'))) then raise exception 'A realtime token would open more than the channels';end if;
 end $$;
 
 -- 2. Topic predicate, member resolution and pokes, as the gateway's service role.
@@ -87,8 +90,8 @@ begin
  insert into social_private.room_members(room,member,role,status)values(grp,b,'member','invited');
  if not exists(select 1 from realtime.messages where topic='member:'||b and event='inbox' and payload->>'room'=grp and not payload?'seq') then raise exception 'Group invitation poke missing';end if;
  if social_private.realtime_topic_allowed(b,'room:'||grp) or not social_private.realtime_topic_allowed(a,'room:'||grp) then raise exception 'Group room topic wrong';end if;
- select coalesce(max(m.seq),0)+1 into grp_seq from social_private.messages m;
- insert into social_private.messages(room,author,nonce,body,seq)values(grp,a,gen_random_uuid(),'Secret group body',grp_seq);
+ -- seq is an identity column (generated always); take the value the insert assigned.
+ insert into social_private.messages(room,author,nonce,body)values(grp,a,gen_random_uuid(),'Secret group body')returning seq into grp_seq;
  if not exists(select 1 from realtime.messages where topic='member:'||a and event='inbox' and payload->>'room'=grp and (payload->>'seq')::bigint=grp_seq) then raise exception 'Group member inbox poke missing';end if;
  if exists(select 1 from realtime.messages where topic='member:'||b and payload->>'room'=grp and payload?'seq') then raise exception 'Group invitee poked about a message';end if;
 

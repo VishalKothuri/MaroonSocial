@@ -3,7 +3,8 @@
 Run from the repository root. Public config is bundled; no service-role key is used.
 """
 import concurrent.futures,hashlib,json,pathlib,time,urllib.request,urllib.error,uuid,os
-config=json.loads(pathlib.Path('MaroonSocial/Resources/Backend.json').read_text())
+import runner_backend
+config=runner_backend.load()
 fixtures=[]
 def call(endpoint,action,token=None,**payload):
  headers={'Content-Type':'application/json','apikey':config['publishableKey']}

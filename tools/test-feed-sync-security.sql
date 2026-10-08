@@ -14,7 +14,7 @@ declare
 begin
  if has_function_privilege('anon','social_private.feed_sync(uuid,text,jsonb)','EXECUTE')or has_function_privilege('authenticated','social_private.feed_sync(uuid,text,jsonb)','EXECUTE')
   or has_function_privilege('authenticated','social_private.post_json(uuid,social_private.posts,integer)','EXECUTE')or has_function_privilege('anon','social_private.message_page(uuid,text,bigint,bigint,integer)','EXECUTE')
-  or has_function_privilege('authenticated','social_private.feed_posts(uuid,text,uuid[])','EXECUTE')or has_function_privilege('anon','social_private.message_changes(uuid,text,bigint,timestamptz)','EXECUTE')
+  or has_function_privilege('authenticated','social_private.feed_posts(uuid,text,uuid[],text)','EXECUTE')or has_function_privilege('anon','social_private.message_changes(uuid,text,bigint,timestamptz)','EXECUTE')
   or has_function_privilege('authenticated','social_private.mark_feed_resync(uuid[])','EXECUTE')
   or has_table_privilege('anon','social_private.post_tombstones','SELECT')or has_table_privilege('authenticated','social_private.post_tombstones','SELECT')
   or has_table_privilege('anon','social_private.feed_resyncs','SELECT')or has_table_privilege('authenticated','social_private.feed_resyncs','SELECT')then raise exception 'Incremental read API exposed';end if;
@@ -22,10 +22,14 @@ begin
  insert into social_private.members(token_hash,username,adult,network_hash)values(hb,'feed_b_'||substr(hb,1,8),true,hb)returning id into b;
  insert into social_private.members(token_hash,username,adult,network_hash)values(hc,'feed_c_'||substr(hc,1,8),true,hc)returning id into c;
  for i in 1..7 loop
+  -- Age the earlier fixture posts past the 5-posts-per-15-minutes limit; the loop below puts
+  -- them back on one shared created_at (created_at moves no change marker).
+  update social_private.posts set created_at=created_at-interval '15 minutes' where author=a;
   out:=public.social_gateway('post.create',ha,jsonb_build_object('text','Feed page QA '||i,'anonymous',true,'community','Graduates','acceptsDM',true));
   if out->>'resource_id' is null then raise exception 'Fixture post failed %',out;end if;
   ids:=ids||(out->>'resource_id')::uuid;
  end loop;
+ update social_private.posts set created_at=now() where id=any(ids);
 
  -- Keyset pages neither duplicate nor skip while a post is inserted between pages.
  for i in 1..40 loop
@@ -166,7 +170,9 @@ begin
  out:=public.social_gateway('post.create',hc,'{"text":"Anonymous C post","anonymous":true,"community":"Graduates"}');c_anon:=(out->>'resource_id')::uuid;
  out:=public.social_gateway('post.create',hc,'{"text":"Zero-score C post","anonymous":true,"community":"Graduates"}');c_zero:=(out->>'resource_id')::uuid;
  out:=public.social_gateway('post.vote',hc,jsonb_build_object('post_id',c_zero,'value',0));if out?'error' then raise exception 'Withdrawing the author vote failed %',out;end if;
+ update social_private.posts set created_at=created_at-interval '15 minutes' where author=a;
  out:=public.social_gateway('post.create',ha,'{"text":"Named A post","anonymous":false,"community":"Graduates"}');named_a:=(out->>'resource_id')::uuid;
+ if named_a is null then raise exception 'Named A post failed %',out;end if;
  out:=public.social_gateway('comment.create',ha,jsonb_build_object('post_id',c_named,'text','Anonymous A reply','anonymous',true));if out?'error' then raise exception 'Reply failed %',out;end if;
  out:=public.social_gateway('post.vote',hd,jsonb_build_object('post_id',c_anon,'value',1));if out?'error' then raise exception 'Vote failed %',out;end if;
  select jsonb_object_agg(id,changed_at)into stamps from social_private.posts where id in(c_named,c_anon,c_zero,named_a,ids[1],ids[7]);

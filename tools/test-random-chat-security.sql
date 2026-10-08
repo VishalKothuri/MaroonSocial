@@ -20,9 +20,12 @@ begin
     or has_schema_privilege('authenticated','random_private','USAGE') then
     raise exception 'Guest tables or gateway exposed to API roles';
   end if;
+  -- Every guest-chat table (the original seven plus later browser/continuation tables) keeps RLS on.
+  if exists(select 1 from pg_class c join pg_namespace n on n.oid=c.relnamespace
+    where n.nspname='random_private' and c.relkind in('r','p') and not c.relrowsecurity) then raise exception 'RLS missing on a chat table'; end if;
   select count(*) into total from pg_class c join pg_namespace n on n.oid=c.relnamespace
-    where n.nspname='random_private' and c.relkind='r' and c.relrowsecurity;
-  if total<>7 then raise exception 'RLS missing on a chat table'; end if;
+    where n.nspname='random_private' and c.relkind='r' and c.relname in('rooms','participants','messages','queue','reports','blocks','signals') and c.relrowsecurity;
+  if total<>7 then raise exception 'RLS missing on a core chat table'; end if;
 
   result := public.random_chat_gateway('poll',hash_unknown,'{}');
   if result->>'code'<>'unauthorized' then raise exception 'Unknown token accepted'; end if;

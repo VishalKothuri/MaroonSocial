@@ -85,6 +85,7 @@ import XCTest
     XCTAssertTrue(app.buttons["Remove attachment"].exists)
     waitEnabled(app.buttons["Play video"].firstMatch)
     capture(app, name: "Synthetic video prepared in composer")
+    app.pickPostTopic()
     waitEnabled(app.buttons["publishPost"])
     app.buttons["publishPost"].tap()
     let published = app.buttons[caption]

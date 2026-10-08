@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """One synthetic account, read-only official sports fetch; delete the account afterward."""
 import json,pathlib,urllib.request,urllib.error,uuid
+import runner_backend
 root=pathlib.Path(__file__).resolve().parents[1]
-cfg=json.loads((root/'MaroonSocial/Resources/Backend.json').read_text())
+cfg=runner_backend.load()
 def call(endpoint,action,token=None,**payload):
     request=urllib.request.Request(cfg['url']+'/functions/v1/'+endpoint,data=json.dumps(dict(action=action,**payload)).encode(),headers={'Content-Type':'application/json','apikey':cfg['publishableKey'],**({'X-Social-Token':token} if token else {})})
     try:

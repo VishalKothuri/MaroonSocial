@@ -5,6 +5,7 @@ Credentials stay in memory. Account cleanup always runs; generated post IDs are
 recorded separately so tombstones can be removed without touching real content.
 """
 import concurrent.futures
+import runner_backend
 import json
 import os
 import pathlib
@@ -12,7 +13,7 @@ import urllib.error
 import urllib.request
 import uuid
 
-CONFIG = json.loads(pathlib.Path('MaroonSocial/Resources/Backend.json').read_text())
+CONFIG = runner_backend.load()
 tokens = []
 posts = []
 label = 'pq' + uuid.uuid4().hex[:9]

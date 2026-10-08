@@ -3,7 +3,8 @@
 Account cleanup is automatic. Synthetic closed room IDs are recorded for owner SQL cleanup.
 """
 import base64,json,os,pathlib,struct,time,urllib.request,urllib.error,uuid,zlib
-config=json.loads(pathlib.Path('MaroonSocial/Resources/Backend.json').read_text());tokens=[];rooms=[]
+import runner_backend
+config=runner_backend.load();tokens=[];rooms=[]
 def call(endpoint,action,token=None,**payload):
  headers={'Content-Type':'application/json','apikey':config['publishableKey']}
  if token:headers['X-Social-Token']=token
