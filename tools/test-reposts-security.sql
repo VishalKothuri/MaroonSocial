@@ -9,9 +9,9 @@ declare
 begin
  if has_function_privilege('anon','social_private.quote_view(uuid,uuid)','EXECUTE')or has_function_privilege('authenticated','social_private.quote_view(uuid,uuid)','EXECUTE')or has_column_privilege('anon','social_private.posts','quoted_post','SELECT')or has_column_privilege('authenticated','social_private.posts','quoted_post','SELECT')then raise exception 'Private quote projection exposed';end if;
  name_a:='quote_a_'||substr(ha,1,8);name_c:='quote_c_'||substr(hc,1,8);
- insert into social_private.members(token_hash,username,adult,network_hash)values(ha,name_a,true,ha)returning id into a;
- insert into social_private.members(token_hash,username,adult,network_hash)values(hb,'quote_b_'||substr(hb,1,8),true,hb)returning id into b;
- insert into social_private.members(token_hash,username,adult,network_hash)values(hc,name_c,true,hc)returning id into c;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(ha,name_a,true,ha)returning id into a;insert into social_private.guidelines_acceptances(member,version)select a,required_version from social_private.guidelines_settings;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hb,'quote_b_'||substr(hb,1,8),true,hb)returning id into b;insert into social_private.guidelines_acceptances(member,version)select b,required_version from social_private.guidelines_settings;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hc,name_c,true,hc)returning id into c;insert into social_private.guidelines_acceptances(member,version)select c,required_version from social_private.guidelines_settings;
  out:=public.social_gateway('post.create',ha,'{"text":"Named source for quoting","anonymous":false,"acceptsDM":false}');src:=(out->>'resource_id')::uuid;
  out:=public.social_gateway('post.create',hc,'{"text":"Anonymous source for quoting","anonymous":true}');anon_src:=(out->>'resource_id')::uuid;
  -- A quote with an empty body is a complete post; the quote alone without any post is not.

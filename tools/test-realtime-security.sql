@@ -39,9 +39,9 @@ declare
  ha text:=encode(extensions.gen_random_bytes(32),'hex');hb text:=encode(extensions.gen_random_bytes(32),'hex');hc text:=encode(extensions.gen_random_bytes(32),'hex');
  a uuid;b uuid;c uuid;post uuid;dm_room text;grp text;out jsonb;last_seq bigint;grp_seq bigint;before_count integer;was_required boolean;
 begin
- insert into social_private.members(token_hash,username,adult,network_hash)values(ha,'rt_a_'||substr(ha,1,8),true,ha)returning id into a;
- insert into social_private.members(token_hash,username,adult,network_hash)values(hb,'rt_b_'||substr(hb,1,8),true,hb)returning id into b;
- insert into social_private.members(token_hash,username,adult,network_hash)values(hc,'rt_c_'||substr(hc,1,8),true,hc)returning id into c;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(ha,'rt_a_'||substr(ha,1,8),true,ha)returning id into a;insert into social_private.guidelines_acceptances(member,version)select a,required_version from social_private.guidelines_settings;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hb,'rt_b_'||substr(hb,1,8),true,hb)returning id into b;insert into social_private.guidelines_acceptances(member,version)select b,required_version from social_private.guidelines_settings;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hc,'rt_c_'||substr(hc,1,8),true,hc)returning id into c;insert into social_private.guidelines_acceptances(member,version)select c,required_version from social_private.guidelines_settings;
  if (public.social_realtime('member',ha,'{}'))->>'member' is distinct from a::text then raise exception 'Member resolution wrong';end if;
  if (public.social_realtime('member',encode(extensions.gen_random_bytes(32),'hex'),'{}'))->>'code' is distinct from 'unauthorized' then raise exception 'Unknown credential resolved';end if;
  if (public.social_realtime('other',ha,'{}'))->>'code' is distinct from 'invalid' then raise exception 'Unknown realtime action accepted';end if;

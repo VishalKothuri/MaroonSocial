@@ -14,6 +14,8 @@ def ok(endpoint,action,token,**payload):
  status,result=call(endpoint,action,token,**payload);assert status==200,(action,status,result);return result
 try:
  a,b=[p['token']for p in people]
+ # A new series needs the community guidelines accepted (does nothing on a server without them).
+ for token in(a,b):runner_backend.accept_guidelines(config,ok('social','snapshot',token),token)
  payload=dict(nonce=str(uuid.uuid4()),title='Synthetic weekly study',place='MSC test only',starts=int(time.time()+86400),weeks=3,capacity=6,details='Synthetic API validation',approval_required=True,course='CHEM 107')
  result=ok('activity-plans','series.create',a,**payload);ids.extend(result['activity_ids']);assert len(ids)==3
  assert ok('activity-plans','series.create',a,**payload)==result

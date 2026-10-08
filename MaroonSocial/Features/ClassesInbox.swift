@@ -141,6 +141,8 @@ struct NewMessageView: View {
   @State private var nonce = UUID().uuidString
   @State private var submissionKey = ""
   @State private var closing = false
+  /// The community guidelines sheet shown before a member's first message request.
+  @State private var guidelines = GuidelinesGate()
   private enum Field: Hashable { case username, message }
   @FocusState private var focused: Field?
   private var scope: MessageRequestScope {
@@ -172,26 +174,34 @@ struct NewMessageView: View {
       .interactiveDismissDisabled(sending || !text.isEmpty || username != initialUsername).navigationTitle("New message").navigationBarTitleDisplayMode(.inline)
       .onAppear { if draftOwner.isEmpty { draftOwner = store.compositions.owner }; if store.compositions.draft(draftKey)==nil { username = initialUsername } }.persistentDraft(draftKey,value:savedDraft).toolbar {
       ToolbarItem(placement: .cancellationAction) { Button("Cancel"){if !text.isEmpty || username != initialUsername{closing=true}else{dismiss()}}.disabled(sending) }
-      ToolbarItem(placement: .confirmationAction) { Button(sending ? "Sending…" : "Send") {
-        let key=CompositionIdentity.signature(scope.payload(text:text,username:username,nonce:""))
-        if key != submissionKey{submissionKey=key;nonce=UUID().uuidString}
-        sending = true; error = nil; focused = nil
-        Task {
-          guard await store.compositions.saveDraft(savedDraft.wrappedValue,key:draftKey,owner:draftOwner)else{error=store.compositions.error;sending=false;return}
-          guard draftOwner == store.compositions.owner else { return }
-          let result = await store.perform(scope.action, scope.payload(text: text, username: username, nonce: nonce))
-          guard draftOwner == store.compositions.owner else { return }
-          if let room = result?.resourceID { AppHaptics.shared.play(.success);clearDraft();await store.compositions.removeDraft(draftKey,owner:draftOwner);dismiss(); onCreated(room) }
-          else { AppHaptics.shared.play(.error); error = store.notice ?? "Your request could not be sent. Please retry." }
-          sending = false
-        }
-      }.disabled(sending || store.busy || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || text.count > 1000 || (scope.requiresUsername && username.trimmingCharacters(in: .whitespacesAndNewlines).count < 3)).accessibilityIdentifier("sendMessageRequest") }
+      ToolbarItem(placement: .confirmationAction) { Button(sending ? "Sending…" : "Send", action: sendRequest).disabled(sending || store.busy || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || text.count > 1000 || (scope.requiresUsername && username.trimmingCharacters(in: .whitespacesAndNewlines).count < 3)).accessibilityIdentifier("sendMessageRequest") }
       ToolbarItem(placement: .topBarTrailing) { if focused != nil { KeyboardDismissButton { focused = nil } } }
     }.alert("Keep this message request draft?",isPresented:$closing){
       Button("Save and close"){Task{if await store.compositions.saveDraft(savedDraft.wrappedValue,key:draftKey,owner:draftOwner){dismiss()}else{error=store.compositions.error}}}
       Button("Discard draft",role:.destructive){Task{clearDraft();await store.compositions.removeDraft(draftKey,owner:draftOwner);dismiss()}}
       Button("Keep editing",role:.cancel){}
-    }message:{Text("This draft stays attached to the same recipient or post on this device. It is never sent automatically.")} }
+    }message:{Text("This draft stays attached to the same recipient or post on this device. It is never sent automatically.")}
+    .guidelinesSheet(guidelines) }
+  }
+  private func sendRequest() {
+    guard !sending else { return }
+    // First message request: the guidelines sheet comes first, and "I agree" sends it.
+    if guidelines.intercept(store, retry: sendRequest) { focused = nil; return }
+    let key=CompositionIdentity.signature(scope.payload(text:text,username:username,nonce:""))
+    if key != submissionKey{submissionKey=key;nonce=UUID().uuidString}
+    sending = true; error = nil; focused = nil
+    Task {
+      guard await store.compositions.saveDraft(savedDraft.wrappedValue,key:draftKey,owner:draftOwner)else{error=store.compositions.error;sending=false;return}
+      guard draftOwner == store.compositions.owner else { return }
+      var result: SocialResponse?
+      let refused = await guidelines.run(store, retry: sendRequest) {
+        result = await store.perform(scope.action, scope.payload(text: text, username: username, nonce: nonce))
+      }
+      guard draftOwner == store.compositions.owner else { return }
+      if let room = result?.resourceID { AppHaptics.shared.play(.success);clearDraft();await store.compositions.removeDraft(draftKey,owner:draftOwner);dismiss(); onCreated(room) }
+      else if !refused { AppHaptics.shared.play(.error); error = store.notice ?? "Your request could not be sent. Please retry." }
+      sending = false
+    }
   }
 }
 struct CreateGroupView: View {
@@ -232,6 +242,8 @@ struct ChatView: View {
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
   let id: String
   @State private var confirmLeave = false
+  /// The community guidelines sheet shown before a member's first chat message.
+  @State private var guidelines = GuidelinesGate()
   @State private var text = ""
   @State private var item: PhotosPickerItem?
   @State private var media: MediaAttachment?
@@ -410,6 +422,7 @@ struct ChatView: View {
         if let media { ImageEditorView(source: media) { edited in item = nil; self.media = edited; offers.arrived(edited) } }
       }
       .attachmentOffers(offers, service: SharedMemeService(social: store.social, fixtureMode: store.fixtureMode))
+      .guidelinesSheet(guidelines)
       .task { await store.markRead(id) }
       // The open conversation follows its room: Realtime pokes (or a 3 s poll until they flow)
       // fetch `room.messages after_seq`; the view itself never polls.
@@ -526,6 +539,8 @@ struct ChatView: View {
   private func send() {
     guard draftOwner == store.compositions.owner, canSend, !sending, !loadingMedia, restoredReplyID == nil, text.count <= 4000,
       !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || media != nil else { return }
+    // First chat message: the guidelines sheet comes first, and "I agree" sends it.
+    if guidelines.intercept(store, retry: send) { focused = false; return }
     let key=CompositionIdentity.signature(["room":id,"text":text,"media":media?.id ?? "","reply":replyTo?.id ?? restoredReplyID ?? ""])
     if key != submissionKey{submissionKey=key;nonce=UUID().uuidString}
     let submitted = draftSnapshot
@@ -533,8 +548,12 @@ struct ChatView: View {
     Task {
       guard await store.compositions.saveDraft(savedDraft.wrappedValue,key:"message:"+id,owner:draftOwner)else{store.notice=store.compositions.error;sending=false;return}
       guard draftOwner == store.compositions.owner else { return }
-      let sent = await store.sendMessage(roomID: id, text: submitted.text, media: submitted.media, replyTo: submitted.replyID, nonce: submitted.nonce)
+      var sent = false
+      let refused = await guidelines.run(store, retry: send) {
+        sent = await store.sendMessage(roomID: id, text: submitted.text, media: submitted.media, replyTo: submitted.replyID, nonce: submitted.nonce)
+      }
       guard draftOwner == store.compositions.owner else { return }
+      if refused && !sent { sending = false; return }
       AppHaptics.shared.play(sent ? (store.compositions.queue.contains { $0.id == submitted.nonce } ? .impact : .success) : .error)
       let remaining = submitted.completingSend(current: draftSnapshot, succeeded: sent)
       text = remaining.text; media = remaining.media; item = remaining.photoSelection; nonce = remaining.nonce

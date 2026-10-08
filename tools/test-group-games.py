@@ -14,7 +14,7 @@ def ok(endpoint,action,token=None,**payload):
  status,data=call(endpoint,action,token,**payload);assert status==200,(endpoint,action,status,data);return data
 label='qagrp'+str(int(time.time()))[-7:];names=[label+x for x in'abc']
 try:
- for name in names:tokens.append(ok('social','register',username=name,adult=True)['token'])
+ for name in names:tokens.append(runner_backend.accept_guidelines(config,ok('social','register',username=name,adult=True))['token'])
  a,b,c=tokens
  room=ok('communities','create',a,title=label,description='Synthetic chosen-opponent group game test',category='Friends',is_public=False,avatar='maroon',alias='Captain',member_avatar='gold',nonce=str(uuid.uuid4()))
  code=room['community']['invite_code'];room=room['room_id']

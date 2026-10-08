@@ -13,12 +13,7 @@ struct CampusView: View {
   @State private var gameRoom: String?
   @State private var joiningGame = false
   /// The game whose chat is open now or opens within the next three hours.
-  private var gameDay: CampusEvent? {
-    let now = Date.now
-    return store.campus.displayEvents(savedIDs: store.state.savedEvents)
-      .filter { $0.category == "Sports" && !$0.cancelled && !$0.allDay && now < ($0.ends ?? $0.starts.addingTimeInterval(6 * 3600)) && $0.chatOpenDate <= now.addingTimeInterval(3 * 3600) }
-      .sorted { $0.starts < $1.starts }.first
-  }
+  private var gameDay: CampusEvent? { store.campus.gameDay(savedIDs: store.state.savedEvents) }
   private func openGameChat(_ event: CampusEvent) {
     guard !joiningGame else { return }
     AppHaptics.shared.play(.impact); joiningGame = true

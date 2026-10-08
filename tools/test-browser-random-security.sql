@@ -3,9 +3,9 @@ set local role service_role;
 do $$
 declare ha text:=encode(extensions.gen_random_bytes(32),'hex');hb text:=encode(extensions.gen_random_bytes(32),'hex');hc text:=encode(extensions.gen_random_bytes(32),'hex');browser_hash text:=encode(extensions.gen_random_bytes(32),'hex');code_hash text:=encode(extensions.gen_random_bytes(32),'hex');a uuid;b uuid;c uuid;out jsonb;rid uuid;dm text;otherdm text;snapshot jsonb;jobid uuid;gameid uuid;
 begin
- insert into social_private.members(token_hash,username,adult,network_hash)values(ha,'bw_a_'||substr(ha,1,8),true,ha)returning id into a;
- insert into social_private.members(token_hash,username,adult,network_hash)values(hb,'bw_b_'||substr(hb,1,8),true,hb)returning id into b;
- insert into social_private.members(token_hash,username,adult,network_hash)values(hc,'bw_c_'||substr(hc,1,8),true,hc)returning id into c;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(ha,'bw_a_'||substr(ha,1,8),true,ha)returning id into a;insert into social_private.guidelines_acceptances(member,version)select a,required_version from social_private.guidelines_settings;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hb,'bw_b_'||substr(hb,1,8),true,hb)returning id into b;insert into social_private.guidelines_acceptances(member,version)select b,required_version from social_private.guidelines_settings;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hc,'bw_c_'||substr(hc,1,8),true,hc)returning id into c;insert into social_private.guidelines_acceptances(member,version)select c,required_version from social_private.guidelines_settings;
  if has_function_privilege('authenticated','public.random_browser_gateway(text,text,jsonb)','EXECUTE')then raise exception 'Browser bridge exposed';end if;
  out:=public.random_browser_gateway('pair.create',ha,jsonb_build_object('code_hash',code_hash));if out?'error'then raise exception 'Pair create %',out;end if;
  out:=public.random_browser_gateway('pair.claim',null,jsonb_build_object('code_hash',code_hash,'token_hash',browser_hash,'network_hash',ha));if out?'error'then raise exception 'Pair claim %',out;end if;

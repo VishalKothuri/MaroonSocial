@@ -87,7 +87,7 @@ label='qarace'+str(int(time.time()))[-7:]
 def uid():return str(uuid.uuid4())
 try:
  for suffix in'ab':
-  tokens.append(ok('social','register',username=label+suffix,adult=True)['token']);save()
+  tokens.append(runner_backend.accept_guidelines(config,ok('social','register',username=label+suffix,adult=True))['token']);save()
  a,b=tokens;instance={a:uid(),b:uid()}
  dm=ok('social','dm.request',a,username=label+'b',text='Synthetic call admission test',nonce=uid())['resource_id'];rooms.append(dm);save();ok('social','dm.accept',b,room_id=dm)
  group=ok('communities','create',a,title=label,description='Synthetic concurrent call admission test.',category='Friends',avatar='gold',is_public=True,alias='Copper',member_avatar='sage',nonce=uid())['room_id'];rooms.append(group);save();ok('communities','join',b,room_id=group,alias='Silver',member_avatar='sky')

@@ -16,6 +16,8 @@ def ok(endpoint,action,token,**payload):
  status,value=call(endpoint,action,token,**payload);assert status==200,(endpoint,action,status,value);return value
 try:
  a,b,c=[x['token']for x in people]
+ # The provisioned accounts accept the community guidelines (required before sending messages).
+ for token in(a,b,c):runner_backend.accept_guidelines(config,ok('social','snapshot',token),token)
  payload=dict(title='Synthetic private media QA',description='Temporary video/avatar authorization test.',category='Friends',avatar='gold',is_public=False,alias='Captain',member_avatar='sage',nonce=str(uuid.uuid4()))
  room=ok('communities','create',a,**payload)['room_id'];rooms.append(room)
  path=pathlib.Path('build/synthetic-media');video=(path/'synthetic-upload.mp4').read_bytes();photo=(path/'synthetic-photo.jpg').read_bytes()

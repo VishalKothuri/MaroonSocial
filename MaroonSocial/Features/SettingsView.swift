@@ -16,14 +16,12 @@ struct SettingsView: View {
           HStack(spacing: 12) {
             Avatar(size: 48)
             VStack(alignment: .leading, spacing: 6) {
-              ViewThatFits(in: .horizontal) {
-                HStack(alignment: .firstTextBaseline, spacing: 10) { accountName; karmaLabel }
-                VStack(alignment: .leading, spacing: 5) { accountName; karmaLabel }
-              }
+              accountName
               Text(store.connected ? "Connected account" : "Connecting…").font(.caption).foregroundStyle(.secondary)
             }
           }
           }.accessibilityIdentifier("editAccountProfile")
+          ProfileStatTiles(karma: store.karma, posts: store.ownPostCount)
           if !store.fixtureMode && !store.social.hasDeviceCredential {
             if store.auth.signedIn { Label("Personal email recovery linked", systemImage: "envelope.badge.shield.half.filled").font(.subheadline) }
             else { NavigationLink("Sign in again with personal email") { EmailLoginView(linkExisting: false).appHapticOnOpen() } }
@@ -32,6 +30,11 @@ struct SettingsView: View {
           NavigationLink("TAMU mailbox verification") { VerificationView(social: store.social).appHapticOnOpen() }
           NavigationLink { PushSettingsView().appHapticOnOpen() } label: { Label("Notifications", systemImage: "bell.badge") }
             .accessibilityIdentifier("settingsPushNotifications")
+          NavigationLink { GuidelinesSettingsView().appHapticOnOpen() } label: {
+            LabeledContent {
+              Text(store.guidelinesRequired ? "Not accepted" : store.guidelines?.accepted.map { "Version \($0)" } ?? "")
+            } label: { Label("Community guidelines", systemImage: "checkmark.shield") }
+          }.accessibilityIdentifier("settingsGuidelines")
         }
         Section("Your collection") {
           NavigationLink { PersonalLibraryView(kind: .posts).appHapticOnOpen() } label: { Label("My posts", systemImage: "text.bubble") }
@@ -56,6 +59,8 @@ struct SettingsView: View {
           Text("Anonymous posts, anonymous replies and post-origin conversations do not show your username to other members. Posts and replies you publish by name, named classes and activities use your account username. Each group uses the alias and avatar you choose for that group.").font(.subheadline)
           Text("Messages and reports are stored on the service and are not end-to-end encrypted. Login credentials are stored securely on this device. Personal email recovery becomes available after email delivery is configured and you link your account. Verify your TAMU mailbox from the account section when email delivery is available.").font(.subheadline)
           Text("Reports are saved for review. This development service does not have a staffed emergency response team.").font(.caption).foregroundStyle(.secondary)
+          Link(destination: SupportContact.mailURL) { Label("Contact \(SupportContact.email)", systemImage: "envelope") }
+            .accessibilityIdentifier("settingsSupportEmail")
         }
         Section("Organizations") { NavigationLink("Your organizations") { OrganizationsView().appHapticOnOpen() }.accessibilityIdentifier("settingsOrganizations") }
         Section("About") {
@@ -80,10 +85,32 @@ struct SettingsView: View {
     }
   }
   private var accountName: some View { Text("@\(store.state.username)").font(.headline) }
-  private var karmaLabel: some View {
-    Text("\(store.karma) karma").font(.caption.weight(.semibold)).monospacedDigit()
-      .padding(.horizontal, 9).padding(.vertical, 5).foregroundStyle(Palette.onAccent)
-      .background(Palette.maroon, in: Capsule()).accessibilityIdentifier("profileKarma")
+}
+/// Karma and Posts, private to the owner, with what karma means.
+struct ProfileStatTiles: View {
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+  let karma: Int
+  let posts: Int
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      (dynamicTypeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 8)) : AnyLayout(HStackLayout(spacing: 10))) {
+        tile(value: karma, title: "Karma", symbol: "arrow.up.heart", label: "\(karma) karma", identifier: "profileKarma")
+        tile(value: posts, title: "Posts", symbol: "text.bubble", label: posts == 1 ? "1 post" : "\(posts) posts", identifier: "profilePosts")
+      }
+      Text("Karma is the upvotes minus downvotes others give your posts and replies. Only you can see it.")
+        .font(.caption).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
+        .accessibilityIdentifier("profileKarmaExplanation")
+    }.padding(.vertical, 4)
+  }
+  private func tile(value: Int, title: String, symbol: String, label: String, identifier: String) -> some View {
+    VStack(alignment: .leading, spacing: 4) {
+      Label(title, systemImage: symbol).font(.caption.weight(.semibold)).foregroundStyle(Palette.secondary)
+      Text(value.formatted()).font(.title2.bold()).monospacedDigit().foregroundStyle(Palette.ink)
+        .lineLimit(1).minimumScaleFactor(0.6)
+    }.frame(maxWidth: .infinity, alignment: .leading).padding(12)
+      .background(Palette.elevated, in: RoundedRectangle(cornerRadius: 12))
+      .accessibilityElement(children: .ignore).accessibilityLabel(label).accessibilityAddTraits(.isStaticText)
+      .accessibilityIdentifier(identifier)
   }
 }
 struct AccountProfileView: View {

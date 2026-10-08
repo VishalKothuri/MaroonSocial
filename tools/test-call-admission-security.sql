@@ -13,9 +13,9 @@ begin
  end loop;
  -- admission_member stays stable and lock-free: the members-row lock belongs to the wrapper, where its position is visible.
  if(select provolatile from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='group_call_private'and p.proname='admission_member')<>'s'or strpos(pg_get_functiondef('group_call_private.admission_member(text)'::regprocedure),'for no key update')>0 then raise exception 'admission_member must stay stable and lock-free';end if;
- insert into social_private.members(token_hash,username,adult,network_hash)values(ha,'ad_a_'||substr(ha,1,8),true,ha)returning id into a;
- insert into social_private.members(token_hash,username,adult,network_hash)values(hb,'ad_b_'||substr(hb,1,8),true,hb)returning id into b;
- insert into social_private.members(token_hash,username,adult,network_hash)values(hc,'ad_c_'||substr(hc,1,8),true,hc)returning id into c;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(ha,'ad_a_'||substr(ha,1,8),true,ha)returning id into a;insert into social_private.guidelines_acceptances(member,version)select a,required_version from social_private.guidelines_settings;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hb,'ad_b_'||substr(hb,1,8),true,hb)returning id into b;insert into social_private.guidelines_acceptances(member,version)select b,required_version from social_private.guidelines_settings;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hc,'ad_c_'||substr(hc,1,8),true,hc)returning id into c;insert into social_private.guidelines_acceptances(member,version)select c,required_version from social_private.guidelines_settings;
  insert into social_private.rooms(kind,title,status,anonymous)values('dm','Admission QA','active',true)returning id into dm;
  insert into social_private.room_members(room,member,status)values(dm,a,'accepted'),(dm,c,'accepted');
  out:=public.communities_gateway('create',ha,jsonb_build_object('title','Admission QA','description','Synthetic admission checks only.','category','Friends','avatar','gold','is_public',true,'alias','Copper','member_avatar','sage','nonce',gen_random_uuid()));grp:=out->>'room_id';if grp is null then raise exception 'Group setup %',out;end if;

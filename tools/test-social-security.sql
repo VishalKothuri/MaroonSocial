@@ -9,8 +9,8 @@ begin
  if has_function_privilege('anon','public.social_gateway(text,text,jsonb)','EXECUTE') or has_function_privilege('authenticated','public.social_gateway(text,text,jsonb)','EXECUTE') or has_schema_privilege('anon','social_private','USAGE')or has_schema_privilege('authenticated','social_private','USAGE')then raise exception 'Private member boundary exposed';end if;
  if exists(select 1 from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='social_private'and c.relkind='r'and not c.relrowsecurity)then raise exception 'Private table has no RLS';end if;
  if(select public from storage.buckets where id='social-media')then raise exception 'Private media bucket public';end if;
- insert into social_private.members(token_hash,username,adult,network_hash)values(ha,'sqltest_a_'||substr(ha,1,8),true,ha)returning id into aid;
- insert into social_private.members(token_hash,username,adult,network_hash)values(hb,'sqltest_b_'||substr(hb,1,8),true,hb)returning id into bid;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(ha,'sqltest_a_'||substr(ha,1,8),true,ha)returning id into aid;insert into social_private.guidelines_acceptances(member,version)select aid,required_version from social_private.guidelines_settings;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hb,'sqltest_b_'||substr(hb,1,8),true,hb)returning id into bid;insert into social_private.guidelines_acceptances(member,version)select bid,required_version from social_private.guidelines_settings;
  update social_private.members set banned=true where id=aid;
  out:=public.social_gateway('snapshot',ha,'{}');if out->>'code'<>'forbidden'then raise exception 'Suspended member accepted';end if;
  update social_private.members set banned=false,rate_count=600 where id=aid;

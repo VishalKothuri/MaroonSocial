@@ -18,9 +18,9 @@ begin
   or has_function_privilege('authenticated','social_private.mark_feed_resync(uuid[])','EXECUTE')
   or has_table_privilege('anon','social_private.post_tombstones','SELECT')or has_table_privilege('authenticated','social_private.post_tombstones','SELECT')
   or has_table_privilege('anon','social_private.feed_resyncs','SELECT')or has_table_privilege('authenticated','social_private.feed_resyncs','SELECT')then raise exception 'Incremental read API exposed';end if;
- insert into social_private.members(token_hash,username,adult,network_hash)values(ha,'feed_a_'||substr(ha,1,8),true,ha)returning id into a;
- insert into social_private.members(token_hash,username,adult,network_hash)values(hb,'feed_b_'||substr(hb,1,8),true,hb)returning id into b;
- insert into social_private.members(token_hash,username,adult,network_hash)values(hc,'feed_c_'||substr(hc,1,8),true,hc)returning id into c;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(ha,'feed_a_'||substr(ha,1,8),true,ha)returning id into a;insert into social_private.guidelines_acceptances(member,version)select a,required_version from social_private.guidelines_settings;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hb,'feed_b_'||substr(hb,1,8),true,hb)returning id into b;insert into social_private.guidelines_acceptances(member,version)select b,required_version from social_private.guidelines_settings;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hc,'feed_c_'||substr(hc,1,8),true,hc)returning id into c;insert into social_private.guidelines_acceptances(member,version)select c,required_version from social_private.guidelines_settings;
  for i in 1..7 loop
   -- Age the earlier fixture posts past the 5-posts-per-15-minutes limit; the loop below puts
   -- them back on one shared created_at (created_at moves no change marker).
@@ -165,7 +165,7 @@ begin
 
  -- Renames, blocks and bookmarks move nothing a third party could use to link anonymous content.
  -- (B and C stay blocked from the removal checks above, so C and D play the other members here.)
- insert into social_private.members(token_hash,username,adult,network_hash)values(hd,'feed_d_'||substr(hd,1,8),true,hd)returning id into d;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hd,'feed_d_'||substr(hd,1,8),true,hd)returning id into d;insert into social_private.guidelines_acceptances(member,version)select d,required_version from social_private.guidelines_settings;
  out:=public.social_gateway('post.create',hc,'{"text":"Named C post","anonymous":false,"community":"Graduates"}');c_named:=(out->>'resource_id')::uuid;
  out:=public.social_gateway('post.create',hc,'{"text":"Anonymous C post","anonymous":true,"community":"Graduates"}');c_anon:=(out->>'resource_id')::uuid;
  out:=public.social_gateway('post.create',hc,'{"text":"Zero-score C post","anonymous":true,"community":"Graduates"}');c_zero:=(out->>'resource_id')::uuid;

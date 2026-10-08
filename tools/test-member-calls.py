@@ -16,7 +16,7 @@ def ok(endpoint,action,token=None,**payload):
  status,value,headers=req(endpoint,action,token,**payload);assert status==200,(endpoint,action,status,value);return value
 try:
  suffix=str(int(time.time()))[-8:]
- for x in 'abc':accounts.append(ok('social','register',username='callqa'+suffix+x,adult=True)['token'])
+ for x in 'abc':accounts.append(runner_backend.accept_guidelines(cfg,ok('social','register',username='callqa'+suffix+x,adult=True))['token'])
  a,b,c=accounts
  code=ok('random-browser','pair.create',a)['code'];web=ok('random-browser','pair.claim',code=code,origin='https://maroonsocial.chat')['token']
  assert req('random-browser','pair.claim',code=code)[0]==400

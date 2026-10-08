@@ -84,6 +84,76 @@ struct SocialSnapshot: Codable {
   var feedNext: SocialPageCursor? = nil
   /// Server clock (with overlap) to start `feed.delta` from. Absent on older servers.
   var serverNow: Double? = nil
+  /// The member's community guidelines acceptance. Absent on servers without guidelines, which
+  /// gate nothing on the client.
+  var guidelines: GuidelinesStatus? = nil
+  /// The member's posts that are not deleted (`ownPostIDs` also lists deleted ones). Absent on
+  /// older servers.
+  var postCount: Int? = nil
+  enum CodingKeys: String, CodingKey {
+    case username, feedCommunity, karma, nsfwEnabled, posts, courses, activities, conversations, ownPostIDs, ownCommentIDs, ownMessageIDs
+    case conversationMeta, attachments, organizations, savedEvents, feedNext, serverNow, guidelines, postCount
+  }
+  init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    username = try values.decode(String.self, forKey: .username)
+    feedCommunity = try values.decodeIfPresent(Community.self, forKey: .feedCommunity)
+    karma = try values.decodeIfPresent(Int.self, forKey: .karma)
+    nsfwEnabled = try values.decode(Bool.self, forKey: .nsfwEnabled)
+    posts = try values.decode([Post].self, forKey: .posts)
+    courses = try values.decode([Course].self, forKey: .courses)
+    activities = try values.decode([Activity].self, forKey: .activities)
+    conversations = try values.decode([Conversation].self, forKey: .conversations)
+    ownPostIDs = try values.decode([String].self, forKey: .ownPostIDs)
+    ownCommentIDs = try values.decode([String].self, forKey: .ownCommentIDs)
+    ownMessageIDs = try values.decode([String].self, forKey: .ownMessageIDs)
+    conversationMeta = try values.decode([SocialConversationMeta].self, forKey: .conversationMeta)
+    attachments = try values.decode([SocialAttachmentReference].self, forKey: .attachments)
+    organizations = try values.decode([SocialOrganization].self, forKey: .organizations)
+    savedEvents = try values.decode([String].self, forKey: .savedEvents)
+    feedNext = try values.decodeIfPresent(SocialPageCursor.self, forKey: .feedNext)
+    serverNow = try values.decodeIfPresent(Double.self, forKey: .serverNow)
+    // A malformed status never costs the snapshot; it reads as a server without guidelines.
+    guidelines = (try? values.decodeIfPresent(GuidelinesStatus.self, forKey: .guidelines)) ?? nil
+    postCount = (try? values.decodeIfPresent(Int.self, forKey: .postCount)) ?? nil
+  }
+}
+/// `snapshot.guidelines`: the version the server requires and the one this member accepted.
+struct GuidelinesStatus: Codable, Equatable {
+  var required: Int
+  var accepted: Int?
+  var acceptedAt: Date?
+  init(required: Int, accepted: Int? = nil, acceptedAt: Date? = nil) {
+    self.required = required; self.accepted = accepted; self.acceptedAt = acceptedAt
+  }
+  /// The member has accepted the version the server requires (or a later one).
+  var satisfied: Bool { (accepted ?? 0) >= required }
+  enum CodingKeys: String, CodingKey { case required, accepted, acceptedAt = "accepted_at" }
+  init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    required = try values.decode(Int.self, forKey: .required)
+    accepted = try values.decodeIfPresent(Int.self, forKey: .accepted)
+    if let text = try? values.decodeIfPresent(String.self, forKey: .acceptedAt) { acceptedAt = Self.date(text) }
+    else if let seconds = try? values.decodeIfPresent(Double.self, forKey: .acceptedAt) { acceptedAt = Date(timeIntervalSince1970: seconds) }
+    else { acceptedAt = nil }
+  }
+  func encode(to encoder: Encoder) throws {
+    var values = encoder.container(keyedBy: CodingKeys.self)
+    try values.encode(required, forKey: .required)
+    try values.encodeIfPresent(accepted, forKey: .accepted)
+    try values.encodeIfPresent(acceptedAt.map { ISO8601DateFormatter().string(from: $0) }, forKey: .acceptedAt)
+  }
+  /// ISO 8601 as Postgres writes it (`2026-10-07T10:00:00.123456+00:00`), with or without fractions.
+  static func date(_ text: String) -> Date? {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    if let date = formatter.date(from: text) { return date }
+    formatter.formatOptions = [.withInternetDateTime]
+    if let date = formatter.date(from: text) { return date }
+    // More than millisecond precision: drop the fraction (sub-second accuracy is not shown).
+    guard let dot = text.firstIndex(of: "."), let end = text[dot...].dropFirst().firstIndex(where: { !$0.isNumber }) else { return nil }
+    return formatter.date(from: String(text[..<dot]) + String(text[end...]))
+  }
 }
 /// Keyset position: everything strictly older than (before_created, before_id).
 /// `beforeCreated` is the server's own epoch value, kept as received so no rounding moves it.

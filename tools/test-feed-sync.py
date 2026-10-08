@@ -28,7 +28,7 @@ def clock(token):
     """A fresh delta clock: everything before it is older than the five-second overlap."""
     return ok('feed.delta',token,community=community,since=0,known_ids=[])['now']
 try:
-    for name in 'abcde':tokens[name]=ok('register',username=label+name,adult=True)['token']
+    for name in 'abcde':tokens[name]=runner_backend.accept_guidelines(config,ok('register',username=label+name,adult=True))['token']
     a,b,c,d,e=tokens['a'],tokens['b'],tokens['c'],tokens['d'],tokens['e']
     # a: posts 0, 2, 5, 6 and named_a (5 posts, the 15-minute limit); e: posts 1, 3, 4.
     authors=[a,e,a,e,e,a,a]

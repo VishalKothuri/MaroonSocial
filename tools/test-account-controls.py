@@ -24,7 +24,7 @@ def main():
     suffix=uuid.uuid4().hex[:8]
     for n in range(3):
         name='controlqa'+str(n)+suffix
-        data=ok('social','register',username=name,adult=True)
+        data=runner_backend.accept_guidelines(CONFIG,ok('social','register',username=name,adult=True))
         accounts.append((name,data['token']))
     (an,a),(bn,b),(cn,c)=accounts
     ctl=lambda action,token,**kw:ok('account-controls',action,token,**kw)

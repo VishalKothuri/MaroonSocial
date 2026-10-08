@@ -6,6 +6,7 @@ do $$declare a text:=encode(extensions.gen_random_bytes(32),'hex');b text:=encod
  select count(*)into before_count from social_private.rooms;
  r:=public.social_gateway('register',a,jsonb_build_object('username','catalog_a_'||label,'adult',true,'network',a));
  s:=public.social_gateway('register',b,jsonb_build_object('username','catalog_b_'||label,'adult',true,'network',a));
+ if public.social_gateway('guidelines.accept',a,jsonb_build_object('version',r->'snapshot'->'guidelines'->'required'))?'error'or public.social_gateway('guidelines.accept',b,jsonb_build_object('version',s->'snapshot'->'guidelines'->'required'))?'error'then raise exception 'Guidelines acceptance failed';end if;
  r:=public.course_activity(a,'Fall 2026');
  select count(*)into after_count from social_private.rooms;
  if before_count<>after_count then raise exception 'Browsing created rooms';end if;

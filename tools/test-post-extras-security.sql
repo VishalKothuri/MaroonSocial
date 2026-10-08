@@ -6,9 +6,9 @@ declare ha text:=encode(extensions.gen_random_bytes(32),'hex');hb text:=encode(e
  a uuid;b uuid;c uuid;post_id uuid;second_post uuid;secret_post uuid;poll_id uuid;option_a uuid;option_b uuid;other_option uuid;nonce_id uuid:=gen_random_uuid();payload jsonb;out jsonb;obj jsonb;bad jsonb;link text;before_count int;after_count int;
 begin
  if has_table_privilege('anon','social_private.poll_votes','SELECT')or has_table_privilege('authenticated','social_private.polls','INSERT')or has_function_privilege('authenticated','social_private.poll_view(uuid,uuid)','EXECUTE')or has_function_privilege('anon','social_private.rich_post_create(uuid,uuid,jsonb)','EXECUTE')then raise exception 'Private poll storage/functions exposed';end if;
- insert into social_private.members(token_hash,username,adult,network_hash)values(ha,'poll_a_'||substr(ha,1,8),true,ha)returning id into a;
- insert into social_private.members(token_hash,username,adult,network_hash)values(hb,'poll_b_'||substr(hb,1,8),true,hb)returning id into b;
- insert into social_private.members(token_hash,username,adult,network_hash)values(hc,'poll_c_'||substr(hc,1,8),true,hc)returning id into c;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(ha,'poll_a_'||substr(ha,1,8),true,ha)returning id into a;insert into social_private.guidelines_acceptances(member,version)select a,required_version from social_private.guidelines_settings;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hb,'poll_b_'||substr(hb,1,8),true,hb)returning id into b;insert into social_private.guidelines_acceptances(member,version)select b,required_version from social_private.guidelines_settings;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hc,'poll_c_'||substr(hc,1,8),true,hc)returning id into c;insert into social_private.guidelines_acceptances(member,version)select c,required_version from social_private.guidelines_settings;
  payload:=jsonb_build_object('nonce',nonce_id,'text','','anonymous',true,'link_url',' HTTPS://Example.COM/path?q=a%2Bb#section ','tags',jsonb_build_array(' #Howdy ','STUDY','study'),'poll',jsonb_build_object('question',' Where should we study? ','options',jsonb_build_array(' Library ','Cafe'),'duration_hours',24));
  out:=public.social_gateway('post.create',ha,payload);post_id:=(out->>'resource_id')::uuid;
  if post_id is null then raise exception 'Rich post creation failed %',out;end if;

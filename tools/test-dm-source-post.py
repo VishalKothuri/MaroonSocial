@@ -52,7 +52,7 @@ def conversation(token, room):
 try:
     names = [label + suffix for suffix in 'ab']
     for name in names:
-        tokens.append(ok('register', username=name, adult=True)['token'])
+        tokens.append(runner_backend.accept_guidelines(CONFIG,ok('register', username=name, adult=True))['token'])
     a, b = tokens
     body = 'Synthetic source post for the direct-message tag. ' * 4
     pid = ok('post.create', a, text=body, anonymous=True, acceptsDM=True, nonce=str(uuid.uuid4()))['resource_id']

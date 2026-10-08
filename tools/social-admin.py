@@ -27,6 +27,8 @@ def main():
  for name in['add-filter-word','remove-filter-word']:
   # The word is read from stdin, hashed here and never printed or sent in plain text.
   q=sub.add_parser(name,help='Reads one word from stdin; only its sha256 hash is sent');q.add_argument('--note',required=True)
+ q=sub.add_parser('require-guidelines',help='Set the community guidelines version members must accept before posting, replying or messaging');q.add_argument('version',type=int);q.add_argument('--note',required=True)
+ switch=q.add_mutually_exclusive_group();switch.add_argument('--enforce',dest='enforced',action='store_true');switch.add_argument('--no-enforce',dest='enforced',action='store_false');q.set_defaults(enforced=None)
  a=p.parse_args();payload={}
  if a.command in['reports','organizations']:action=a.command+'.list';payload['status']=a.status
  elif a.command=='announcements':action='announcements.list'
@@ -39,6 +41,9 @@ def main():
  elif a.command=='set-topic':action='topic.set';payload=dict(post_id=a.post_id,topic=None if a.topic=='null' else a.topic,note=a.note)
  elif a.command in['disable-topic','enable-topic']:action='topic.'+a.command.split('-')[0];payload=dict(slug=a.slug,note=a.note)
  elif a.command in['add-filter-word','remove-filter-word']:action='filter.'+a.command.split('-')[0];payload=dict(hash=filter_hash(sys.stdin.readline().strip()),note=a.note)
+ elif a.command=='require-guidelines':
+  action='guidelines.require';payload=dict(version=a.version,note=a.note)
+  if a.enforced is not None:payload['enforced']=a.enforced
  else:action='members.suspend';payload={'note':a.note};payload.update({'username':a.username}if a.username else{'report_id':a.report_id})
  changing=not action.endswith('.list')
  if changing and len(a.reviewer.strip())<3:p.error('Mutations require --reviewer before the command')

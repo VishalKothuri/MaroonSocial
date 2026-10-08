@@ -7,9 +7,9 @@ declare
  a uuid;b uuid;c uuid;post_id uuid;other_post uuid;root_id uuid;child_id uuid;second_id uuid;secret_post uuid;secret_reply uuid;deep uuid;deep_parent uuid;nonce_id uuid:=gen_random_uuid();out jsonb;obj jsonb;snap jsonb;room_id text;i int;
 begin
  if has_table_privilege('anon','social_private.comment_votes','SELECT')or has_table_privilege('authenticated','social_private.comment_votes','INSERT')or has_function_privilege('authenticated','social_private.karma(uuid)','EXECUTE')then raise exception 'Private replies API exposed';end if;
- insert into social_private.members(token_hash,username,adult,network_hash)values(ha,'reply_a_'||substr(ha,1,8),true,ha)returning id into a;
- insert into social_private.members(token_hash,username,adult,network_hash)values(hb,'reply_b_'||substr(hb,1,8),true,hb)returning id into b;
- insert into social_private.members(token_hash,username,adult,network_hash)values(hc,'reply_c_'||substr(hc,1,8),true,hc)returning id into c;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(ha,'reply_a_'||substr(ha,1,8),true,ha)returning id into a;insert into social_private.guidelines_acceptances(member,version)select a,required_version from social_private.guidelines_settings;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hb,'reply_b_'||substr(hb,1,8),true,hb)returning id into b;insert into social_private.guidelines_acceptances(member,version)select b,required_version from social_private.guidelines_settings;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hc,'reply_c_'||substr(hc,1,8),true,hc)returning id into c;insert into social_private.guidelines_acceptances(member,version)select c,required_version from social_private.guidelines_settings;
  out:=public.social_gateway('post.create',ha,'{"text":"Reply protocol QA","anonymous":true}');post_id:=(out->>'resource_id')::uuid;
  out:=public.social_gateway('post.create',ha,'{"text":"Named source QA","anonymous":false,"acceptsDM":false}');other_post:=(out->>'resource_id')::uuid;
  out:=public.social_gateway('comment.create',hb,jsonb_build_object('post_id',post_id,'text','Parent from B'));root_id:=(out->>'resource_id')::uuid;

@@ -19,7 +19,7 @@ def ok(endpoint,action,index=0,**data):
 label='wpiv'+str(int(time.time()))[-7:];names=[label+x for x in'abc']
 try:
  for name in names:
-  tokens.append(ok('social','register',username=name,adult=True)['token'])
+  tokens.append(runner_backend.accept_guidelines(cfg,ok('social','register',username=name,adult=True))['token'])
   scopes.append(ok('web-pool','session',len(tokens)-1)['token'])
  room=ok('social','dm.request',username=names[1],text='Synthetic pool invitation test')['resource_id']
  assert call('web-pool','invite',room=room,kind='pool',nonce=str(uuid.uuid4()))[0]==403

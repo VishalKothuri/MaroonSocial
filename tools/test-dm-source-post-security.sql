@@ -8,10 +8,10 @@ declare ha text:=encode(extensions.gen_random_bytes(32),'hex');hb text:=encode(e
  a uuid;b uuid;c uuid;d uuid;post_id uuid;adult_post uuid;comment_id uuid;post_room text;named_room text;reply_room text;adult_room text;second_room text;later_room text;plan_room text;excerpt text;out jsonb;tag jsonb;who uuid;
 begin
  if has_function_privilege('anon','social_private.snapshot(uuid)','EXECUTE')or has_table_privilege('authenticated','social_private.rooms','SELECT')then raise exception 'Private snapshot/rooms exposed';end if;
- insert into social_private.members(token_hash,username,adult,network_hash)values(ha,'src_a_'||substr(ha,1,8),true,ha)returning id into a;
- insert into social_private.members(token_hash,username,adult,network_hash)values(hb,'src_b_'||substr(hb,1,8),true,hb)returning id into b;
- insert into social_private.members(token_hash,username,adult,network_hash)values(hc,'src_c_'||substr(hc,1,8),true,hc)returning id into c;
- insert into social_private.members(token_hash,username,adult,network_hash)values(hd,'src_d_'||substr(hd,1,8),true,hd)returning id into d;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(ha,'src_a_'||substr(ha,1,8),true,ha)returning id into a;insert into social_private.guidelines_acceptances(member,version)select a,required_version from social_private.guidelines_settings;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hb,'src_b_'||substr(hb,1,8),true,hb)returning id into b;insert into social_private.guidelines_acceptances(member,version)select b,required_version from social_private.guidelines_settings;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hc,'src_c_'||substr(hc,1,8),true,hc)returning id into c;insert into social_private.guidelines_acceptances(member,version)select c,required_version from social_private.guidelines_settings;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hd,'src_d_'||substr(hd,1,8),true,hd)returning id into d;insert into social_private.guidelines_acceptances(member,version)select d,required_version from social_private.guidelines_settings;
  out:=public.social_gateway('post.create',ha,jsonb_build_object('text',repeat('Synthetic source post for the direct-message tag. ',4),'anonymous',true,'acceptsDM',true));post_id:=(out->>'resource_id')::uuid;
  if post_id is null then raise exception 'Post creation failed %',out;end if;
  select left(body,140)into excerpt from social_private.posts where id=post_id;

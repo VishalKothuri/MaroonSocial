@@ -33,6 +33,7 @@ struct PostQuoteCard: View {
           Avatar(symbol: quote.anonymous == true ? "bubble.left.fill" : "person.fill", size: 20)
           Text(quote.displayName).font(.caption.bold()).foregroundStyle(Palette.ink)
             .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+          if quote.showsVerifiedSeal { VerifiedSeal() }
         }
         if let created = quote.created { Text("· \(shortAge(created))").font(.caption).foregroundStyle(.secondary) }
         if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 0) }

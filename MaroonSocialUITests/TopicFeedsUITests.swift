@@ -1,7 +1,7 @@
 import XCTest
 
 /// Topic feeds in fixture mode (topics available, seeded posts across topics, Confessions and Memes
-/// folded into "More"), plus a server without topics (`--uitesting-no-topics`).
+/// folded into "More", the topic sheet), plus a server without topics (`--uitesting-no-topics`).
 @MainActor final class TopicFeedsUITests: XCTestCase {
   override func setUpWithError() throws { continueAfterFailure = false }
   override func tearDownWithError() throws {
@@ -57,12 +57,14 @@ import XCTest
     // New/Hot still applies inside the topic.
     app.buttons["Hot"].tap(); XCTAssertTrue(app.buttons[sports].waitForExistence(timeout: 3)); XCTAssertFalse(app.buttons[walk].exists)
     app.buttons["New"].tap()
-    // Quiet topics (fewer than 5 posts in 7 days) wait in "More"; one chosen there becomes a tab.
+    // Quiet topics (fewer than 5 posts in 7 days) wait in "More" (the topic sheet); one chosen there becomes a tab.
     XCTAssertFalse(tab("memes", in: app).exists, "Memes is folded")
     let more = tab("more", in: app)
     revealTab(more, in: app); more.tap()
-    let memesItem = app.buttons["😂 Memes"]
+    XCTAssertTrue(app.descendants(matching: .any)["topicSheet"].waitForExistence(timeout: 3))
+    let memesItem = app.buttons["topicSheetItem-memes"]
     XCTAssertTrue(memesItem.waitForExistence(timeout: 3)); memesItem.tap()
+    waitGone(app.descendants(matching: .any)["topicSheet"])
     waitSelected(tab("memes", in: app))
     XCTAssertTrue(app.buttons[meme].waitForExistence(timeout: 3)); XCTAssertFalse(app.buttons[sports].exists)
     let image = XCTAttachment(screenshot: app.screenshot()); image.name = "Memes chosen from More"; image.lifetime = .keepAlways; add(image)
@@ -213,8 +215,9 @@ import XCTest
     let more = tab("more", in: app)
     revealTab(more, in: app); more.tap()
     // Memes is folded into More in the fixtures (the last topic, so its new tab lands at the far end).
-    let slug = "memes", memesItem = app.buttons["😂 Memes"]
+    let slug = "memes", memesItem = app.buttons["topicSheetItem-memes"]
     XCTAssertTrue(memesItem.waitForExistence(timeout: 3)); memesItem.tap()
+    waitGone(app.descendants(matching: .any)["topicSheet"])
     let picked = tab(slug, in: app)
     waitSelected(picked)
     waitFullyOnScreen(picked, in: app, "A topic chosen from More is scrolled into view, not left clipped at the edge")

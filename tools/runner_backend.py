@@ -11,8 +11,11 @@ Set both or neither: a local URL with the live key (or the reverse) is refused b
 request is made. Every runner prints the host it targets before it creates anything.
 With an override, cleanup receipts go to the temp directory (see receipt()), so a local run
 never replaces the receipt of a run against the live project.
+
+Synthetic accounts accept the community guidelines right after `register` (accept_guidelines()),
+because posting, replying, message requests and chat messages need the required version.
 """
-import json, os, pathlib, sys, tempfile, urllib.parse
+import json, os, pathlib, sys, tempfile, urllib.error, urllib.parse, urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = ROOT / 'MaroonSocial/Resources/Backend.json'
@@ -44,3 +47,34 @@ def receipt(path):
     same file name prefixed with maroon-override- in the temp directory."""
     path = pathlib.Path(path)
     return pathlib.Path(tempfile.gettempdir()) / ('maroon-override-' + path.name) if overridden else path
+
+
+def guidelines_version(registered):
+    """The community guidelines version a newly registered account must accept (the snapshot's
+    guidelines.required), or None when the server has no guidelines requirement."""
+    snapshot = registered.get('snapshot') if isinstance(registered, dict) else None
+    guidelines = snapshot.get('guidelines') if isinstance(snapshot, dict) else None
+    version = guidelines.get('required') if isinstance(guidelines, dict) else None
+    return version if isinstance(version, int) else None
+
+
+def accept_guidelines(config, registered, token=None):
+    """Accept the required community guidelines for an account that `register` just created
+    (registered = that reply, with its token unless `token` is given). Returns `registered`
+    unchanged, so a runner can wrap its register call. Does nothing on a server without guidelines."""
+    version = guidelines_version(registered)
+    if version is None:
+        return registered
+    token = token or registered['token']
+    request = urllib.request.Request(config['url'] + '/functions/v1/social',
+        data=json.dumps({'action': 'guidelines.accept', 'version': version}).encode(),
+        headers={'Content-Type': 'application/json', 'apikey': config['publishableKey'], 'X-Social-Token': token})
+    try:
+        with urllib.request.urlopen(request, timeout=40) as response:
+            status, result = response.status, json.load(response)
+    except urllib.error.HTTPError as error:
+        status, result = error.code, json.load(error)
+    guidelines = (result.get('snapshot') or {}).get('guidelines') or {}
+    if status != 200 or guidelines.get('accepted') != version:
+        raise AssertionError(('guidelines.accept', status, result.get('error') or guidelines))
+    return registered

@@ -56,7 +56,7 @@ def media_read(token, attachment_id, name):
 
 try:
     for suffix in 'ab':
-        tokens.append(ok('social', 'register', username=label + suffix, adult=True)['token'])
+        tokens.append(runner_backend.accept_guidelines(config,ok('social', 'register', username=label + suffix, adult=True))['token'])
     a, b = tokens
     picture = png(24, 16, (128, 0, 0))
 

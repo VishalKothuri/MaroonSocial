@@ -28,7 +28,8 @@ def ok(action,token=None,**payload):
 
 accounts=[];label='meme_'+uuid.uuid4().hex[:10]
 try:
- for suffix in['a','b']:accounts.append(ok('register',username=label+suffix,adult=True)['token'])
+ # Publishing a meme needs the community guidelines accepted (does nothing on a server without them).
+ for suffix in['a','b']:accounts.append(runner_backend.accept_guidelines(config,ok('register',username=label+suffix,adult=True))['token'])
  a,b=accounts
  picture=png()
  shared=ok('meme.publish',a,data=base64.b64encode(picture).decode(),title='Synthetic maroon test '+label)

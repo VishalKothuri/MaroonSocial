@@ -43,8 +43,10 @@ struct CommunityView: View {
   private var feedKey: FeedKey { FeedKey(community: community, topic: topic) }
   private var posts: [Post] {
     let ids = store.feedIDs(for: feedKey)
+    // New posts a delta brought while the member read further down wait above the list ("+N" on New).
+    let waiting = store.newPosts(for: feedKey)
     // Client guard: a stale cached post never shows under the wrong topic.
-    let feed = store.state.posts.filter { (ids?.contains($0.id) ?? true) && $0.community == community && (topic == nil || $0.topic == topic) }
+    let feed = store.state.posts.filter { (ids?.contains($0.id) ?? true) && !waiting.contains($0.id) && $0.community == community && (topic == nil || $0.topic == topic) }
       .sorted { $0.created > $1.created }
     // Hot ranks a fixed window of the newest posts, so pages loaded in New never re-rank older
     // posts above the reader (the store fills that window when Hot is chosen).
@@ -102,7 +104,8 @@ struct CommunityView: View {
         }.id(community).transaction { $0.animation = nil }.accessibilityIdentifier("communityPicker").disabled(compose)
         if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 0) }
         HStack(spacing: 8) {
-          CompactSelector(options: ["New", "Hot"], selection: Binding(get: { sort }, set: chooseSort), compact: true)
+          CompactSelector(options: ["New", "Hot"], selection: Binding(get: { sort }, set: chooseSort), compact: true,
+            badges: ["New": store.newPostCount(for: feedKey)], onReselect: { if $0 == "New" { showNewPosts() } })
           if dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 0) }
           Button { AppHaptics.shared.play(.impact); savedOnly.toggle() } label: {
           Image(systemName: savedOnly ? "bookmark.fill" : "bookmark").frame(width: 44, height: 44)
@@ -124,7 +127,8 @@ struct CommunityView: View {
         let folded = TopicCatalog.fold(store.topics, selected: topic)
         // The Dynamic Type cap is applied here, outside the strip, so it also reaches the strip's own
         // @ScaledMetric sizes (emoji, gaps, underline, fades), not only its child views.
-        TopicTabStrip(topics: folded.shown, more: folded.more, selection: Binding(get: { topic }, set: chooseTopic), onReselect: scrollFeedToTop)
+        TopicTabStrip(topics: folded.shown, more: folded.more, selection: Binding(get: { topic }, set: chooseTopic), onReselect: scrollFeedToTop,
+          allTopics: store.topics, sort: Binding(get: { sort }, set: chooseSort))
           .dynamicTypeSize(...DynamicTypeSize.accessibility2)
       } else {
         Divider()
@@ -180,7 +184,9 @@ struct CommunityView: View {
   }
   /// One page of the feed (a sort and topic). Its lazy stack is the scroll view's direct content.
   private func feedPage(_ proxy: ScrollViewProxy) -> some View {
-    ScrollView {
+    // The key this page shows: a page fading out after a switch keeps reporting its own key.
+    let pageKey = feedKey
+    return ScrollView {
       LazyVStack(spacing: 0) {
         Color.clear.frame(height: 0).id("feedTop")
         if community == .nsfw {
@@ -223,6 +229,11 @@ struct CommunityView: View {
         // intent. Clamping also stops a bounce from reversing the header.
         return FeedScrollMetrics(offset: Double(min(maximumOffset, max(0, geometry.contentOffset.y + geometry.contentInsets.top))), viewport: Double(geometry.containerSize.height), scrollRange: Double(maximumOffset))
       } action: { _, value in
+        // At the top, posts a delta brought join the list; further down they wait behind "+N" on New.
+        // Only a change (or posts still held at the top) is reported, so scrolling does not write to
+        // the store on every sample.
+        let atTop = value.offset <= 4
+        if atTop != store.feedAtTop || (atTop && store.newPostIDs[pageKey] != nil) { store.setFeedAtTop(atTop, key: pageKey) }
         // Keyboard and sheet layout changes are not scrolling intent. The
         // lock transition resets tracking once; feeding every fractional
         // viewport correction back into @State can perpetuate lazy layout.
@@ -249,6 +260,8 @@ struct CommunityView: View {
   }
   private func chooseSort(_ value: String) {
     guard value != sort, ["New", "Hot"].contains(value) else { return }
+    // New opens at the top with the waiting posts in it.
+    if value == "New" { store.showNewPosts(for: feedKey) }
     sortMovesForward = value == "Hot"
     AppHaptics.shared.play(.selection)
     withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.3)) { sort = value; resetChrome() }
@@ -270,6 +283,12 @@ struct CommunityView: View {
     if chromeCollapsed { chromeCollapsed = false }
   }
   private func scrollFeedToTop() { resetChrome(); scrollToTop += 1 }
+  /// New tapped while selected: the waiting posts join the list and it scrolls to the top.
+  private func showNewPosts() {
+    AppHaptics.shared.play(.selection)
+    withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { store.showNewPosts(for: feedKey) }
+    scrollFeedToTop()
+  }
   private func chooseCommunity(_ value: Community) {
     guard value != community else { return }
     AppHaptics.shared.play(.selection)
@@ -312,6 +331,11 @@ struct PostCard: View {
   }
   /// Every reply the server holds; a feed post carries only its newest replies.
   private var replyCount: Int { max(post.commentCount ?? 0, post.comments.count) }
+  /// A Sports post links to the game-day chat while a game is live or within three hours.
+  private var gameDay: CampusEvent? {
+    guard topic?.slug == "sports" else { return nil }
+    return store.campus.gameDay(savedIDs: store.state.savedEvents)
+  }
   var body: some View {
     VStack(alignment: .leading, spacing: 9) {
       header
@@ -320,6 +344,7 @@ struct PostCard: View {
           NavigationLink { PostDetailView(id: post.id).appHapticOnOpen().toolbar(.visible, for: .navigationBar) } label: { bodyText }.buttonStyle(.plain)
         } else { bodyText }
       }
+      if let gameDay { GameDayChatLink(event: gameDay) { onConversationCreated?($0) }.padding(.vertical, -6) }
       if let attachmentID = post.attachmentID { RemoteMedia(attachmentID: attachmentID, layout: .feed) }
       else if let media = post.media { AttachmentPreview(media: media).postMedia(ratio: media.aspectRatio) }
       PostExtrasView(post: post)
@@ -388,8 +413,9 @@ struct PostCard: View {
   /// (stacked and accessibility layouts put the pill on its own row and let the name wrap).
   private func headerRow(_ sharedPill: Topic?) -> some View {
     HStack(spacing: 7) {
-      Avatar(symbol: post.anonymous ? "bubble.left.fill" : "person.fill", size: navigates ? 26 : 34)
-      Text(post.displayName).font(.caption.bold()).lineLimit(sharedPill == nil ? nil : 1)
+      Avatar(symbol: post.organization != nil ? "person.3.fill" : post.anonymous ? "bubble.left.fill" : "person.fill", size: navigates ? 26 : 34)
+      Text(post.bylineName).font(.caption.bold()).lineLimit(sharedPill == nil ? nil : 1)
+      if post.showsVerifiedSeal { VerifiedSeal() }
       Text("· \(shortAge(post.created))").font(.caption).foregroundStyle(.secondary)
       if let sharedPill { topicPill(sharedPill).padding(.leading, 2) }
       Spacer()

@@ -140,6 +140,10 @@ struct CompactSelector: View {
   var expands = false
   /// Pill-sized (matches `Pill`): a 32pt capsule inside the same 44pt tap target.
   var compact = false
+  /// A small "+N" badge on an option (the home feed's New: posts waiting above the list).
+  var badges: [String: Int] = [:]
+  /// A tap on the option that is already selected.
+  var onReselect: ((String) -> Void)? = nil
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
   @Namespace private var highlight
@@ -148,8 +152,16 @@ struct CompactSelector: View {
       ? AnyLayout(VStackLayout(spacing: 2)) : AnyLayout(HStackLayout(spacing: 2))
     layout {
       ForEach(options, id: \.self) { option in
-        Button { selection = option } label: {
-          Text(option).font(compact ? .system(size: 12, weight: .semibold) : .subheadline.weight(.semibold))
+        Button { if selection == option { onReselect?(option) } else { selection = option } } label: {
+          HStack(spacing: 4) {
+            Text(option)
+            if let count = badges[option], count > 0 {
+              Text(count > 99 ? "+99" : "+\(count)").font(.system(size: 10, weight: .bold)).monospacedDigit()
+                .foregroundStyle(Palette.paper).padding(.horizontal, 5).frame(minHeight: 15)
+                .background(Palette.maroonBright, in: Capsule())
+                .transition(.scale.combined(with: .opacity))
+            }
+          }.font(compact ? .system(size: 12, weight: .semibold) : .subheadline.weight(.semibold))
             .foregroundStyle(selection == option ? Palette.ink : Palette.secondary)
             .padding(.horizontal, compact ? 11 : 12).padding(.vertical, compact ? 6 : 4)
             .frame(maxWidth: expands ? .infinity : nil, minHeight: compact ? 28 : 44)
@@ -160,6 +172,8 @@ struct CompactSelector: View {
             }
             .frame(minHeight: 44).contentShape(Capsule())
         }.buttonStyle(.plain).accessibilityAddTraits(selection == option ? .isSelected : [])
+          .accessibilityLabel(option)
+          .accessibilityValue(badges[option].map { $0 > 0 ? "\($0) new \($0 == 1 ? "post" : "posts")" : "" } ?? "")
       }
     }.padding(.horizontal, compact ? 2 : 3).padding(.vertical, compact ? 0 : 3)
       .background {
@@ -168,6 +182,7 @@ struct CompactSelector: View {
           .frame(height: compact ? 32 : nil)
       }
       .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.86), value: selection)
+      .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.8), value: badges)
   }
 }
 

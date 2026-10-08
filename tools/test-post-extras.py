@@ -54,7 +54,7 @@ def post(token, post_id):
 try:
     names = [label + suffix for suffix in 'abc']
     for name in names:
-        tokens.append(ok('register', username=name, adult=True)['token'])
+        tokens.append(runner_backend.accept_guidelines(CONFIG,ok('register', username=name, adult=True))['token'])
     a, b, c = tokens
     payload = dict(text='', anonymous=True, nonce=str(uuid.uuid4()),
                    link_url=' HTTPS://WWW.TAMU.EDU/?campaign=a%2Bb#visit ',

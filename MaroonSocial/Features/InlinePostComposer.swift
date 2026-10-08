@@ -44,6 +44,8 @@ struct InlinePostComposer: View {
   @State private var quotedPostID: String?
   /// One topic per post. Required only while topics are available (older servers accept none).
   @State private var topic: String?
+  /// The community guidelines sheet shown before a member's first post.
+  @State private var guidelines = GuidelinesGate()
   private var tagValues: [String] { tagsText.split(whereSeparator: { $0.isWhitespace || $0 == "," }).map(String.init) }
   private var validation: Result<ValidatedPostFeatures, Error> {
     Result { try PostFeatureRules.validate(text: text, poll: pollEnabled ? poll : nil, linkURL: linkEnabled ? link : nil, tags: tagsEnabled ? tagValues : [], hasQuote: quotedPostID != nil) }
@@ -129,6 +131,7 @@ struct InlinePostComposer: View {
         if let media { ImageEditorView(source: media) { edited in item = nil; self.media = edited; offers.arrived(edited) } }
       }
       .attachmentOffers(offers, service: SharedMemeService(social: store.social, fixtureMode: store.fixtureMode))
+      .guidelinesSheet(guidelines)
       .alert("Discard this post draft?", isPresented: $discard) {
         Button("Discard draft", role: .destructive) { AppHaptics.shared.play(.warning); Task { guard draftOwner == store.compositions.owner else { return }; await store.discardPendingPostDraft(owner:draftOwner); resetDraft(); close() } }
         Button("Keep editing", role: .cancel) { focused = .body }
@@ -361,11 +364,18 @@ struct InlinePostComposer: View {
     if !hasDraft { topic = nil }
   }
   private func send() {
-    guard draftOwner == store.compositions.owner, canSend else { return }; AppHaptics.shared.play(.impact); sending = true; focused = nil; error = nil
+    guard draftOwner == store.compositions.owner, canSend else { return }
+    // First post: the guidelines sheet comes first, and "I agree" sends this draft.
+    if guidelines.intercept(store, retry: send) { focused = nil; return }
+    AppHaptics.shared.play(.impact); sending = true; focused = nil; error = nil
     Task {
       guard await store.compositions.saveDraft(savedDraft.wrappedValue,key:draftKey,owner:draftOwner), draftOwner == store.compositions.owner else { sending=false;return }
-      let succeeded = await store.createPost(text: text.trimmingCharacters(in: .whitespacesAndNewlines), anonymous: anonymous, community: target, acceptsDM: acceptsDM, media: media, poll: pollEnabled ? poll : nil, linkURL: linkEnabled ? link : nil, tags: tagsEnabled ? tagValues : [], quoting: quotedPostID, topic: chosenTopic)
+      var succeeded = false
+      let refused = await guidelines.run(store, retry: send) {
+        succeeded = await store.createPost(text: text.trimmingCharacters(in: .whitespacesAndNewlines), anonymous: anonymous, community: target, acceptsDM: acceptsDM, media: media, poll: pollEnabled ? poll : nil, linkURL: linkEnabled ? link : nil, tags: tagsEnabled ? tagValues : [], quoting: quotedPostID, topic: chosenTopic)
+      }
       guard draftOwner == store.compositions.owner else { return }
+      if refused && !succeeded { sending = false; return }
       if succeeded {
         AppHaptics.shared.play(.success)
         let posted = chosenTopic

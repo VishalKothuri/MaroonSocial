@@ -37,7 +37,7 @@ status,result=call('topics.list',community=community)
 if lacks_topics(status,result):
     print('SKIP this server has no topics.list (topic migrations or edge function not deployed); nothing was created.',flush=True);sys.exit(0)
 try:
-    for name in 'abc':tokens[name]=ok('register',username=label+name,adult=True)['token']
+    for name in 'abc':tokens[name]=runner_backend.accept_guidelines(config,ok('register',username=label+name,adult=True))['token']
     a,b,c=tokens['a'],tokens['b'],tokens['c']
     status,result=call('topics.list',b,community=community)
     if lacks_topics(status,result):

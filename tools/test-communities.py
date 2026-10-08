@@ -25,7 +25,7 @@ def png():
  return b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',1,1,8,2,0,0,0))+chunk(b'IDAT',zlib.compress(b'\x00\xff\x00\x00'))+chunk(b'IEND',b'')
 label='qacom'+str(int(time.time()))[-7:];names=[label+x for x in'abc']
 try:
- for name in names:tokens.append(ok('social','register',username=name,adult=True)['token'])
+ for name in names:tokens.append(runner_backend.accept_guidelines(config,ok('social','register',username=name,adult=True))['token'])
  a,b,c=tokens
  assert call('communities','list','0'*64)[0]==401
  nonce=str(uuid.uuid4());public=community('create',a,title=label+' Public',description='Synthetic campus chat integration test',category='Friends',is_public=True,nonce=nonce,avatar='maroon',alias='Captain',member_avatar='gold');room=remember(public['room_id'])

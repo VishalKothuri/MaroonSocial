@@ -6,10 +6,10 @@ declare ha text:=encode(extensions.gen_random_bytes(32),'hex');hb text:=encode(e
 begin
  if has_schema_privilege('authenticated','community_private','USAGE')or has_table_privilege('authenticated','community_private.identities','SELECT')or has_function_privilege('anon','public.communities_gateway(text,text,jsonb)','EXECUTE')then raise exception 'Private identities exposed';end if;
  na:='gid_a_'||substr(ha,1,8);nb:='gid_b_'||substr(hb,1,8);nc:='gid_c_'||substr(hc,1,8);nd:='gid_d_'||substr(hd,1,8);
- insert into social_private.members(token_hash,username,adult,network_hash)values(ha,na,true,ha)returning id into a;
- insert into social_private.members(token_hash,username,adult,network_hash)values(hb,nb,true,hb)returning id into b;
- insert into social_private.members(token_hash,username,adult,network_hash)values(hc,nc,true,hc)returning id into c;
- insert into social_private.members(token_hash,username,adult,network_hash)values(hd,nd,true,hd)returning id into d;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(ha,na,true,ha)returning id into a;insert into social_private.guidelines_acceptances(member,version)select a,required_version from social_private.guidelines_settings;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hb,nb,true,hb)returning id into b;insert into social_private.guidelines_acceptances(member,version)select b,required_version from social_private.guidelines_settings;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hc,nc,true,hc)returning id into c;insert into social_private.guidelines_acceptances(member,version)select c,required_version from social_private.guidelines_settings;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hd,nd,true,hd)returning id into d;insert into social_private.guidelines_acceptances(member,version)select d,required_version from social_private.guidelines_settings;
  payload:=jsonb_build_object('title','Identity QA '||substr(ha,1,8),'description','Synthetic public group testing.','category','Friends','avatar','gold','is_public',true,'alias','Captain','member_avatar','sage','nonce',n);
  out:=public.communities_gateway('create',ha,payload);rid:=out->>'room_id';if rid is null then raise exception 'Create: %',out;end if;
  ka:=(out->'members'->0->>'member_key')::uuid;

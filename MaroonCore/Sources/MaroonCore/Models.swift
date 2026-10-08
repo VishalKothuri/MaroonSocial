@@ -39,6 +39,9 @@ public struct Post: Identifiable, Codable, Equatable {
   /// Server time at which this copy was read. Merges keep the most recently read copy; the
   /// device cache does not persist it (anything fetched after a launch is newer than the cache).
   public var syncedAt: Date? = nil
+  /// The organization byline of a post published under an organization's name; nil for member
+  /// posts and from servers that do not project one.
+  public var organization: PostOrganization? = nil
   public init(
     id: String = UUID().uuidString, author: String, anonymous: Bool = true,
     community: Community = .campus, text: String, score: Int = 0, comments: [Comment] = [],
@@ -56,7 +59,7 @@ public struct Post: Identifiable, Codable, Equatable {
     self.saved = false
     self.acceptsDM = acceptsDM
   }
-  enum CodingKeys: String, CodingKey { case id, author, anonymous, community, text, score, vote, comments, created, saved, acceptsDM, media, attachmentID, poll, linkURL, tags, deleted, quote, repostCount, commentCount, topic, syncedAt }
+  enum CodingKeys: String, CodingKey { case id, author, anonymous, community, text, score, vote, comments, created, saved, acceptsDM, media, attachmentID, poll, linkURL, tags, deleted, quote, repostCount, commentCount, topic, syncedAt, organization }
   // Cached feeds written before reposts existed carry neither key; synthesized
   // decoding would reject them because repostCount is not optional.
   public init(from decoder: Decoder) throws {
@@ -83,6 +86,8 @@ public struct Post: Identifiable, Codable, Equatable {
     commentCount = try values.decodeIfPresent(Int.self, forKey: .commentCount)
     topic = try values.decodeIfPresent(String.self, forKey: .topic)
     syncedAt = try values.decodeIfPresent(Date.self, forKey: .syncedAt)
+    // A malformed byline never costs the post.
+    organization = (try? values.decodeIfPresent(PostOrganization.self, forKey: .organization)) ?? nil
   }
   public mutating func setVote(_ newValue: Int) {
     let next = newValue == vote ? 0 : max(-1, min(1, newValue))
@@ -90,6 +95,24 @@ public struct Post: Identifiable, Codable, Equatable {
     vote = next
   }
   public var displayName: String { anonymous ? "Anonymous" : "@\(author)" }
+  /// The name a card shows: the organization's for an organization post, else `displayName`.
+  public var bylineName: String { organization.map(\.name) ?? displayName }
+  /// An organization post whose organization is verified carries the verified seal.
+  public var showsVerifiedSeal: Bool { deleted != true && organization?.verified == true }
+}
+/// The organization a post (or a quoted post) was published under.
+public struct PostOrganization: Codable, Equatable, Sendable {
+  public var id: String
+  public var name: String
+  public var verified: Bool
+  public init(id: String, name: String, verified: Bool) { self.id = id; self.name = name; self.verified = verified }
+  enum CodingKeys: String, CodingKey { case id, name, verified }
+  public init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    id = try values.decode(String.self, forKey: .id)
+    name = try values.decode(String.self, forKey: .name)
+    verified = try values.decodeIfPresent(Bool.self, forKey: .verified) ?? false
+  }
 }
 /// The one level of a quoted post that a repost carries. Only the projected display
 /// name travels, never the author's identity, karma or vote; an unavailable quote keeps
@@ -105,19 +128,36 @@ public struct PostQuote: Codable, Equatable, Identifiable {
   public var attachmentID: String? = nil
   /// The quoted post itself quotes another post (only one level is projected).
   public var quotes: Bool? = nil
-  public init(id: String, unavailable: Bool = false, author: String? = nil, anonymous: Bool? = nil, community: Community? = nil, text: String? = nil, created: Date? = nil, attachmentID: String? = nil, quotes: Bool? = nil) {
+  /// The quoted post's organization byline, when it was published under one.
+  public var organization: PostOrganization? = nil
+  public init(id: String, unavailable: Bool = false, author: String? = nil, anonymous: Bool? = nil, community: Community? = nil, text: String? = nil, created: Date? = nil, attachmentID: String? = nil, quotes: Bool? = nil, organization: PostOrganization? = nil) {
     self.id = id; self.unavailable = unavailable; self.author = author; self.anonymous = anonymous
     self.community = community; self.text = text; self.created = created; self.attachmentID = attachmentID
-    self.quotes = quotes
+    self.quotes = quotes; self.organization = organization
+  }
+  enum CodingKeys: String, CodingKey { case id, unavailable, author, anonymous, community, text, created, attachmentID, quotes, organization }
+  public init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    id = try values.decode(String.self, forKey: .id)
+    unavailable = try values.decode(Bool.self, forKey: .unavailable)
+    author = try values.decodeIfPresent(String.self, forKey: .author)
+    anonymous = try values.decodeIfPresent(Bool.self, forKey: .anonymous)
+    community = try values.decodeIfPresent(Community.self, forKey: .community)
+    text = try values.decodeIfPresent(String.self, forKey: .text)
+    created = try values.decodeIfPresent(Date.self, forKey: .created)
+    attachmentID = try values.decodeIfPresent(String.self, forKey: .attachmentID)
+    quotes = try values.decodeIfPresent(Bool.self, forKey: .quotes)
+    organization = (try? values.decodeIfPresent(PostOrganization.self, forKey: .organization)) ?? nil
   }
   /// The feed's own copy of a post, reduced the way the server's quote_view projects it.
   public init(quoting post: Post) {
     self.init(id: post.id, unavailable: post.deleted == true, author: post.anonymous ? "Anonymous" : post.author, anonymous: post.anonymous,
       community: post.community, text: String(post.text.prefix(280)), created: post.created, attachmentID: post.attachmentID,
-      quotes: post.quote != nil)
-    if unavailable { author = nil; anonymous = nil; community = nil; text = nil; created = nil; attachmentID = nil; quotes = nil }
+      quotes: post.quote != nil, organization: post.organization)
+    if unavailable { author = nil; anonymous = nil; community = nil; text = nil; created = nil; attachmentID = nil; quotes = nil; organization = nil }
   }
-  public var displayName: String { anonymous == true ? "Anonymous" : "@\(author ?? "")" }
+  public var displayName: String { organization?.name ?? (anonymous == true ? "Anonymous" : "@\(author ?? "")") }
+  public var showsVerifiedSeal: Bool { !unavailable && organization?.verified == true }
 }
 public struct Comment: Identifiable, Codable, Equatable {
   public var id = UUID().uuidString

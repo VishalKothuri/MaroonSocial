@@ -21,6 +21,8 @@ struct CampusSnapshot: Codable {
   var error: String?
   var transitError: String?
   var transitLoading = false
+  /// Fixture journeys add events here; refreshes keep them.
+  var fixtureEvents: [CampusEvent] = [] { didSet { events = Self.withFixtures(events.filter { $0.source != "fixture" }, fixtureEvents) } }
   private var lastTransitAttempt: Date?
   private var lastAttempt: Date?
   private var cache: URL { URL.cachesDirectory.appending(path: "campus.json") }
@@ -38,7 +40,7 @@ struct CampusSnapshot: Codable {
     }
   }
   private func apply(_ s: CampusSnapshot) {
-    events = Self.normalizedEvents(s.events)
+    events = Self.withFixtures(Self.normalizedEvents(s.events), fixtureEvents)
     let incomingTransit = s.transitFetchedAt ?? s.fetchedAt
     if transitFetchedAt == nil || incomingTransit >= transitFetchedAt! {
       routes = s.routes
@@ -48,6 +50,19 @@ struct CampusSnapshot: Codable {
     fetchedAt = s.fetchedAt
     warnings = s.warnings ?? []
   }
+  private static func withFixtures(_ events: [CampusEvent], _ fixtures: [CampusEvent]) -> [CampusEvent] {
+    let ids = Set(fixtures.map(\.id))
+    return events.filter { !ids.contains($0.id) } + fixtures
+  }
+  /// The game whose chat is open now or opens within the next three hours: the Campus game-day card,
+  /// and the "Game-day chat" link under Sports posts.
+  static func gameDay(in events: [CampusEvent], now: Date = .now) -> CampusEvent? {
+    events.filter {
+      $0.category == "Sports" && !$0.cancelled && !$0.allDay && now < ($0.ends ?? $0.starts.addingTimeInterval(6 * 3600))
+        && $0.chatOpenDate <= now.addingTimeInterval(3 * 3600)
+    }.sorted { $0.starts < $1.starts }.first
+  }
+  func gameDay(savedIDs: Set<String> = [], now: Date = .now) -> CampusEvent? { Self.gameDay(in: displayEvents(savedIDs: savedIDs), now: now) }
   static func normalizedEvents(_ events: [CampusEvent]) -> [CampusEvent] {
     events.map { event in
       var event = event

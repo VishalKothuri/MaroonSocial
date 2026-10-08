@@ -20,8 +20,8 @@ declare ha text:=encode(extensions.gen_random_bytes(32),'hex');hb text:=current_
  own_post uuid;bare_post uuid;mod_post uuid;hard_post uuid;
  r2_own text:='r2/public/'||gen_random_uuid()||'.png';bare text:=gen_random_uuid()||'.png';r2_mod text:='r2/public/'||gen_random_uuid()||'.jpg';r2_hard text:='r2/public/'||gen_random_uuid()||'.gif';r2_row text:='r2/public/'||gen_random_uuid()||'.mp4';
 begin
- insert into social_private.members(token_hash,username,adult,network_hash)values(ha,'r2qa_a_'||substr(ha,1,10),true,ha)returning id into a;
- insert into social_private.members(token_hash,username,adult,network_hash)values(hb,'r2qa_b_'||substr(hb,1,10),true,hb)returning id into b;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(ha,'r2qa_a_'||substr(ha,1,10),true,ha)returning id into a;insert into social_private.guidelines_acceptances(member,version)select a,required_version from social_private.guidelines_settings;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hb,'r2qa_b_'||substr(hb,1,10),true,hb)returning id into b;insert into social_private.guidelines_acceptances(member,version)select b,required_version from social_private.guidelines_settings;
  -- One post per case, each with one committed attachment at a chosen path.
  out:=public.social_gateway('post.create',ha,'{"text":"R2 revocation QA (author delete)","anonymous":true}');own_post:=(out->>'resource_id')::uuid;
  out:=public.social_gateway('attachment.reserve',ha,jsonb_build_object('post_id',own_post,'path',r2_own,'kind','image','mime','image/png','size',10));if out?'error' then raise exception 'Reserve failed %',out;end if;

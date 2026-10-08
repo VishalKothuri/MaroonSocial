@@ -93,6 +93,8 @@ struct FeedKeyState: Equatable {
   var nsfwEnabled = false
   var karma = 0
   var ownPostIDs: Set<String> = []
+  /// The server's count of the member's posts that are not deleted (nil on older servers).
+  var serverPostCount: Int?
   var ownCommentIDs: Set<String> = []
   var ownMessageIDs: Set<String> = []
   var conversationMeta: [String: SocialConversationMeta] = [:]
@@ -161,6 +163,23 @@ struct FeedKeyState: Equatable {
   private var creatingPost = false
   private var pendingComments: [String: String] = [:]
   private var pendingUploads: [String: String] = [:]
+  /// The member's community guidelines acceptance from the last snapshot; nil on a server without
+  /// guidelines (nothing is gated on the client there, only a `guidelines:` answer opens the sheet).
+  private(set) var guidelines: GuidelinesStatus?
+  /// The version this device accepted in this session: a snapshot read before the acceptance
+  /// landed must not ask again.
+  private var guidelinesAcceptedHere: Int?
+  /// The copy of the last `guidelines:` refusal of a gated send, until its gate takes it.
+  private(set) var guidelinesRefusal: String?
+  /// Sends a `GuidelinesGate` is running: their `guidelines:` refusal opens the sheet instead of an alert.
+  var gatedSends = 0
+  /// Posts a feed delta brought in above the top of the list the member was reading, per feed key.
+  /// The list holds them back (the New segment shows "+N") until it is at its top again or New is tapped.
+  private(set) var newPostIDs: [FeedKey: Set<String>] = [:]
+  /// The home feed is scrolled to its top (the feed reports changes); new posts then join it directly.
+  private(set) var feedAtTop = true
+  /// `--uitesting-feed-delta`: fixture mode delivers one simulated delta once the feed leaves its top.
+  private var fixtureDeltaPending = false
   private let file: URL
   static func storageFileURL(arguments: [String], directory: URL = .documentsDirectory) -> URL {
     let testing = arguments.contains("--uitesting") || arguments.contains("--uitesting-preserve")
@@ -201,6 +220,11 @@ struct FeedKeyState: Equatable {
       topics = TopicCatalog.active(cached); topicsLoaded = !topics.isEmpty
     }
     if fixtureMode {
+      // Fixture members have accepted the guidelines, unless a journey asks to start before that.
+      let unaccepted = arguments.contains(Self.guidelinesUnacceptedArgument)
+      guidelines = GuidelinesStatus(required: GuidelinesVersion, accepted: unaccepted ? nil : GuidelinesVersion, acceptedAt: unaccepted ? nil : .now)
+      fixtureDeltaPending = arguments.contains(Self.feedDeltaArgument)
+      if arguments.contains(Self.gameDayArgument) { campus.fixtureEvents = [Self.fixtureGameDayEvent] }
       organizations = [OrganizationAccessFixture.managedOrganization, OrganizationAccessFixture.invitingOrganization]
       conversationMeta = Self.fixtureConversationMeta.filter { id, _ in state.conversations.contains { $0.id == id } }
     }
@@ -336,8 +360,14 @@ struct FeedKeyState: Equatable {
     for (offset, fixture) in Self.fixtureTopicPosts.enumerated() {
       var post = Post(id: fixture.id, author: fixture.author, text: fixture.text, score: fixture.score, created: dayOld.addingTimeInterval(Double(-offset) * 60), acceptsDM: true)
       post.topic = fixture.topic
+      post.comments = Self.fixtureReplies[fixture.id] ?? []
       state.posts.append(post)
     }
+    // An organization post with its verified byline (Aggie Life).
+    var organization = Post(id: "demo-organization-post", author: "demo-ring", anonymous: false, text: "Ring Day photo booth opens at 10 by the Clayton Williams Alumni Center.", score: 27, created: dayOld.addingTimeInterval(-600))
+    organization.topic = "aggie_life"
+    organization.organization = PostOrganization(id: "demo-ring-committee", name: "Ring Day Committee", verified: true)
+    state.posts.append(organization)
     state.activities = [
       Activity(
         title: "Coffee, then absolutely no plans", kind: .hangout, host: "demo-espresso",
@@ -375,6 +405,35 @@ struct FeedKeyState: Equatable {
   ]
   /// Launch argument for UI journeys that need a server without topics (no strip, pills or topic row).
   static let noTopicsArgument = "--uitesting-no-topics"
+  /// Fixture mode starts with the community guidelines not yet accepted.
+  static let guidelinesUnacceptedArgument = "--guidelines-unaccepted"
+  /// Fixture mode simulates one feed delta (two new posts) once the feed leaves its top.
+  static let feedDeltaArgument = "--uitesting-feed-delta"
+  /// Fixture mode has a live Sports event, so Sports posts link to its game-day chat.
+  static let gameDayArgument = "--uitesting-game-day"
+  /// Anonymous replies as the server projects them: OP keeps "OP" and everyone else an alias that is
+  /// stable within a post (`ReplyAlias` derives the same "Aggie xxxx" from a fixture username).
+  static var fixtureReplies: [String: [Comment]] {
+    func reply(_ author: String, _ text: String, minutes: Double, op: Bool = false) -> Comment {
+      var comment = Comment(author: author, text: text)
+      comment.created = Date.now.addingTimeInterval(-86_400 + minutes * 60); comment.isOP = op
+      return comment
+    }
+    return [
+      "demo-question-post": [
+        reply("demo-owl", "Yes, the first two floors stay open all night during finals.", minutes: 10),
+        reply("demo-finals", "Perfect, thank you!", minutes: 12, op: true),
+        reply("demo-owl", "Bring a jacket, it gets cold after midnight.", minutes: 14),
+        reply("demo-quiet", "The fourth floor is the quiet floor.", minutes: 16),
+      ],
+      "demo-meme-post": [reply("demo-owl", "Every single morning.", minutes: 20)],
+    ]
+  }
+  /// A Sports event whose game-day chat is open now.
+  static var fixtureGameDayEvent: CampusEvent {
+    CampusEvent(id: "fixture-game-day", title: "Aggie Football vs. Fixture State", category: "Sports", starts: .now.addingTimeInterval(-600),
+      ends: .now.addingTimeInterval(3 * 3600), location: "Kyle Field", url: "https://12thman.com", source: "fixture")
+  }
   /// Fixture `topics.list`: the launch topics with sample 7-day counts. Confessions and Memes fall
   /// under the fold threshold, so the strip shows a "More" menu.
   static var fixtureTopics: [Topic] {
@@ -562,6 +621,8 @@ extension AppStore {
   func selectCommunity(_ community: Community) async {
     guard community != feedCommunity else { return }
     feedCommunity = community; social.feedCommunity = community
+    // The community's page opens at its top: posts held back for it join the list.
+    listShownAtTop(currentFeedKey)
     guard !fixtureMode else { return }
     // The topic stays selected across communities; its counts and the new key load beside the snapshot.
     if topicsAvailable {
@@ -661,6 +722,7 @@ extension AppStore {
       else if tab == 0 { await syncFeedDelta() }
       if connected && connectionError == nil { await flushOutbox() }
       if connected && Date.now >= topicsRetryAt { await refreshTopics() }
+      if fixtureMode { deliverFixtureDeltaIfDue() }
       courseTerms.advanceClock()
       if Date.now.timeIntervalSince(calendarRefresh) >= 300 { await courseTerms.refresh(); calendarRefresh = .now }
     }
@@ -748,7 +810,9 @@ extension AppStore {
     state.savedEvents = Set(snapshot.savedEvents)
     nsfwEnabled = snapshot.nsfwEnabled
     karma = snapshot.karma ?? 0
+    applyGuidelines(snapshot.guidelines)
     ownPostIDs = Set(snapshot.ownPostIDs)
+    serverPostCount = snapshot.postCount
     ownCommentIDs = Set(snapshot.ownCommentIDs)
     ownMessageIDs = Set(snapshot.ownMessageIDs)
     conversationMeta = Dictionary(uniqueKeysWithValues: snapshot.conversationMeta.map { ($0.id, $0) })
@@ -924,6 +988,8 @@ extension AppStore {
       return response
     } catch {
       guard compositions.owner == owner else { return nil }
+      // A `guidelines:` refusal of a gated send opens the guidelines sheet instead of an alert.
+      if noteGuidelinesRefusal(error), gatedSends > 0 { return nil }
       notice = error.localizedDescription
       // A topic refused on a write ("Choose an available topic.": disabled since the catalog was
       // read) refreshes the catalog, so its chip goes away and the composer asks for a new pick.
@@ -1007,6 +1073,8 @@ extension AppStore {
   }
   func applyFeedDelta(_ delta: SocialFeedDelta, advanceClock: Bool = true) {
     guard let ids = feedPostIDs else { return }
+    let key = FeedKey(community: feedCommunity, topic: nil)
+    let top = listTop(key, held: ids)
     let removed = Set(delta.removed)
     var feed = state.posts.filter { ids.contains($0.id) && !removed.contains($0.id) }
     feed = Self.mergePosts(feed, with: delta.changed.filter { !removed.contains($0.id) })
@@ -1019,6 +1087,7 @@ extension AppStore {
     }
     placeInTopicFeeds(delta.changed.filter { !removed.contains($0.id) })
     state.posts = mergeActivePostSources(feed: feed)
+    recordNewPosts(delta.changed.filter { !removed.contains($0.id) }, key: key, held: ids, top: top)
     if advanceClock { state.feedSince = delta.now }
     save()
   }
@@ -1327,7 +1396,7 @@ extension AppStore {
     social.media.wipe()
     busy = false; syncing = false; creatingPost = false; drainingOutbox = false; sendingQueuedID = nil
     connected = false; connectionError = nil; nsfwEnabled = false; karma = 0; tab = 0
-    ownPostIDs = []; ownCommentIDs = []; ownMessageIDs = []
+    ownPostIDs = []; ownCommentIDs = []; ownMessageIDs = []; serverPostCount = nil
     conversationMeta = [:]; attachments = []; organizations = []
     for owner in tagOwners.keys { social.releaseTagQuery(owner: owner) }
     tagOwners = [:]; tagPages = [:]; libraryOwners = [:]; libraryPages = [:]; feedPostIDs = nil
@@ -1340,9 +1409,20 @@ extension AppStore {
     feedTopic = nil; topicFeeds = [:]; topicComposeRequest = nil; topicsRetryAt = .distantPast
     if !fixtureMode { topics = []; topicsLoaded = false }
     pendingPost = nil; pendingComments = [:]; pendingUploads = [:]
+    guidelines = fixtureMode ? GuidelinesStatus(required: GuidelinesVersion, accepted: GuidelinesVersion, acceptedAt: .now) : nil
+    guidelinesAcceptedHere = nil; guidelinesRefusal = nil; gatedSends = 0
+    newPostIDs = [:]; feedAtTop = true
     save()
   }
   func owns(_ post: Post) -> Bool { fixtureMode ? post.author == state.username : ownPostIDs.contains(post.id) }
+  /// The Posts tile: the server's count of the member's posts that are not deleted. An older server
+  /// sends only `ownPostIDs` (deleted ones included), less the ones held here as deleted.
+  var ownPostCount: Int {
+    if fixtureMode { return state.posts.filter { $0.author == state.username && $0.deleted != true }.count }
+    if let serverPostCount { return serverPostCount }
+    let deleted = Set(state.posts.filter { $0.deleted == true }.map(\.id))
+    return ownPostIDs.subtracting(deleted).count
+  }
   func isMine(_ message: Message) -> Bool { fixtureMode ? message.author == state.username : ownMessageIDs.contains(message.id) }
   func createPost(text: String, anonymous: Bool, community: Community, acceptsDM: Bool, media: MediaAttachment? = nil, poll: PostPollDraft? = nil, linkURL: String? = nil, tags: [String] = [], quoting: String? = nil, topic requestedTopic: String? = nil) async -> Bool {
     guard !creatingPost else { return false }
@@ -1522,7 +1602,12 @@ extension AppStore {
       guard compositions.owner == owner else { return false }
       await flushOutbox()
       guard compositions.owner == owner else { return false }
-      if let queued = compositions.queue.first(where: { $0.id == nonce }), queued.requiresRetry { notice = queued.failure; return false }
+      if let queued = compositions.queue.first(where: { $0.id == nonce }), queued.requiresRetry {
+        // A gated send refused for the guidelines: the composer keeps the message and sends it again
+        // once they are accepted, so it leaves the outbox instead of waiting there as failed.
+        if gatedSends > 0, guidelinesRefusal != nil { try? await compositions.remove(nonce); return false }
+        notice = queued.failure; return false
+      }
       return true
     } catch { if compositions.owner == owner { notice = error.localizedDescription }; return false }
   }
@@ -1554,6 +1639,8 @@ extension AppStore {
         guard compositions.owner == owner else { return }
         message.attempts += 1; message.failure = error.localizedDescription
         let code = (error as? SocialServiceError)?.code
+        // Not sent: the member has not accepted the guidelines. It waits for a retry like any refusal.
+        _ = noteGuidelinesRefusal(error)
         let retryable = error is URLError || ["unavailable","upload_failed","rate_limit"].contains(code ?? "")
         message.requiresRetry = !retryable
         message.nextAttempt = .now.addingTimeInterval(min(300, pow(2, Double(min(message.attempts, 7))) * 3))
@@ -1712,6 +1799,8 @@ extension AppStore {
     let next = topicsAvailable ? slug.flatMap { value in topics.contains { $0.slug == value } ? value : nil } : nil
     guard next != feedTopic else { return nil }
     feedTopic = next
+    // The topic's page opens at its top: posts held back for it join the list.
+    listShownAtTop(currentFeedKey)
     if let next {
       let key = FeedKey(community: feedCommunity, topic: next)
       return Task { _ = await loadTopicFeed(key) }
@@ -1747,14 +1836,15 @@ extension AppStore {
     guard !active.isEmpty else { disableTopics(); return }
     let slugs = Set(active.map(\.slug))
     topics = active; topicsLoaded = true; state.topicCatalog = active
-    if let selected = feedTopic, !slugs.contains(selected) { feedTopic = nil }
+    if let selected = feedTopic, !slugs.contains(selected) { feedTopic = nil; listShownAtTop(currentFeedKey) }
     // A topic the server dropped takes its cached feed with it.
     topicFeeds = topicFeeds.filter { key, _ in key.topic.map(slugs.contains) ?? true }
     save()
   }
   private func disableTopics() {
     topics = []; topicsLoaded = false; state.topicCatalog = nil
-    feedTopic = nil; topicFeeds = [:]
+    if feedTopic != nil { feedTopic = nil; listShownAtTop(currentFeedKey) }
+    topicFeeds = [:]
     save()
   }
   /// The first page of a topic feed. `reset` reloads a key that already loaded (pull to refresh, resync).
@@ -1835,6 +1925,7 @@ extension AppStore {
   }
   func applyTopicFeedDelta(_ key: FeedKey, _ delta: SocialFeedDelta, advanceClock: Bool = true) {
     guard var entry = topicFeeds[key] else { return }
+    let held = entry.ids, top = listTop(key, held: held)
     let removed = Set(delta.removed)
     let changed = delta.changed.filter { !removed.contains($0.id) }
     entry.ids.subtract(removed)
@@ -1844,13 +1935,155 @@ extension AppStore {
     if advanceClock { entry.since = delta.now }
     topicFeeds[key] = entry
     state.posts = Self.mergePosts(state.posts, with: changed)
+    recordNewPosts(changed, key: key, held: held, top: top)
     save()
   }
   /// Pull to refresh: the snapshot, the catalog and the selected topic's first page.
   func refreshFeed() async {
+    // Pull to refresh happens at the top of the list: posts held back above it join it.
+    listShownAtTop(currentFeedKey)
     await refreshAndWait()
     guard !fixtureMode else { return }
     if topicsLoaded || Date.now >= topicsRetryAt { await refreshTopics() }
     if let key = topicFeedKey { await loadTopicFeed(key, reset: true) }
+  }
+}
+
+// MARK: Community guidelines
+extension AppStore {
+  /// The member still has to accept the version the server requires. Only a server that reports
+  /// guidelines gates sends before they go out; elsewhere only its `guidelines:` answer does.
+  var guidelinesRequired: Bool { guidelines.map { !$0.satisfied } ?? false }
+  func applyGuidelines(_ status: GuidelinesStatus?) {
+    guard var status else { guidelines = nil; return }
+    if let here = guidelinesAcceptedHere, (status.accepted ?? 0) < here, here >= status.required {
+      status.accepted = here; status.acceptedAt = status.acceptedAt ?? guidelines?.acceptedAt ?? .now
+    }
+    guidelines = status
+  }
+  /// Records a `guidelines:` refusal (the server requires a version this member has not accepted).
+  /// Returns false for any other error.
+  @discardableResult func noteGuidelinesRefusal(_ error: Error) -> Bool {
+    guard let failure = error as? SocialServiceError, failure.code == "guidelines" else { return false }
+    guidelinesRefusal = failure.error
+    if guidelines != nil { guidelines?.accepted = nil; guidelines?.acceptedAt = nil }
+    guidelinesAcceptedHere = nil
+    return true
+  }
+  /// A gated send starts: an earlier refusal no longer applies to it.
+  func beginGatedSend() { gatedSends += 1; guidelinesRefusal = nil }
+  /// A gated send ended; returns the copy of its `guidelines:` refusal, if it had one.
+  func endGatedSend() -> String? {
+    gatedSends = max(0, gatedSends - 1)
+    defer { guidelinesRefusal = nil }
+    return guidelinesRefusal
+  }
+  /// The version "I agree" accepts. It is the one the server requires when this build shows that
+  /// text (or a later one): the server refuses a version above its requirement. With no server
+  /// status it is the one this build shows. Nil when the server requires a newer version than this
+  /// build carries: the member never agrees to text the app has not shown, and updates the app first.
+  static func guidelinesVersion(toAccept required: Int?, build: Int = GuidelinesVersion) -> Int? {
+    guard let required else { return build }
+    return required <= build ? required : nil
+  }
+  var guidelinesVersionToAccept: Int? { Self.guidelinesVersion(toAccept: guidelines?.required) }
+  /// The server requires guidelines newer than this build shows.
+  var guidelinesNeedAppUpdate: Bool { guidelinesVersionToAccept == nil }
+  static let guidelinesUpdateCopy = "The community guidelines were updated. Update Maroon Social from the App Store to read and agree to the new version."
+  /// "I agree": `guidelines.accept {version}`. Returns nil on success, else the error to show in the sheet.
+  func acceptGuidelines() async -> String? {
+    guard let version = guidelinesVersionToAccept else { return Self.guidelinesUpdateCopy }
+    if fixtureMode {
+      guidelines = GuidelinesStatus(required: guidelines?.required ?? version, accepted: version, acceptedAt: .now)
+      guidelinesAcceptedHere = version
+      return nil
+    }
+    let owner = compositions.owner
+    do {
+      let response = try await social.perform("guidelines.accept", payload: ["version": version])
+      guard compositions.owner == owner else { return nil }
+      guidelinesAcceptedHere = version
+      apply(response)
+      // The answer may not carry a snapshot; the acceptance stands either way.
+      let required = guidelines?.required ?? version
+      if guidelines?.satisfied != true { guidelines = GuidelinesStatus(required: required, accepted: version, acceptedAt: .now) }
+      return nil
+    } catch {
+      guard compositions.owner == owner else { return nil }
+      if (error as? SocialServiceError)?.code == "account_deleted" { resetDeletedAccount(); return nil }
+      return error.localizedDescription
+    }
+  }
+}
+
+// MARK: New posts above the list ("+N" on New)
+extension AppStore {
+  /// The newest post the member's list shows for `key` (posts held back as new excluded).
+  func listTop(_ key: FeedKey, held: Set<String>) -> Date? {
+    let pending = newPostIDs[key] ?? []
+    return state.posts.filter { held.contains($0.id) && !pending.contains($0.id) && $0.deleted != true }.map(\.created).max()
+  }
+  /// Delta posts that were not held, are newer than the list's top and are someone else's wait above
+  /// the list while the member reads further down it. At the top they join the list at once.
+  func recordNewPosts(_ changed: [Post], key: FeedKey, held: Set<String>, top: Date?) {
+    guard let top, !(feedAtTop && key == currentFeedKey) else { return }
+    let fresh = changed.filter {
+      !held.contains($0.id) && $0.deleted != true && $0.community == key.community && (key.topic == nil || $0.topic == key.topic)
+        && $0.created > top && !owns($0)
+    }.map(\.id)
+    guard !fresh.isEmpty else { return }
+    newPostIDs[key, default: []].formUnion(fresh)
+  }
+  /// Posts held back above the list for `key` that can still be shown.
+  func newPosts(for key: FeedKey) -> Set<String> {
+    guard let pending = newPostIDs[key], !pending.isEmpty else { return [] }
+    let ids = feedIDs(for: key)
+    return Set(state.posts.filter {
+      pending.contains($0.id) && (ids?.contains($0.id) ?? true) && $0.deleted != true && !state.hiddenPosts.contains($0.id)
+    }.map(\.id))
+  }
+  /// The "+N" badge on New.
+  func newPostCount(for key: FeedKey) -> Int { newPosts(for: key).count }
+  /// New was tapped or the list reached its top: the held-back posts join the list.
+  func showNewPosts(for key: FeedKey) {
+    guard newPostIDs[key] != nil else { return }
+    newPostIDs.removeValue(forKey: key)
+  }
+  /// The feed page for `key` reports whether it is scrolled to its top. At the top its held-back
+  /// posts join the list, also when the flag did not change (a page that opened at its top). A page
+  /// that is no longer the current one (a page fading out after a switch) is ignored.
+  func setFeedAtTop(_ value: Bool, key: FeedKey? = nil) {
+    if let key, key != currentFeedKey { return }
+    if value != feedAtTop { feedAtTop = value }
+    if value { showNewPosts(for: currentFeedKey) }
+  }
+  /// The list for `key` is shown at its top: a topic or community switch opens a new page there, and
+  /// pull to refresh happens there. Its held-back posts join the list; for the current key the feed
+  /// counts as at its top until the page reports a scroll.
+  func listShownAtTop(_ key: FeedKey) {
+    if key == currentFeedKey, !feedAtTop { feedAtTop = true }
+    showNewPosts(for: key)
+  }
+  /// `--uitesting-feed-delta`: two posts arrive as a delta would bring them, once the feed has left its top.
+  func deliverFixtureDeltaIfDue() {
+    guard fixtureMode, fixtureDeltaPending, !feedAtTop else { return }
+    fixtureDeltaPending = false
+    let key = currentFeedKey
+    let held = Set(state.posts.filter { $0.community == key.community && (key.topic == nil || $0.topic == key.topic) }.map(\.id))
+    let top = listTop(key, held: held)
+    let arrivals = Self.fixtureDeltaPosts(community: key.community, topic: key.topic, after: top ?? .now)
+    state.posts.append(contentsOf: arrivals)
+    feedPostIDs?.formUnion(arrivals.map(\.id))
+    recordNewPosts(arrivals, key: key, held: held, top: top)
+    save()
+  }
+  static func fixtureDeltaPosts(community: Community, topic: String?, after top: Date) -> [Post] {
+    // Newer than every post in the list (seeded posts may sit a second or two in the future).
+    let start = max(Date.now, top.addingTimeInterval(1))
+    return [("fixture-delta-post-1", "Is the Bonfire Memorial lit up tonight?"), ("fixture-delta-post-2", "Free pizza outside the MSC right now")].enumerated().map { offset, value in
+      var post = Post(id: value.0, author: "demo-new", community: community, text: value.1, score: 1, created: start.addingTimeInterval(Double(offset)), acceptsDM: true)
+      post.topic = topic
+      return post
+    }
   }
 }

@@ -20,7 +20,7 @@ def ok(endpoint,action,token=None,**payload):
 label='qagame'+str(int(time.time()))[-7:];names=[label+x for x in 'abc'];tokens=[]
 try:
  for name in names:
-  token=ok('social','register',username=name,adult=True)['token'];tokens.append(token)
+  token=runner_backend.accept_guidelines(config,ok('social','register',username=name,adult=True))['token'];tokens.append(token)
   fixtures.append({'username':name,'hash':hashlib.sha256(token.encode()).hexdigest()})
  fd=os.open('/tmp/maroon-game-test-fixtures.json',os.O_CREAT|os.O_TRUNC|os.O_WRONLY,0o600)
  with os.fdopen(fd,'w')as f:json.dump(fixtures,f)

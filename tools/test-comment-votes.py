@@ -28,7 +28,7 @@ def remember(kind,id):
     return id
 try:
     names=[label+suffix for suffix in 'abc']
-    for name in names:tokens.append(ok('register',username=name,adult=True)['token'])
+    for name in names:tokens.append(runner_backend.accept_guidelines(config,ok('register',username=name,adult=True))['token'])
     a,b,c=tokens
     p=remember('posts',ok('post.create',a,text='Synthetic nested reply verification',anonymous=True)['resource_id'])
     named=remember('posts',ok('post.create',a,text='Synthetic named context verification',anonymous=False,acceptsDM=False)['resource_id'])

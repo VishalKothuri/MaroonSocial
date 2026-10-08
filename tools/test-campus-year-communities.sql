@@ -4,8 +4,8 @@ do $$
 declare ha text:=encode(extensions.gen_random_bytes(32),'hex');hb text:=encode(extensions.gen_random_bytes(32),'hex');
  a uuid;b uuid;community text;out jsonb;post_id uuid;tag_value text:='cohort_'||substr(ha,1,8);private_post uuid;
 begin
- insert into social_private.members(token_hash,username,adult,network_hash)values(ha,'cohorta_'||substr(ha,1,8),true,ha)returning id into a;
- insert into social_private.members(token_hash,username,adult,network_hash)values(hb,'cohortb_'||substr(hb,1,8),true,hb)returning id into b;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(ha,'cohorta_'||substr(ha,1,8),true,ha)returning id into a;insert into social_private.guidelines_acceptances(member,version)select a,required_version from social_private.guidelines_settings;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hb,'cohortb_'||substr(hb,1,8),true,hb)returning id into b;insert into social_private.guidelines_acceptances(member,version)select b,required_version from social_private.guidelines_settings;
  foreach community in array array['Texas A&M','Freshmen','Sophomores','Juniors','Seniors','Graduates']loop
   -- Age the earlier fixture posts past the 5-posts-per-15-minutes limit (created_at moves no change marker).
   update social_private.posts set created_at=created_at-interval '15 minutes' where author=a;

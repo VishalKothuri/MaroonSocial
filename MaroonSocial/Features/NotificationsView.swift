@@ -21,9 +21,9 @@ struct NotificationsBell: View {
     }.accessibilityLabel("Notifications").accessibilityValue(model.unreadCount == 0 ? "No unread notifications" : "\(model.unreadCount) unread")
       .accessibilityIdentifier("notificationsBell")
       .popover(isPresented: $presented, arrowEdge: .top) {
-        NotificationsPanel(model: model) { notification in
-          Task { _ = await model.markRead(notification, using: store.social) }
-          if let postID = notification.postID { presented = false; selectedPost = NotificationPost(id: postID) }
+        NotificationsPanel(model: model) { group in
+          Task { _ = await model.markRead(group, using: store.social, fixture: store.fixtureMode) }
+          if let postID = group.postID { presented = false; selectedPost = NotificationPost(id: postID) }
         }
         .frame(idealWidth: 340, maxWidth: 360, idealHeight: 440, maxHeight: 520)
         .presentationCompactAdaptation(.popover)
@@ -37,7 +37,10 @@ struct NotificationsBell: View {
       }
       .task(id: store.state.username) {
         model.reset()
-        guard !store.fixtureMode else { return }
+        if store.fixtureMode {
+          if ProcessInfo.processInfo.arguments.contains("--uitesting-notifications") { model.loadFixture(postID: "demo-coffee-post") }
+          return
+        }
         while !Task.isCancelled {
           if scenePhase == .active && store.connected { await model.refresh(using: store.social) }
           do { try await Task.sleep(for: .seconds(15)) } catch { break }
@@ -50,7 +53,7 @@ private struct NotificationsPanel: View {
   @Environment(AppStore.self) private var store
   @Environment(\.dismiss) private var dismiss
   let model: NotificationsModel
-  let select: (SocialNotification) -> Void
+  let select: (NotificationGroup) -> Void
   var body: some View {
     VStack(spacing: 0) {
       HStack {
@@ -60,6 +63,7 @@ private struct NotificationsPanel: View {
       }.padding(.leading, 16).padding(.trailing, 6).padding(.top, 6)
       if model.items.contains(where: { !$0.read }) {
         Button("Mark as read") { Task {
+          if store.fixtureMode { for group in model.groups { await model.markRead(group, using: store.social, fixture: true) }; return }
           if await model.markAllRead(using: store.social) { AppHaptics.shared.play(.success) }
           else if model.error != nil { AppHaptics.shared.play(.error) }
         } }
@@ -82,22 +86,59 @@ private struct NotificationsPanel: View {
               Text("Comments, upvote milestones, and announcements will appear here.").font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
             }.padding(.horizontal, 22).padding(.vertical, 38)
           }
-          ForEach(model.items) { notification in
-            Button { AppHaptics.shared.play(.selection); select(notification) } label: {
-              HStack(alignment: .top, spacing: 12) {
-                Image(systemName: notification.symbol).font(.system(size: 18)).frame(width: 24).padding(.top, 3)
-                VStack(alignment: .leading, spacing: 6) {
-                  Text(notification.title).font(.subheadline.weight(notification.read ? .medium : .bold))
-                  Text(notification.body).font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                  Text(notification.created, style: .relative).font(.caption).foregroundStyle(.secondary)
-                }.frame(maxWidth: .infinity, alignment: .leading)
-                if !notification.read { Circle().fill(Palette.maroon).frame(width: 7, height: 7).padding(.top, 6) }
-              }.foregroundStyle(Palette.ink).padding(16).contentShape(Rectangle())
-            }.buttonStyle(.plain).accessibilityIdentifier("notification_\(notification.id)")
+          ForEach(model.groups) { group in
+            Button { AppHaptics.shared.play(.selection); select(group) } label: { NotificationRow(group: group, snippet: snippet(group)) }
+              .buttonStyle(.plain).accessibilityIdentifier("notification_\(group.id)")
             Divider().padding(.leading, 52)
           }
         }
       }.refreshable { if !store.fixtureMode { await model.refresh(using: store.social) } }
     }.background(Palette.paper).accessibilityIdentifier("notificationsPanel")
+  }
+  /// One line of the post the notification is about, when this device holds it.
+  private func snippet(_ group: NotificationGroup) -> String? {
+    guard let id = group.postID, let post = store.state.posts.first(where: { $0.id == id }), post.deleted != true else { return nil }
+    let text = post.text.trimmingCharacters(in: .whitespacesAndNewlines)
+    return text.isEmpty ? nil : text
+  }
+}
+
+/// A notification row: the kind's glyph, the (grouped) title, the newest comment, a line of your post,
+/// and an unread tint.
+struct NotificationRow: View {
+  let group: NotificationGroup
+  let snippet: String?
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+  private var tint: Color {
+    switch group.kind {
+    case .comment: return Color(hex: "#93C5FD") ?? Palette.ink
+    case .reply: return Color(hex: "#5EEAD4") ?? Palette.ink
+    case .upvotes: return Palette.maroonBright
+    case .announcement: return Color(hex: "#FDE047") ?? Palette.ink
+    }
+  }
+  var body: some View {
+    HStack(alignment: .top, spacing: 12) {
+      Image(systemName: group.newest.symbol).font(.system(size: 17, weight: .semibold)).foregroundStyle(tint)
+        .frame(width: 30, height: 30).background(tint.opacity(0.14), in: Circle()).accessibilityHidden(true)
+      VStack(alignment: .leading, spacing: 4) {
+        Text(group.title).font(.subheadline.weight(group.read ? .medium : .bold)).fixedSize(horizontal: false, vertical: true)
+        if !group.body.isEmpty {
+          // The whole comment, as before grouping: a line limit leaves a few words at accessibility sizes.
+          Text(group.body).font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+        if let snippet {
+          Text("\(group.kind == .reply ? "In" : "On") “\(snippet)”").font(.caption).foregroundStyle(Palette.secondary)
+            .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 1)
+            .accessibilityIdentifier("notificationSnippet")
+        }
+        Text(group.created, style: .relative).font(.caption).foregroundStyle(.secondary)
+      }.frame(maxWidth: .infinity, alignment: .leading)
+      if !group.read { Circle().fill(Palette.maroonBright).frame(width: 8, height: 8).padding(.top, 6).accessibilityHidden(true) }
+    }.foregroundStyle(Palette.ink).padding(16)
+      .background(group.read ? Color.clear : Palette.maroon.opacity(0.22))
+      .contentShape(Rectangle())
+      .accessibilityElement(children: .combine)
+      .accessibilityValue(group.read ? "" : "Unread")
   }
 }

@@ -5,9 +5,9 @@ declare ha text:=encode(extensions.gen_random_bytes(32),'hex');hb text:=encode(e
  a uuid;b uuid;c uuid;old_post uuid;secret_post uuid;tag_value text:='tg_'||substr(ha,1,8);cap_tag text:='cap_'||substr(ha,1,8);out jsonb;obj jsonb;choice uuid;
 begin
  if has_function_privilege('anon','social_private.visible_posts(uuid,text,text,integer)','EXECUTE')or has_function_privilege('authenticated','public.social_gateway(text,text,jsonb)','EXECUTE')then raise exception 'Tag query exposed outside authenticated Edge';end if;
- insert into social_private.members(token_hash,username,adult,network_hash)values(ha,'tag_a_'||substr(ha,1,8),true,ha)returning id into a;
- insert into social_private.members(token_hash,username,adult,network_hash)values(hb,'tag_b_'||substr(hb,1,8),true,hb)returning id into b;
- insert into social_private.members(token_hash,username,adult,network_hash)values(hc,'tag_c_'||substr(hc,1,8),true,hc)returning id into c;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(ha,'tag_a_'||substr(ha,1,8),true,ha)returning id into a;insert into social_private.guidelines_acceptances(member,version)select a,required_version from social_private.guidelines_settings;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hb,'tag_b_'||substr(hb,1,8),true,hb)returning id into b;insert into social_private.guidelines_acceptances(member,version)select b,required_version from social_private.guidelines_settings;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hc,'tag_c_'||substr(hc,1,8),true,hc)returning id into c;insert into social_private.guidelines_acceptances(member,version)select c,required_version from social_private.guidelines_settings;
  out:=public.social_gateway('post.create',ha,jsonb_build_object('text','Old tagged post','tags',jsonb_build_array(tag_value),'poll',jsonb_build_object('question','Still discoverable?','options',jsonb_build_array('Yes','No'),'duration_hours',24)));old_post:=(out->>'resource_id')::uuid;
  update social_private.posts set created_at='2000-01-01Z'where id=old_post;
  -- These are rolled-back fixtures only, used to prove this is a server query

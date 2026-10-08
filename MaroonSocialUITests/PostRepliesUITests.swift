@@ -55,8 +55,11 @@ import XCTest
     app.buttons["Cancel"].tap(); app.buttons["Discard draft"].tap()
     app.navigationBars.buttons.element(boundBy: 0).tap()
     app.buttons["Profile and settings"].tap()
-    XCTAssertTrue(app.staticTexts["profileKarma"].waitForExistence(timeout: 3))
-    XCTAssertEqual(app.staticTexts["profileKarma"].label, "0 karma")
+    // The Karma tile (a combined element) keeps the identifier and its spoken value.
+    let karma = app.descendants(matching: .any)["profileKarma"]
+    XCTAssertTrue(karma.waitForExistence(timeout: 3))
+    XCTAssertEqual(karma.label, "0 karma")
+    XCTAssertTrue(app.descendants(matching: .any)["profilePosts"].exists)
     XCTAssertTrue(app.staticTexts["@thread_tester"].exists)
   }
 }

@@ -5,10 +5,10 @@ declare ha text:=repeat('a',32)||replace(gen_random_uuid()::text,'-','');hb text
  aid uuid;r jsonb;meme uuid;i integer;meme_path text;paths text[];
 begin
  if has_function_privilege('anon','public.social_memes(text,text,jsonb)','EXECUTE')or has_function_privilege('authenticated','public.social_memes(text,text,jsonb)','EXECUTE')then raise exception 'Shared meme RPC is exposed to clients';end if;
- insert into social_private.members(token_hash,username,adult,network_hash)values(ha,'meme_a_'||substr(ha,33,10),true,ha)returning id into aid;
- insert into social_private.members(token_hash,username,adult,network_hash)values(hb,'meme_b_'||substr(hb,33,10),true,hb);
- insert into social_private.members(token_hash,username,adult,network_hash)values(hc,'meme_c_'||substr(hc,33,10),true,hc);
- insert into social_private.members(token_hash,username,adult,network_hash)values(hd,'meme_d_'||substr(hd,33,10),true,hd);
+ insert into social_private.members(token_hash,username,adult,network_hash)values(ha,'meme_a_'||substr(ha,33,10),true,ha)returning id into aid;insert into social_private.guidelines_acceptances(member,version)select aid,required_version from social_private.guidelines_settings;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hb,'meme_b_'||substr(hb,33,10),true,hb);insert into social_private.guidelines_acceptances(member,version)select (select id from social_private.members where token_hash=hb),required_version from social_private.guidelines_settings;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hc,'meme_c_'||substr(hc,33,10),true,hc);insert into social_private.guidelines_acceptances(member,version)select (select id from social_private.members where token_hash=hc),required_version from social_private.guidelines_settings;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hd,'meme_d_'||substr(hd,33,10),true,hd);insert into social_private.guidelines_acceptances(member,version)select (select id from social_private.members where token_hash=hd),required_version from social_private.guidelines_settings;
  r:=public.social_memes('list',repeat('0',64),'{}');if r->>'code'<>'unauthorized'then raise exception 'Unknown credential listed memes %',r;end if;
  r:=public.social_memes('publish',ha,'{"path":"../escape.png","mime":"image/png","size":10,"width":1,"height":1}');if r->>'code'<>'invalid'then raise exception 'Unsafe path accepted %',r;end if;
  r:=public.social_memes('publish',ha,jsonb_build_object('path',gen_random_uuid()::text||'.gif','mime','image/gif','size',10,'width',1,'height',1));if r->>'code'<>'invalid'then raise exception 'GIF accepted as meme %',r;end if;

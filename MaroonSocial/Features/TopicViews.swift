@@ -1,7 +1,8 @@
 import MaroonCore
 import SwiftUI
 
-/// The home feed's topic row: underline text tabs ("All", the shown topics, then "More").
+/// The home feed's topic row: underline text tabs ("All", the shown topics, then "More", which opens
+/// the topic sheet with the sort and every topic).
 /// It draws the header's hairline along its bottom edge; the selected tab's underline sits on it.
 /// Callers cap Dynamic Type at the call site (`.dynamicTypeSize(...DynamicTypeSize.accessibility2)`):
 /// the strip's own @ScaledMetric sizes read the environment it is created in, so a cap inside its
@@ -15,6 +16,11 @@ struct TopicTabStrip: View {
   @Binding var selection: String?
   /// A tap on the selected tab: scroll the feed to the top.
   var onReselect: () -> Void
+  /// Every active topic (with counts) for the topic sheet; the shown and folded tabs when empty.
+  var allTopics: [Topic] = []
+  /// The feed's New/Hot, which the topic sheet also sets.
+  var sort: Binding<String> = .constant("New")
+  @State private var sheet = false
   @Namespace private var underline
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Environment(\.displayScale) private var displayScale
@@ -33,7 +39,7 @@ struct TopicTabStrip: View {
         HStack(alignment: .bottom, spacing: gap) {
           tab(nil, emoji: nil, title: "All", tint: Palette.maroonBright)
           ForEach(topics) { topic in tab(topic.slug, emoji: topic.emoji, title: topic.title, tint: topic.textColor) }
-          if !more.isEmpty { moreMenu }
+          moreButton
         }.padding(.horizontal, 16)
       }
       .scrollIndicators(.hidden)
@@ -97,18 +103,18 @@ struct TopicTabStrip: View {
     .accessibilityAddTraits(on ? .isSelected : [])
     .accessibilityIdentifier("topicTab-\(slug ?? "all")")
   }
-  private var moreMenu: some View {
-    Menu {
-      ForEach(more) { topic in
-        Button("\(topic.emoji) \(topic.title)") { AppHaptics.shared.play(.selection); selection = topic.slug }
-          .accessibilityIdentifier("topicMore-\(topic.slug)")
-      }
-    } label: {
+  private var moreButton: some View {
+    Button { AppHaptics.shared.play(.impact); sheet = true } label: {
       HStack(spacing: 4) { Text("More"); Image(systemName: "chevron.down").font(.caption.bold()) }
         .font(.callout.weight(.semibold)).foregroundStyle(Palette.secondary).fixedSize().frame(minHeight: 44)
         .contentShape(Rectangle())
     }
-    .accessibilityLabel("More topics").accessibilityIdentifier("topicTab-more")
+    .buttonStyle(.plain).id("more")
+    .accessibilityLabel("More topics").accessibilityHint("Shows the sort and every topic")
+    .accessibilityIdentifier("topicTab-more")
+    .sheet(isPresented: $sheet) {
+      TopicSheet(topics: allTopics.isEmpty ? TopicCatalog.active(topics + more) : allTopics, selection: $selection, sort: sort)
+    }
   }
 }
 

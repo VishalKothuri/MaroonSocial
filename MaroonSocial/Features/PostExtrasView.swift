@@ -59,18 +59,20 @@ private struct PostPollView: View {
         ForEach(poll.options) { option in
           optionButton(option, ended: ended, showResults: showResults)
         }
-        HStack {
-          Text("\(poll.totalVotes) \(poll.totalVotes == 1 ? "vote" : "votes")")
-          Text("·")
+        // Total votes and time left, under the bars.
+        HStack(spacing: 4) {
+          Text("\(poll.totalVotes) \(poll.totalVotes == 1 ? "vote" : "votes")").monospacedDigit()
+          Text("·").accessibilityHidden(true)
           if ended { Text("Poll ended").accessibilityIdentifier("pollEnded") }
-          else { Text("Ends \(poll.endsAt, style: .relative)") }
+          else { (Text(poll.endsAt, style: .relative) + Text(" left")) }
           Spacer(minLength: 0)
           if voting { ProgressView().controlSize(.mini) }
         }.font(.caption).foregroundStyle(Palette.secondary)
         if poll.myOptionID != nil && !ended { Text("You can change your answer until the poll ends.").font(.caption2).foregroundStyle(Palette.secondary) }
         if let error { Text(error).font(.caption).foregroundStyle(Palette.accentText).accessibilityIdentifier("pollVoteError") }
       }.padding(12).background(Palette.paper, in: RoundedRectangle(cornerRadius: 14))
-        .accessibilityIdentifier("postPoll")
+        // A container, so the question and options keep their own identifiers inside it.
+        .accessibilityElement(children: .contain).accessibilityIdentifier("postPoll")
     }
   }
   private func optionButton(_ option: PostPollOption, ended: Bool, showResults: Bool) -> some View {
@@ -87,18 +89,23 @@ private struct PostPollView: View {
       }
     } label: {
       HStack(spacing: 8) {
-        Text(option.text).font(.subheadline).multilineTextAlignment(.leading).frame(maxWidth: .infinity, alignment: .leading)
-        if selected { Image(systemName: "checkmark.circle.fill") }
-        if showResults { Text("\(percent)%").font(.subheadline.monospacedDigit().weight(.semibold)) }
-      }.padding(.horizontal, 12).padding(.vertical, 10).frame(minHeight: 44)
+        if selected { Image(systemName: "checkmark.circle.fill").font(.subheadline.weight(.semibold)).accessibilityHidden(true) }
+        Text(option.text).font(.subheadline.weight(selected ? .semibold : .regular)).multilineTextAlignment(.leading)
+          .frame(maxWidth: .infinity, alignment: .leading)
+        // Right-aligned in a fixed column, so every option's percentage lines up.
+        if showResults { Text("\(percent)%").font(.subheadline.monospacedDigit().weight(.semibold)).frame(minWidth: 44, alignment: .trailing) }
+      }.foregroundStyle(Palette.ink).padding(.horizontal, 12).padding(.vertical, 10).frame(minHeight: 44)
         .background {
+          // Results: your choice fills maroon, the others a quieter bar, all on the elevated track.
           GeometryReader { geometry in
             ZStack(alignment: .leading) {
               RoundedRectangle(cornerRadius: 10).fill(Palette.elevated)
-              if showResults { Rectangle().fill(Palette.maroon).frame(width: geometry.size.width * fraction) }
+              if showResults {
+                Rectangle().fill(selected ? Palette.maroon : Palette.border).frame(width: geometry.size.width * fraction)
+              }
             }.clipShape(RoundedRectangle(cornerRadius: 10))
           }
-        }.overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(selected ? Palette.accentText : Palette.ink.opacity(0.16), lineWidth: selected ? 1.5 : 0.75))
+        }.overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(selected ? Palette.maroonBright : Palette.ink.opacity(0.16), lineWidth: selected ? 1.5 : 0.75))
     }.buttonStyle(.plain).foregroundStyle(Palette.ink).disabled(ended || voting)
       .accessibilityLabel(option.text).accessibilityValue(showResults ? "\(option.votes) votes, \(percent) percent" : "")
       .accessibilityAddTraits(selected ? .isSelected : [])

@@ -29,7 +29,7 @@ def animated_gif():
  for pixel in[0,1]:data+=b'\x21\xf9\x04\x00\x14\x00\x00\x00'+b'\x2c'+struct.pack('<HHHHB',0,0,1,1,0)+b'\x02\x02'+(b'\x44\x01'if pixel==0 else b'\x4c\x01')+b'\x00'
  return data+b'\x3b'
 label='qa'+str(int(time.time()))[-8:];names=[label+x for x in 'abcd']
-sessions=[ok('register',username=name,adult=True)['token']for name in names]
+sessions=[runner_backend.accept_guidelines(config,ok('register',username=name,adult=True))['token']for name in names]
 fd=os.open('/tmp/maroon-social-test-sessions.json',os.O_CREAT|os.O_TRUNC|os.O_WRONLY,0o600)
 with os.fdopen(fd,'w')as f:json.dump(sessions,f)
 a,b,c,d=sessions

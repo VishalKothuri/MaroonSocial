@@ -43,10 +43,10 @@ declare
  sports uuid[]:='{}';seen uuid[]:='{}';p_plain uuid;p_null uuid;p_house uuid;p_mov uuid;p_del uuid;p_hidden uuid;p_blocked uuid;p_old uuid;p_other uuid;p_adult uuid;stamp timestamptz;
  base jsonb;after jsonb;n int;
 begin
- insert into social_private.members(token_hash,username,adult,network_hash)values(ha,'topic_a_'||substr(ha,1,8),true,ha)returning id into a;
- insert into social_private.members(token_hash,username,adult,network_hash)values(hb,'topic_b_'||substr(hb,1,8),true,hb)returning id into b;
- insert into social_private.members(token_hash,username,adult,network_hash)values(hc,'topic_c_'||substr(hc,1,8),true,hc)returning id into c;
- insert into social_private.members(token_hash,username,adult,network_hash,nsfw_enabled)values(hd,'topic_d_'||substr(hd,1,8),true,hd,true)returning id into d;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(ha,'topic_a_'||substr(ha,1,8),true,ha)returning id into a;insert into social_private.guidelines_acceptances(member,version)select a,required_version from social_private.guidelines_settings;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hb,'topic_b_'||substr(hb,1,8),true,hb)returning id into b;insert into social_private.guidelines_acceptances(member,version)select b,required_version from social_private.guidelines_settings;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hc,'topic_c_'||substr(hc,1,8),true,hc)returning id into c;insert into social_private.guidelines_acceptances(member,version)select c,required_version from social_private.guidelines_settings;
+ insert into social_private.members(token_hash,username,adult,network_hash,nsfw_enabled)values(hd,'topic_d_'||substr(hd,1,8),true,hd,true)returning id into d;insert into social_private.guidelines_acceptances(member,version)select d,required_version from social_private.guidelines_settings;
  insert into qa values('a',a),('b',b),('c',c),('d',d),('ha',ha),('hb',hb),('hc',hc),('hd',hd);
  base:=public.social_gateway('topics.list',hb,'{"community":"Juniors"}');
  if base?'error' then raise exception 'topics.list failed %',base;end if;
@@ -136,7 +136,7 @@ begin
  if obj is null or not (obj->>'deleted')::boolean or jsonb_typeof(obj->'topic')<>'null' then raise exception 'Deleted post topic not null in All %',obj;end if;
  -- Account deletion clears the topic of every one of the member's posts.
  he:=encode(extensions.gen_random_bytes(32),'hex');
- insert into social_private.members(token_hash,username,adult,network_hash)values(he,'topic_e_'||substr(he,1,8),true,he);
+ insert into social_private.members(token_hash,username,adult,network_hash)values(he,'topic_e_'||substr(he,1,8),true,he);insert into social_private.guidelines_acceptances(member,version)select (select id from social_private.members where token_hash=he),required_version from social_private.guidelines_settings;
  out:=public.social_gateway('post.create',he,'{"text":"Leaving QA","community":"Juniors","topic":"relationships"}');
  if out?'error' then raise exception 'Leaving member post failed %',out;end if;
  p_mov:=(out->>'resource_id')::uuid;

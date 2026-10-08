@@ -46,7 +46,7 @@ def ok(action,token=None,**payload):
 references=[provider('static-memes'),provider('gifs')]
 accounts=[];label='klipy_'+uuid.uuid4().hex[:10]
 try:
- for suffix in['a','b','c']:accounts.append(ok('register',username=label+suffix,adult=True)['token'])
+ for suffix in['a','b','c']:accounts.append(runner_backend.accept_guidelines(config,ok('register',username=label+suffix,adult=True))['token'])
  a,b,c=accounts
  room=ok('dm.request',a,username=label+'b',text='Temporary KLIPY integration check')['resource_id']
  ok('dm.accept',b,room_id=room)

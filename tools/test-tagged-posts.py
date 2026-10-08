@@ -45,7 +45,7 @@ def create(token, **payload):
 
 try:
     for suffix in 'abc':
-        tokens.append(ok('register', username=label + suffix, adult=True)['token'])
+        tokens.append(runner_backend.accept_guidelines(config,ok('register', username=label + suffix, adult=True))['token'])
     a, b, c = tokens
     campus = create(a, text='Synthetic tag discovery', tags=[tag], anonymous=True,
         poll=dict(question='Tag poll?', options=['Yes', 'No'], duration_hours=24))
