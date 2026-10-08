@@ -34,7 +34,7 @@ import XCTest
     reveal(repost, in: app)
     XCTAssertEqual(repost.label, "Repost, 1 repost")
     repost.tap()
-    let options = app.scrollViews["postOptions"]
+    let options = app.scrollViews["postComposer"]
     XCTAssertTrue(options.waitForExistence(timeout: 3))
     XCTAssertTrue(app.textViews["postText"].exists)
     let composerQuote = options.descendants(matching: .any)["postQuote-demo-coffee-post"].firstMatch
@@ -74,7 +74,7 @@ import XCTest
     XCTAssertEqual(threadRepost.label, "Repost, 1 repost")
     threadRepost.tap()
     XCTAssertTrue(app.staticTexts["Quote post"].waitForExistence(timeout: 3))
-    let composerQuote = app.scrollViews["postOptions"].descendants(matching: .any)["postQuote-demo-coffee-post"].firstMatch
+    let composerQuote = app.scrollViews["postComposer"].descendants(matching: .any)["postQuote-demo-coffee-post"].firstMatch
     XCTAssertTrue(composerQuote.waitForExistence(timeout: 3))
     XCTAssertFalse(app.buttons["publishPost"].isEnabled, "The quote sheet needs a topic too")
     app.pickPostTopic()

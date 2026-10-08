@@ -53,7 +53,8 @@ struct CommunityView: View {
     let window = sort == "Hot" ? Array(feed.prefix(AppStore.hotWindow)) : feed
     let posts = window.filter {
       $0.deleted != true && !store.state.hiddenPosts.contains($0.id) && (!savedOnly || $0.saved)
-        && (search.isEmpty || $0.text.localizedCaseInsensitiveContains(search))
+        // A poll post's words are its question (the body is empty).
+        && (search.isEmpty || $0.text.localizedCaseInsensitiveContains(search) || ($0.poll?.question.localizedCaseInsensitiveContains(search) ?? false))
     }
     return sort == "Hot" ? posts.sorted { rank($0) > rank($1) } : posts
   }

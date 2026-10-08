@@ -214,27 +214,14 @@ import XCTest
 
   // MARK: Poll restyle
 
-  /// Brings a field of the composer's options panel into view (as `PostFeaturesUITests` does).
-  private func reveal(_ element: XCUIElement, in app: XCUIApplication) {
-    let panel = app.scrollViews["postOptions"]
-    for _ in 0..<5 { if element.isHittable { return }; panel.swipeUp(velocity: .slow) }
-    for _ in 0..<10 {
-      if element.isHittable { return }
-      let keyboard = app.keyboards.firstMatch
-      let bottom = keyboard.exists ? min(panel.frame.maxY, keyboard.frame.minY) : panel.frame.maxY
-      let center = (panel.frame.minY + bottom) / 2
-      let start = app.windows.firstMatch.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: panel.frame.midX, dy: center))
-      start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: element.frame.midY > center ? -70 : 70)), withVelocity: .slow, thenHoldForDuration: 0.3)
-    }
-    XCTAssertTrue(element.isHittable)
-  }
-
   func testPollResultsKeepTheirIdentifiersAndShowTotalsUnderTheBars() {
     let app = launch(name: "poll_style")
     app.buttons["Create post"].tap()
     app.buttons["postAddPoll"].tap()
-    for (id, text) in [("pollQuestion", "Best study spot?"), ("pollOption0", "Evans"), ("pollOption1", "MSC")] {
-      let field = app.textFields[id]; reveal(field, in: app); field.tap(); field.typeText(text)
+    // The post text is the poll's question.
+    let editor = app.textViews["postText"]; app.revealInComposer(editor); editor.tap(); editor.typeText("Best study spot?")
+    for (id, text) in [("pollOption0", "Evans"), ("pollOption1", "MSC")] {
+      let field = app.textFields[id]; app.revealInComposer(field); field.tap(); field.typeText(text)
     }
     app.pickPostTopic()
     app.buttons["publishPost"].tap()

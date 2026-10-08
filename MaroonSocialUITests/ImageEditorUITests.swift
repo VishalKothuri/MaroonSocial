@@ -72,7 +72,8 @@ import XCTest
     app.buttons["Share as a meme"].tap()
     XCTAssertTrue(app.staticTexts["Shared to the meme library. Thanks!"].waitForExistence(timeout: 8))
     // It is now in everyone's library under the picker's Community tab.
-    app.buttons["Post attachments"].tap(); app.buttons["postKlipyPicker"].tap()
+    // The composer is open with the image, so GIF search is a button in its tool row.
+    let gif = app.buttons["postKlipyPicker"]; app.revealInComposer(gif); gif.tap()
     waitHittable(app.buttons["klipyTab-community"])
     app.buttons["klipyTab-community"].tap()
     let shared = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'communityItem-published-'")).firstMatch

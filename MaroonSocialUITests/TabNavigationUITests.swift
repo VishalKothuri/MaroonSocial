@@ -122,6 +122,6 @@ import XCTest
     swipe(app, left: true, y: 0.35)
     XCTAssertTrue(app.textViews["postText"].exists)
     XCTAssertTrue(app.buttons["New"].isSelected, "Composition keeps its own gestures and feed order")
-    app.buttons["Cancel"].tap(); assertTab("Community", in: app)
+    app.buttons["closePostComposer"].tap(); assertTab("Community", in: app)
   }
 }

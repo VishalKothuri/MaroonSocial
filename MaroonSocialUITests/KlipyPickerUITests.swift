@@ -22,7 +22,8 @@ import XCTest
     return app
   }
   private func openPicker(_ app: XCUIApplication) {
-    app.buttons["Post attachments"].tap(); app.buttons["postKlipyPicker"].tap()
+    // The composer is open here, so GIF search is a button in its tool row.
+    app.buttons["postKlipyPicker"].tap()
     XCTAssertTrue(app.buttons["klipyCancel"].waitForExistence(timeout: 5))
   }
   private func waitForAbsent(_ element: XCUIElement, file: StaticString = #filePath, line: UInt = #line) {

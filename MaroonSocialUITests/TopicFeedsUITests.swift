@@ -91,7 +91,7 @@ import XCTest
     XCTAssertTrue(app.buttons["publishPost"].isEnabled)
     confessions.tap(); waitSelected(confessions, false)
     XCTAssertFalse(app.buttons["publishPost"].isEnabled, "Tapping the selected chip clears it")
-    app.buttons["Cancel"].tap(); app.alerts.buttons["Discard draft"].tap()
+    let discard = app.buttons["postDiscard"]; app.revealInComposer(discard); discard.tap(); app.alerts.buttons["Discard draft"].tap()
     XCTAssertTrue(app.buttons["Create post"].waitForExistence(timeout: 3))
     // Browsing Sports starts the composer in Sports.
     let sportsTab = tab("sports", in: app)

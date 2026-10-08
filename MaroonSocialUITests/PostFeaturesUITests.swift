@@ -9,28 +9,18 @@ import XCTest
     XCTAssertTrue(app.buttons["Create post"].waitForExistence(timeout: 5)); app.buttons["Create post"].tap()
     return app
   }
-  private func reveal(_ element: XCUIElement, in app: XCUIApplication) {
-    let panel = app.scrollViews["postOptions"]
-    for _ in 0..<5 { if element.isHittable { return }; panel.swipeUp(velocity: .slow) }
-    // The topic row makes the panel taller than its band above the keyboard, so a whole swipe can
-    // carry a field past it. Then drag in short, held steps toward the field.
-    for _ in 0..<10 {
-      if element.isHittable { return }
-      let keyboard = app.keyboards.firstMatch
-      let bottom = keyboard.exists ? min(panel.frame.maxY, keyboard.frame.minY) : panel.frame.maxY
-      let center = (panel.frame.minY + bottom) / 2
-      let start = app.windows.firstMatch.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: panel.frame.midX, dy: center))
-      start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: element.frame.midY > center ? -70 : 70)), withVelocity: .slow, thenHoldForDuration: 0.3)
-    }
-    XCTAssertTrue(element.isHittable)
-  }
   private func fill(_ id: String, _ text: String, in app: XCUIApplication) {
-    let field = app.textFields[id]; reveal(field, in: app); field.tap(); field.typeText(text)
+    let field = app.textFields[id]; app.revealInComposer(field); field.tap(); field.typeText(text)
+  }
+  /// With a poll on, the post text is the question.
+  private func ask(_ question: String, in app: XCUIApplication) {
+    let editor = app.textViews["postText"]; app.revealInComposer(editor); editor.tap(); editor.typeText(question)
   }
   func testPollOnlyPostAllowsAuthorVoteAndChangeWithoutAddingVotes() {
     let app = launch(); app.buttons["postAddPoll"].tap()
     XCTAssertFalse(app.buttons["publishPost"].isEnabled)
-    fill("pollQuestion", "Where should we study?", in: app)
+    XCTAssertTrue(app.buttons["postAddPoll"].isSelected)
+    ask("Where should we study?", in: app)
     fill("pollOption0", "Library", in: app); fill("pollOption1", "Coffee", in: app)
     app.pickPostTopic()
     XCTAssertTrue(app.buttons["publishPost"].isEnabled)
@@ -48,9 +38,9 @@ import XCTest
   }
   func testLinkAndTagsWithoutBodyCreateScopedTagNavigation() {
     let app = launch(); app.buttons["postAddLink"].tap(); fill("postLink", "tamu.edu/academics", in: app)
-    // Return to the compact feature toolbar, preserving the URL draft.
-    app.scrollViews["postOptions"].swipeDown(velocity: .slow)
-    app.buttons["postAddTags"].tap(); fill("postTags", "#Campus, study_group", in: app)
+    // The tool row stays in the card, under the link field.
+    let tags = app.buttons["postAddTags"]; app.revealInComposer(tags); tags.tap(); fill("postTags", "#Campus, study_group", in: app)
+    XCTAssertEqual(app.textFields["postLink"].value as? String, "tamu.edu/academics")
     app.pickPostTopic()
     app.buttons["publishPost"].tap()
     XCTAssertTrue(app.buttons["postLinkCard"].waitForExistence(timeout: 5))
@@ -61,20 +51,26 @@ import XCTest
   }
   func testFeatureDraftSurvivesMediaCancelAndRequiresExplicitDiscard() {
     let app = launch(); app.buttons["postAddPoll"].tap()
-    fill("pollQuestion", "Keep this question", in: app)
-    app.buttons["Post attachments"].tap(); app.buttons["postKlipyPicker"].tap()
+    ask("Keep this question", in: app)
+    fill("pollOption0", "Library", in: app)
+    let gif = app.buttons["postKlipyPicker"]; app.revealInComposer(gif); gif.tap()
     XCTAssertTrue(app.staticTexts["KLIPY library is being connected"].waitForExistence(timeout: 3))
     app.buttons["klipyCancel"].tap()
-    let question = app.textFields["pollQuestion"]; reveal(question, in: app)
-    XCTAssertEqual(question.value as? String, "Keep this question")
-    let cancel = app.buttons["Cancel"]; reveal(cancel, in: app); cancel.tap()
+    let editor = app.textViews["postText"]; XCTAssertTrue(editor.waitForExistence(timeout: 3))
+    XCTAssertEqual(editor.value as? String, "Keep this question")
+    XCTAssertEqual(app.textFields["pollOption0"].value as? String, "Library")
+    let discard = app.buttons["postDiscard"]; app.revealInComposer(discard); discard.tap()
     XCTAssertTrue(app.alerts["Discard this post draft?"].waitForExistence(timeout: 3))
     app.alerts.buttons["Keep editing"].tap()
     app.buttons["hideKeyboard"].tap()
-    reveal(cancel, in: app); cancel.tap(); app.alerts.buttons["Discard draft"].tap()
+    app.revealInComposer(discard); discard.tap(); app.alerts.buttons["Discard draft"].tap()
     XCTAssertTrue(app.buttons["Create post"].waitForExistence(timeout: 3))
     app.buttons["Create post"].tap()
-    XCTAssertFalse(app.textFields["pollQuestion"].exists)
+    XCTAssertTrue(app.textViews["postText"].waitForExistence(timeout: 3))
+    XCTAssertEqual(app.textViews["postText"].value as? String ?? "", "")
+    XCTAssertFalse(app.textFields["pollOption0"].exists)
+    XCTAssertFalse(app.buttons["postAddPoll"].isSelected)
+    XCTAssertFalse(app.buttons["postDiscard"].exists, "Discard shows only when the draft has content")
     XCTAssertFalse(app.buttons["publishPost"].isEnabled)
   }
 }

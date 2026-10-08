@@ -79,7 +79,7 @@ import XCTest
     XCTAssertTrue(text.waitForExistence(timeout: 3)); text.tap(); text.typeText(caption)
     let hideKeyboard = app.buttons["hideKeyboard"].firstMatch
     if hideKeyboard.exists { hideKeyboard.tap() }
-    app.buttons["Post attachments"].tap(); app.buttons["Photo, GIF, or video"].tap()
+    app.buttons["Add photo or video"].tap(); app.buttons["Photo or video"].tap()
     try selectSynthetic("Video", in: app)
     XCTAssertTrue(app.staticTexts["Video attached"].waitForExistence(timeout: 30), "This state appears only after the native import and transcode complete.")
     XCTAssertTrue(app.buttons["Remove attachment"].exists)

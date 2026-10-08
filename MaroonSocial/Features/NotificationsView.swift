@@ -99,7 +99,10 @@ private struct NotificationsPanel: View {
   private func snippet(_ group: NotificationGroup) -> String? {
     guard let id = group.postID, let post = store.state.posts.first(where: { $0.id == id }), post.deleted != true else { return nil }
     let text = post.text.trimmingCharacters(in: .whitespacesAndNewlines)
-    return text.isEmpty ? nil : text
+    if !text.isEmpty { return text }
+    // A poll post's words are its question (the body is empty).
+    let question = post.poll?.question.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    return question.isEmpty ? nil : question
   }
 }
 

@@ -108,6 +108,118 @@ public enum PostFeatureRules {
   }
 }
 
+/// The composer's poll, link and hashtags, as one value. With a poll on, the post text is the
+/// poll's question (1–180 characters) and the body is sent empty; `poll.question` is never edited
+/// directly and stays empty in a draft (`payload(text:)` fills it on send).
+public struct PostComposerFeatures: Equatable, Sendable {
+  public enum Tool: Sendable, CaseIterable { case poll, link, tags }
+  public static let textLimit = 1000
+  public static let pollQuestionLimit = 180
+  public static let maxChoices = 4
+  public static let minChoices = 2
+  public var pollEnabled: Bool
+  public var poll: PostPollDraft
+  public var linkEnabled: Bool
+  public var link: String
+  public var tagsEnabled: Bool
+  public var tagsText: String
+  public init(pollEnabled: Bool = false, poll: PostPollDraft = PostPollDraft(), linkEnabled: Bool = false, link: String = "", tagsEnabled: Bool = false, tagsText: String = "") {
+    self.pollEnabled = pollEnabled; self.poll = poll; self.linkEnabled = linkEnabled; self.link = link
+    self.tagsEnabled = tagsEnabled; self.tagsText = tagsText
+  }
+
+  public func isOn(_ tool: Tool) -> Bool {
+    switch tool { case .poll: pollEnabled; case .link: linkEnabled; case .tags: tagsEnabled }
+  }
+  /// Turns a tool on (an "Add …" menu item never turns one off).
+  public mutating func enable(_ tool: Tool) {
+    switch tool { case .poll: pollEnabled = true; case .link: linkEnabled = true; case .tags: tagsEnabled = true }
+  }
+  /// Turns a tool off and clears what it held.
+  public mutating func disable(_ tool: Tool) {
+    switch tool {
+    case .poll: pollEnabled = false; poll = PostPollDraft()
+    case .link: linkEnabled = false; link = ""
+    case .tags: tagsEnabled = false; tagsText = ""
+    }
+  }
+  /// The tool row: an active tool turns off (clearing it), an inactive one turns on. Returns the new state.
+  @discardableResult public mutating func toggle(_ tool: Tool) -> Bool {
+    if isOn(tool) { disable(tool); return false }
+    enable(tool); return true
+  }
+
+  /// The counter's limit: 180 while the text is a poll question, else 1,000.
+  public var characterLimit: Int { pollEnabled ? Self.pollQuestionLimit : Self.textLimit }
+  public var tagValues: [String] { tagsText.split(whereSeparator: { $0.isWhitespace || $0 == "," }).map(String.init) }
+
+  public var canAddChoice: Bool { poll.options.count < Self.maxChoices }
+  /// Adds an empty choice; returns its index, or nil at four.
+  @discardableResult public mutating func addChoice() -> Int? {
+    guard canAddChoice else { return nil }
+    poll.options.append(""); return poll.options.count - 1
+  }
+  /// Removes a choice from the third on (two always stay).
+  public mutating func removeChoice(at index: Int) {
+    guard poll.options.indices.contains(index), poll.options.count > Self.minChoices else { return }
+    poll.options.remove(at: index)
+  }
+  /// Return in a choice field: the next choice, else a new one (up to four) when this one has text.
+  /// Nil means there is nowhere to go and the keyboard can close.
+  public mutating func choiceAfterReturn(from index: Int) -> Int? {
+    if index + 1 < poll.options.count { return index + 1 }
+    guard poll.options.indices.contains(index), !poll.options[index].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+    return addChoice()
+  }
+
+  /// What is sent: with a poll, the trimmed text becomes the question and the body is empty.
+  public func payload(text: String) -> (text: String, poll: PostPollDraft?) {
+    guard pollEnabled else { return (text.trimmingCharacters(in: .whitespacesAndNewlines), nil) }
+    var question = poll; question.question = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    return ("", question)
+  }
+  /// The same rules the server applies, on the payload `send` would build.
+  public func validate(text: String, hasQuote: Bool = false) throws -> ValidatedPostFeatures {
+    let sent = payload(text: text)
+    return try PostFeatureRules.validate(text: sent.text, poll: sent.poll, linkURL: linkEnabled ? link : nil, tags: tagsEnabled ? tagValues : [], hasQuote: hasQuote)
+  }
+
+  /// A rule the draft actually breaks (too long, a duplicate or over-long choice, a bad link or
+  /// hashtag). Nil while the draft is valid or only incomplete: required pieces that are still empty
+  /// (no text yet, a blank question or choice) just keep Send disabled and are not reported.
+  public func brokenRule(text: String, hasQuote: Bool = false) -> PostFeatureError? {
+    do { _ = try validate(text: text, hasQuote: hasQuote); return nil } catch let error as PostFeatureError {
+      switch error {
+      case .empty: return nil
+      case .invalidQuestion, .invalidOptions:
+        if text.trimmingCharacters(in: .whitespacesAndNewlines).count > Self.pollQuestionLimit { return .invalidQuestion }
+        let choices = poll.options.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        let tooLong = choices.contains { $0.count > 80 }
+        let repeated = Set(choices.map { $0.lowercased() }).count < choices.count
+        return tooLong || repeated ? .invalidOptions : nil
+      default: return error
+      }
+    } catch { return nil }
+  }
+
+  /// Drafts saved by the earlier layout carried a separate poll question. Moves it once, keeping
+  /// everything typed: a question with no body becomes the text; with both, the old question goes
+  /// on a new line under the body. When that fits 180 characters it is the poll's question; when
+  /// it does not, the poll stays off (its choices stay in the draft for a re-added poll) so the
+  /// longer text can still be sent. A removed poll's question was never going to be sent and is dropped.
+  public static func migratingLegacyPoll(text: String, pollEnabled: Bool, poll: PostPollDraft?) -> (text: String, features: PostComposerFeatures) {
+    var poll = poll ?? PostPollDraft()
+    let question = poll.question.trimmingCharacters(in: .whitespacesAndNewlines)
+    poll.question = ""
+    let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard pollEnabled, !question.isEmpty else { return (text, PostComposerFeatures(pollEnabled: pollEnabled, poll: poll)) }
+    if body.isEmpty { return (question, PostComposerFeatures(pollEnabled: true, poll: poll)) }
+    let combined = body + "\n" + question
+    if combined.count <= pollQuestionLimit { return (combined, PostComposerFeatures(pollEnabled: true, poll: poll)) }
+    return (text + "\n" + question, PostComposerFeatures(pollEnabled: false, poll: poll))
+  }
+}
+
 /// One topic a post can carry (`posts.topic`), as `topics.list` describes it. A post has at most one.
 /// `recentCount` is the server's 7-day count of readable posts in the requested community.
 public struct Topic: Identifiable, Codable, Hashable, Sendable {

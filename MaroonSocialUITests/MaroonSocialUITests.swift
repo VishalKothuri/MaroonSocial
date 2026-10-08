@@ -124,11 +124,16 @@ final class MaroonSocialUITests: XCTestCase {
     app.buttons["useMeme"].tap()
     let attachment = app.buttons["Remove attachment"]
     XCTAssertTrue(attachment.waitForExistence(timeout: 5))
-    app.buttons["Cancel"].tap()
+    // A device's first image shows the photo policy once, then offers sharing.
+    let understand = app.alerts.buttons["I understand"]
+    if understand.waitForExistence(timeout: 3) { understand.tap() }
+    if app.buttons["Not now"].waitForExistence(timeout: 3) { app.buttons["Not now"].tap() }
+    let discard = app.buttons["postDiscard"]
+    app.revealInComposer(discard); discard.tap()
     XCTAssertTrue(app.buttons["Discard draft"].waitForExistence(timeout: 3))
     app.buttons["Keep editing"].tap()
     XCTAssertTrue(attachment.exists)
-    app.buttons["Cancel"].tap(); app.buttons["Discard draft"].tap()
+    app.revealInComposer(discard); discard.tap(); app.buttons["Discard draft"].tap()
     XCTAssertTrue(app.buttons["Create post"].waitForExistence(timeout: 3))
   }
 
@@ -304,9 +309,9 @@ final class MaroonSocialUITests: XCTestCase {
     XCTAssertLessThanOrEqual(hide.frame.maxX, app.frame.maxX)
     XCTAssertLessThanOrEqual(hide.frame.maxY, app.keyboards.firstMatch.frame.minY)
     hide.tap()
-    let options = app.scrollViews["postOptions"], cancel = app.buttons["Cancel"]
-    for _ in 0..<4 where !cancel.isHittable { options.swipeUp(velocity: .slow) }
-    XCTAssertTrue(cancel.isHittable); cancel.tap(); app.alerts.buttons["Discard draft"].tap()
+    XCTAssertFalse(app.scrollViews["postOptions"].exists, "The options panel has no scroll box of its own")
+    let discard = app.buttons["postDiscard"]
+    app.revealInComposer(discard); discard.tap(); app.alerts.buttons["Discard draft"].tap()
     app.tabBars.buttons["Inbox"].tap()
     app.buttons["newConversation"].tap(); app.buttons["New message"].tap()
     let username = app.textFields["requestUsername"]
