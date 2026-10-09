@@ -177,8 +177,10 @@ struct TabSwipeNavigation: UIViewRepresentable {
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
       guard current != 0, !transitionActive, rootIsAvailable(), let pan = gestureRecognizer as? UIPanGestureRecognizer else { return false }
       let velocity = pan.velocity(in: pan.view)
-      guard abs(velocity.x) > 80, abs(velocity.x) > abs(velocity.y) * 1.6 else { return false }
-      return (velocity.x < 0 && current < count - 1) || (velocity.x > 0 && current > 0)
+      // Any decisive horizontal swipe begins, including one past the first or last
+      // tab: beginning cancels the touch underneath, so a bounded swipe over a row
+      // or link never turns into a tap. `panned` ignores out-of-range destinations.
+      return abs(velocity.x) > 80 && abs(velocity.x) > abs(velocity.y) * 1.6
     }
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
       // A vertical ScrollView remains free to track its own pan. Its horizontal
@@ -345,6 +347,11 @@ extension View {
 struct CommunitySortSwipeNavigation: UIViewRepresentable {
   @Binding var selection: String
   let enabled: Bool
+  /// The sorts the swipe moves between, in order.
+  var options = ["New", "Hot"]
+  /// Names the feed page on screen. A new page is a new scroll view, so a change re-attaches once
+  /// the outgoing page has left (it slides or fades out first).
+  var page = ""
 
   func makeCoordinator() -> Coordinator { Coordinator() }
   func makeUIView(context: Context) -> Probe {
@@ -354,9 +361,14 @@ struct CommunitySortSwipeNavigation: UIViewRepresentable {
   }
   func updateUIView(_ probe: Probe, context: Context) {
     context.coordinator.selection = selection
+    context.coordinator.options = options
     context.coordinator.enabled = enabled
     context.coordinator.select = { selection = $0 }
     context.coordinator.attach(from: probe)
+    if context.coordinator.page != page {
+      context.coordinator.page = page
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak probe] in if let probe { probe.attach?(probe) } }
+    }
   }
   static func dismantleUIView(_ probe: Probe, coordinator: Coordinator) { probe.attach = nil; coordinator.detach() }
 
@@ -370,7 +382,9 @@ struct CommunitySortSwipeNavigation: UIViewRepresentable {
   }
   @MainActor final class Coordinator: NSObject, UIGestureRecognizerDelegate {
     var selection = "New"
+    var options = ["New", "Hot"]
     var enabled = true
+    var page = ""
     var select: ((String) -> Void)?
     private weak var scroll: UIScrollView?
     private weak var tabs: UITabBarController?
@@ -385,9 +399,12 @@ struct CommunitySortSwipeNavigation: UIViewRepresentable {
     func attach(from probe: UIView) {
       guard let window = probe.window else { detach(); return }
       tabs = window.rootViewController.flatMap(Self.findTabs)
+      // The probe is the feed's background, so the feed is the scroll view under its center. That
+      // skips sideways scrollers elsewhere in the screen (the header's topic strip).
+      let center = probe.convert(CGPoint(x: probe.bounds.midX, y: probe.bounds.midY), to: nil)
       var ancestor = probe.superview
       while let view = ancestor {
-        if let candidate = Self.findScroll(in: view) {
+        if let candidate = Self.findScroll(in: view, containing: center) {
           if candidate !== scroll { pan.view?.removeGestureRecognizer(pan); scroll = candidate; candidate.addGestureRecognizer(pan) }
           return
         }
@@ -395,9 +412,9 @@ struct CommunitySortSwipeNavigation: UIViewRepresentable {
       }
     }
     func detach() { pan.view?.removeGestureRecognizer(pan); scroll = nil; tabs = nil }
-    private static func findScroll(in view: UIView) -> UIScrollView? {
-      if let scroll = view as? UIScrollView { return scroll }
-      for child in view.subviews { if let scroll = findScroll(in: child) { return scroll } }
+    private static func findScroll(in view: UIView, containing point: CGPoint) -> UIScrollView? {
+      if let scroll = view as? UIScrollView, scroll.convert(scroll.bounds, to: nil).contains(point) { return scroll }
+      for child in view.subviews { if let scroll = findScroll(in: child, containing: point) { return scroll } }
       return nil
     }
     private static func findTabs(in controller: UIViewController) -> UITabBarController? {
@@ -427,15 +444,17 @@ struct CommunitySortSwipeNavigation: UIViewRepresentable {
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
       guard available, let pan = gestureRecognizer as? UIPanGestureRecognizer else { return false }
       let speed = pan.velocity(in: scroll)
-      guard abs(speed.x) > 80, abs(speed.x) > abs(speed.y) * 1.6 else { return false }
-      return (selection == "New" && speed.x < 0) || (selection == "Hot" && speed.x > 0)
+      // Begins for both directions so a swipe past "New" or "Hot" cancels the touch
+      // under the finger instead of activating a post or quote card as a tap;
+      // `panned` still finds no destination for the bounded direction.
+      return abs(speed.x) > 80 && abs(speed.x) > abs(speed.y) * 1.6
     }
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
       other is UIPanGestureRecognizer && other.view is UIScrollView
     }
     @objc private func panned(_ gesture: UIPanGestureRecognizer) {
       guard gesture.state == .ended, available, let scroll,
-        let next = CommunitySortSwipeIntent.destination(selection: selection, width: scroll.bounds.width,
+        let next = CommunitySortSwipeIntent.destination(selection: selection, options: options, width: scroll.bounds.width,
           translation: gesture.translation(in: scroll), velocity: gesture.velocity(in: scroll)) else { return }
       select?(next)
     }
@@ -443,9 +462,10 @@ struct CommunitySortSwipeNavigation: UIViewRepresentable {
 }
 
 enum CommunitySortSwipeIntent {
-  static func destination(selection: String, width: CGFloat, translation: CGPoint, velocity: CGPoint) -> String? {
-    guard let current = ["New", "Hot"].firstIndex(of: selection),
-      let destination = TabSwipeIntent.destination(current: current, count: 2, width: width, translation: translation, velocity: velocity) else { return nil }
-    return ["New", "Hot"][destination]
+  /// The sort a sideways swipe moves to: New ↔ Hot, and Hot ↔ Top while the server offers Top.
+  static func destination(selection: String, options: [String] = ["New", "Hot"], width: CGFloat, translation: CGPoint, velocity: CGPoint) -> String? {
+    guard let current = options.firstIndex(of: selection),
+      let destination = TabSwipeIntent.destination(current: current, count: options.count, width: width, translation: translation, velocity: velocity) else { return nil }
+    return options[destination]
   }
 }

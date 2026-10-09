@@ -58,7 +58,7 @@ struct InboxView: View {
               Image(systemName: "gamecontroller.fill").font(.system(size: 19, weight: .semibold)).foregroundStyle(Palette.accentText)
               Text("Game activity").font(.subheadline.weight(.semibold)).foregroundStyle(Palette.ink)
               Spacer()
-              let unread = gameActivity.items.filter { !$0.read }.count
+              let unread = gameActivity.visibleItems.filter { !$0.read }.count
               if unread > 0 { InboxBadge(count: unread, request: false) }
               Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(Palette.secondary)
             }.padding(.horizontal, 20).padding(.vertical, 14).background(Palette.surface)
@@ -75,6 +75,8 @@ struct InboxView: View {
                   Text(chat.anonymous ? latestMessage(chat) : chat.title)
                     .font(.subheadline.weight((counts.entries[chat.id]?.badge ?? 0) > 0 ? .semibold : .regular))
                     .foregroundStyle(Palette.ink).lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 2)
+                  // Display only: the row opens the chat, whose pinned tag opens the post.
+                  if store.conversationMeta[chat.id]?.kind == "dm", let origin = store.conversationMeta[chat.id]?.sourcePost { SourcePostTag(context: origin) }
                   if !chat.anonymous {
                     Text(latestMessage(chat)).font(.subheadline).foregroundStyle(.secondary)
                       .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
@@ -89,7 +91,13 @@ struct InboxView: View {
               }.padding(.horizontal, 16).padding(.vertical, 14).background(Palette.paper).overlay(alignment: .bottom) { Divider().padding(.leading, 72) }
             }.buttonStyle(.plain)
           }
-          if chats.isEmpty { EmptyCard(icon: "tray", title: filter == .requests ? "No message requests" : "No conversations yet", detail: "Join a class, create a plan, or message someone by username.") }
+          if chats.isEmpty {
+            switch filter {
+            case .requests: EmptyCard(icon: "tray", title: "No message requests", detail: "Requests from posts and replies wait here until you accept them.")
+            case .groups: EmptyCard(icon: "person.3", title: "No groups yet", detail: "Create a group from the compose button or accept a group invitation.")
+            default: EmptyCard(icon: "tray", title: "No conversations yet", detail: "Join a class, create a plan, or message someone by username.")
+            }
+          }
         }
       }.maroonRefreshable { await store.refreshAndWait(); if !store.fixtureMode { await gameActivity.refresh(social: store.social) } }
     }.appBackground().toolbar(.hidden, for: .navigationBar)
@@ -109,6 +117,7 @@ struct InboxView: View {
   private func latestMessage(_ chat: Conversation) -> String {
     guard let message = chat.messages.last else { return chat.request ? "Invitation to chat" : "Start the conversation" }
     if message.deleted == true { return "Message deleted" }
+    if let game = message.game, !FeatureAvailability.isGameAvailable(title: game) { return FeatureAvailability.unavailableMessage(for: game) }
     if !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return message.text }
     return message.game != nil ? "Game invitation" : "Photo or GIF"
   }
@@ -132,6 +141,8 @@ struct NewMessageView: View {
   @State private var nonce = UUID().uuidString
   @State private var submissionKey = ""
   @State private var closing = false
+  /// The community guidelines sheet shown before a member's first message request.
+  @State private var guidelines = GuidelinesGate()
   private enum Field: Hashable { case username, message }
   @FocusState private var focused: Field?
   private var scope: MessageRequestScope {
@@ -163,26 +174,34 @@ struct NewMessageView: View {
       .interactiveDismissDisabled(sending || !text.isEmpty || username != initialUsername).navigationTitle("New message").navigationBarTitleDisplayMode(.inline)
       .onAppear { if draftOwner.isEmpty { draftOwner = store.compositions.owner }; if store.compositions.draft(draftKey)==nil { username = initialUsername } }.persistentDraft(draftKey,value:savedDraft).toolbar {
       ToolbarItem(placement: .cancellationAction) { Button("Cancel"){if !text.isEmpty || username != initialUsername{closing=true}else{dismiss()}}.disabled(sending) }
-      ToolbarItem(placement: .confirmationAction) { Button(sending ? "Sending…" : "Send") {
-        let key=CompositionIdentity.signature(scope.payload(text:text,username:username,nonce:""))
-        if key != submissionKey{submissionKey=key;nonce=UUID().uuidString}
-        sending = true; error = nil; focused = nil
-        Task {
-          guard await store.compositions.saveDraft(savedDraft.wrappedValue,key:draftKey,owner:draftOwner)else{error=store.compositions.error;sending=false;return}
-          guard draftOwner == store.compositions.owner else { return }
-          let result = await store.perform(scope.action, scope.payload(text: text, username: username, nonce: nonce))
-          guard draftOwner == store.compositions.owner else { return }
-          if let room = result?.resourceID { AppHaptics.shared.play(.success);clearDraft();await store.compositions.removeDraft(draftKey,owner:draftOwner);dismiss(); onCreated(room) }
-          else { AppHaptics.shared.play(.error); error = store.notice ?? "Your request could not be sent. Please retry." }
-          sending = false
-        }
-      }.disabled(sending || store.busy || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || text.count > 1000 || (scope.requiresUsername && username.trimmingCharacters(in: .whitespacesAndNewlines).count < 3)).accessibilityIdentifier("sendMessageRequest") }
+      ToolbarItem(placement: .confirmationAction) { Button(sending ? "Sending…" : "Send", action: sendRequest).disabled(sending || store.busy || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || text.count > 1000 || (scope.requiresUsername && username.trimmingCharacters(in: .whitespacesAndNewlines).count < 3)).accessibilityIdentifier("sendMessageRequest") }
       ToolbarItem(placement: .topBarTrailing) { if focused != nil { KeyboardDismissButton { focused = nil } } }
     }.alert("Keep this message request draft?",isPresented:$closing){
       Button("Save and close"){Task{if await store.compositions.saveDraft(savedDraft.wrappedValue,key:draftKey,owner:draftOwner){dismiss()}else{error=store.compositions.error}}}
       Button("Discard draft",role:.destructive){Task{clearDraft();await store.compositions.removeDraft(draftKey,owner:draftOwner);dismiss()}}
       Button("Keep editing",role:.cancel){}
-    }message:{Text("This draft stays attached to the same recipient or post on this device. It is never sent automatically.")} }
+    }message:{Text("This draft stays attached to the same recipient or post on this device. It is never sent automatically.")}
+    .guidelinesSheet(guidelines) }
+  }
+  private func sendRequest() {
+    guard !sending else { return }
+    // First message request: the guidelines sheet comes first, and "I agree" sends it.
+    if guidelines.intercept(store, retry: sendRequest) { focused = nil; return }
+    let key=CompositionIdentity.signature(scope.payload(text:text,username:username,nonce:""))
+    if key != submissionKey{submissionKey=key;nonce=UUID().uuidString}
+    sending = true; error = nil; focused = nil
+    Task {
+      guard await store.compositions.saveDraft(savedDraft.wrappedValue,key:draftKey,owner:draftOwner)else{error=store.compositions.error;sending=false;return}
+      guard draftOwner == store.compositions.owner else { return }
+      var result: SocialResponse?
+      let refused = await guidelines.run(store, retry: sendRequest) {
+        result = await store.perform(scope.action, scope.payload(text: text, username: username, nonce: nonce))
+      }
+      guard draftOwner == store.compositions.owner else { return }
+      if let room = result?.resourceID { AppHaptics.shared.play(.success);clearDraft();await store.compositions.removeDraft(draftKey,owner:draftOwner);dismiss(); onCreated(room) }
+      else if !refused { AppHaptics.shared.play(.error); error = store.notice ?? "Your request could not be sent. Please retry." }
+      sending = false
+    }
   }
 }
 struct CreateGroupView: View {
@@ -223,6 +242,8 @@ struct ChatView: View {
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
   let id: String
   @State private var confirmLeave = false
+  /// The community guidelines sheet shown before a member's first chat message.
+  @State private var guidelines = GuidelinesGate()
   @State private var text = ""
   @State private var item: PhotosPickerItem?
   @State private var media: MediaAttachment?
@@ -235,6 +256,8 @@ struct ChatView: View {
   @State private var gamePicker = false
   @State private var meme = false
   @State private var klipy = false
+  @State private var editImage = false
+  @State private var offers = AttachmentOffers()
   @State private var groupInfo = false
   @State private var notificationSettings = false
   @State private var showOutbox = false
@@ -245,9 +268,17 @@ struct ChatView: View {
   @State private var displayedMessages: [Message] = []
   @State private var isNearBottom = true
   @State private var hasMessagesBelow = false
+  @State private var sourcePost: SourcePostDestination?
   @FocusState private var focused: Bool
   private var chat: Conversation? { store.canAccessConversation(id) ? store.state.conversations.first { $0.id == id } : nil }
   private var meta: SocialConversationMeta? { store.conversationMeta[id] }
+  private var origin: SourcePostContext? { meta?.kind == "dm" ? meta?.sourcePost : nil }
+  /// Game-day rooms are keyed by their calendar event ("sports:<event id>").
+  private var gameEvent: CampusEvent? {
+    guard meta?.kind == "sports", id.hasPrefix("sports:") else { return nil }
+    let eventID = String(id.dropFirst("sports:".count))
+    return store.campus.events.first { $0.id == eventID }
+  }
   private var pendingGroup: Bool { meta?.kind == "group" && chat?.request == true }
   private var canSend: Bool { !pendingGroup && chat != nil && (meta?.canSend ?? (chat?.request == false)) }
   private var draftSnapshot: MessageDraftSnapshot<PhotosPickerItem> {
@@ -273,6 +304,15 @@ struct ChatView: View {
             if chat.anonymous { Label("Your username is hidden in this conversation", systemImage: "eye.slash").font(.caption2).foregroundStyle(.secondary).padding(.vertical, 8) }
             if pendingGroup { EmptyCard(icon: "person.2.badge.plus", title: "You’re invited to \(chat.title)", detail: "Choose your group alias and avatar when you accept. Messages and the member list become available after joining.") }
             else if displayedMessages.isEmpty { EmptyCard(icon: "bubble.left.and.bubble.right", title: "Say hello", detail: "Messages are shared with the members of this conversation.") }
+            if !pendingGroup && store.hasEarlierMessages(id) {
+              Button { Task { await store.loadEarlierMessages(id) } } label: {
+                HStack(spacing: 8) {
+                  if store.loadingEarlierMessages.contains(id) { ProgressView().controlSize(.small) }
+                  Text("Earlier messages").font(.caption.bold())
+                }.frame(maxWidth: .infinity, minHeight: 44)
+              }.buttonStyle(ControlPressStyle()).foregroundStyle(Palette.accentText)
+                .disabled(store.loadingEarlierMessages.contains(id)).accessibilityIdentifier("loadEarlierMessages")
+            }
             ForEach(pendingGroup ? [] : displayedMessages) { message in
               messageRow(message).id(message.id)
                 .transition(reduceMotion ? .identity : .asymmetric(insertion: .opacity.combined(with: .move(edge: .bottom)), removal: .identity))
@@ -318,11 +358,18 @@ struct ChatView: View {
             }.buttonStyle(ControlPressStyle()).padding(.bottom, 8)
           }
         }
-    }.appBackground().navigationTitle(chat?.anonymous == true ? "Anonymous chat" : chat?.title ?? "Conversation").navigationBarTitleDisplayMode(.inline).toolbar(.hidden, for: .tabBar)
+    }.appBackground().navigationTitle(chat?.anonymous == true ? "Anonymous chat" : chat?.title ?? "Conversation").navigationBarTitleDisplayMode(.inline).hidesTabBarWhenPushed()
       .safeAreaInset(edge: .top) {
-        if let call = meta?.call, call.state == "ringing" || call.state == "connected" {
-          Button { AppHaptics.shared.play(.selection); showCall = true } label: {
-            HStack { Image(systemName: call.mode == "video" ? "video.fill" : "phone.fill"); Text(call.incoming ? "Incoming \(call.mode) call" : "Open \(call.mode) call"); Spacer(); Image(systemName: "chevron.right") }.font(.subheadline.bold()).padding(12).background(Palette.hero)
+        VStack(spacing: 0) {
+          if let gameEvent { GameChatHeader(event: gameEvent) }
+          if let origin {
+            SourcePostTag(context: origin, fullWidth: true) { sourcePost = SourcePostDestination(id: $0) }
+              .padding(.horizontal, 16).padding(.vertical, 9).background(Palette.surface).overlay(alignment: .bottom) { Divider() }
+          }
+          if let call = meta?.call, call.state == "ringing" || call.state == "connected" {
+            Button { AppHaptics.shared.play(.selection); showCall = true } label: {
+              HStack { Image(systemName: call.mode == "video" ? "video.fill" : "phone.fill"); Text(call.incoming ? "Incoming \(call.mode) call" : "Open \(call.mode) call"); Spacer(); Image(systemName: "chevron.right") }.font(.subheadline.bold()).padding(12).background(Palette.hero)
+            }
           }
         }
       }
@@ -345,13 +392,16 @@ struct ChatView: View {
           if meta?.pendingOutgoing == true {
             Label("Request sent · waiting for acceptance", systemImage: "clock").font(.subheadline).padding().frame(maxWidth: .infinity).background(Palette.surface)
           } else {
-            HStack {
-              Button(role: .destructive) { Task { if await store.mutate(meta?.kind == "group" ? "group.decline" : "dm.decline", ["room_id": id]) { dismiss() } } } label: { Text("Decline").frame(minHeight: 44) }.accessibilityIdentifier("declineRequest")
-              Spacer()
-              Button("Accept request") {
-                if meta?.kind == "group" { acceptingGroup = true }
-                else { Task { let accepted = await store.mutate("dm.accept", ["room_id": id]); AppHaptics.shared.play(accepted ? .success : .error) } }
-              }.buttonStyle(.borderedProminent).tint(Palette.maroon).foregroundStyle(Palette.onAccent).accessibilityIdentifier("acceptRequest")
+            VStack(spacing: 10) {
+              if let origin { SourcePostTag(context: origin, fullWidth: true, identifierSuffix: "Request") { sourcePost = SourcePostDestination(id: $0) } }
+              HStack {
+                Button(role: .destructive) { Task { if await store.mutate(meta?.kind == "group" ? "group.decline" : "dm.decline", ["room_id": id]) { dismiss() } } } label: { Text("Decline").frame(minHeight: 44) }.accessibilityIdentifier("declineRequest")
+                Spacer()
+                Button("Accept request") {
+                  if meta?.kind == "group" { acceptingGroup = true }
+                  else { Task { let accepted = await store.mutate("dm.accept", ["room_id": id]); AppHaptics.shared.play(accepted ? .success : .error) } }
+                }.buttonStyle(.borderedProminent).tint(Palette.maroon).foregroundStyle(Palette.onAccent).accessibilityIdentifier("acceptRequest")
+              }
             }.padding().background(Palette.surface)
           }
         } else if canSend { composer }
@@ -360,17 +410,27 @@ struct ChatView: View {
       .sheet(isPresented: $gamePicker) { GameInviteSheet(roomID: id, onSent: { await store.refresh() }) }
       .sheet(isPresented: $notificationSettings) { RoomNotificationSettings(roomID: id) }
       .sheet(isPresented: $showOutbox) { PendingMessagesView(roomID: id) }
+      // The source post may be older than the loaded feed; the library destination fetches it by id.
+      .navigationDestination(item: $sourcePost) { LibraryPostDestination(id: $0.id).appHapticOnOpen().toolbar(.visible, for: .navigationBar) }
       .onAppear { if draftOwner.isEmpty { draftOwner = store.compositions.owner } }
       .persistentDraft("message:" + id, value: savedDraft)
       .sheet(isPresented: $groupInfo) { GroupManageView(roomID: id) }
       .sheet(isPresented: $acceptingGroup) { GroupIdentityView(social: store.social, fixtureMode: store.fixtureMode, action: .accept(id), groupName: chat?.title ?? "") { _ in } }
-      .sheet(isPresented: $meme) { MemeComposerView(draftKey:"meme:message:"+id) { attachment in item = nil; media = attachment } }
+      .sheet(isPresented: $meme) { MemeComposerView(draftKey:"meme:message:"+id) { attachment in item = nil; media = attachment; offers.arrived(attachment) } }
       .sheet(isPresented: $klipy) { KlipyPickerView(available: !store.fixtureMode) { attachment in item = nil; media = attachment } }
+      .sheet(isPresented: $editImage) {
+        if let media { ImageEditorView(source: media) { edited in item = nil; self.media = edited; offers.arrived(edited) } }
+      }
+      .attachmentOffers(offers, service: SharedMemeService(social: store.social, fixtureMode: store.fixtureMode))
+      .guidelinesSheet(guidelines)
       .task { await store.markRead(id) }
+      // The open conversation follows its room: Realtime pokes (or a 3 s poll until they flow)
+      // fetch `room.messages after_seq`; the view itself never polls.
+      .task(id: id) { await store.followRoom(id) }
       .onChange(of: chat?.id) { _, value in
         if value == nil {
           focused = false; text = ""; media = nil; item = nil; replyTo = nil
-          gamePicker = false; meme = false; klipy = false; groupInfo = false; acceptingGroup = false; showCall = false
+          gamePicker = false; meme = false; klipy = false; editImage = false; groupInfo = false; acceptingGroup = false; showCall = false
           displayedMessages = []; hasMessagesBelow = false
         }
       }
@@ -380,8 +440,20 @@ struct ChatView: View {
         let prepared = await loadPickedMedia(item, store: store)
         guard !Task.isCancelled, self.item == item else { return }
         media = prepared; loadingMedia = false
+        if let prepared { offers.arrived(prepared) }
       }
       .toolbar { ToolbarItem(placement: .topBarTrailing) { if focused { KeyboardDismissButton { focused = false } } } }
+  }
+  /// The server writes the invitation body ("Pool invitation. Accept to start."); a hidden kind shows only its unavailable row.
+  static func isHiddenGameInvitation(_ message: Message) -> Bool {
+    guard message.gameSessionID != nil, let game = message.game else { return false }
+    return !FeatureAvailability.isGameAvailable(title: game)
+  }
+  /// The text a message shows wherever its text appears: the bubble, reply quotes and the reply banner.
+  /// A hidden-kind invitation shows its unavailable copy instead of the server body; the stored text is untouched.
+  static func displayText(_ message: Message) -> String {
+    guard isHiddenGameInvitation(message), let game = message.game else { return message.text }
+    return FeatureAvailability.unavailableMessage(for: game)
   }
   private func messageRow(_ message: Message) -> some View {
     let mine = store.isMine(message)
@@ -392,16 +464,19 @@ struct ChatView: View {
           HStack(spacing: 6) { GroupPhotoAvatar(roomID: id, memberKey: message.memberKey ?? "unavailable", token: message.avatar ?? "maroon", size: 24); Text(mine ? "\(message.author) · You" : message.author).font(.caption2.bold()).foregroundStyle(Palette.accentText) }
         } else if !mine || chat?.anonymous == true { Text(ChatParticipantLabel.name(author: message.author, mine: mine, anonymous: chat?.anonymous == true)).font(.caption2.bold()).foregroundStyle(Palette.accentText) }
         if let reply = message.replyTo, let original = chat?.messages.first(where: { $0.id == reply }) {
-          Text(original.text).font(.caption).lineLimit(2).padding(8).frame(maxWidth: .infinity, alignment: .leading)
+          Text(Self.displayText(original)).font(.caption).lineLimit(2).padding(8).frame(maxWidth: .infinity, alignment: .leading)
             .background(Palette.ink.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
         }
         if let attachmentID = message.attachmentID { RemoteMedia(attachmentID: attachmentID).frame(maxWidth: 230, maxHeight: 220) }
         else if let media = message.media { AttachmentPreview(media: media).frame(width: 210, height: 180) }
-        if let session = message.gameSessionID {
+        if let game = message.game, !FeatureAvailability.isGameAvailable(title: game) {
+          // Hidden kinds (8 Ball, Cup Pong) keep their message but lose every way into the game.
+          UnavailableGameRow(game: game)
+        } else if let session = message.gameSessionID {
           if meta?.kind == "group" { GroupGameInvitationCard(sessionID: session, title: message.game ?? "Game") }
           else { NavigationLink { OnlineGameView(sessionID: session) } label: { Label("Open \(message.game ?? "game")", systemImage: "gamecontroller.fill").font(.headline) } }
         } else if let game = message.game { NavigationLink { GameView(kind: game) } label: { Label("Play \(game)", systemImage: "gamecontroller") } }
-        if !message.text.isEmpty { Text(message.text).textSelection(.enabled).foregroundStyle(message.deleted == true ? .secondary : Palette.ink) }
+        if !message.text.isEmpty && !Self.isHiddenGameInvitation(message) { Text(message.text).textSelection(.enabled).foregroundStyle(message.deleted == true ? .secondary : Palette.ink) }
         if let reactions = message.reactions, !reactions.isEmpty {
           (dynamicTypeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4)) : AnyLayout(HStackLayout(spacing: 4))) { ForEach(reactions.keys.sorted(), id: \.self) { emoji in
             Button { react(message.id, emoji) } label: { Text("\(emoji) \(reactions[emoji] ?? 0)").font(.caption).padding(.horizontal, 6).frame(minWidth: 44, minHeight: 44).background(Palette.surface.opacity(0.7), in: Capsule()) }
@@ -413,7 +488,8 @@ struct ChatView: View {
         .contextMenu {
           if message.deleted != true {
             Button("Reply", systemImage: "arrowshape.turn.up.left") { replyTo = message; restoredReplyID = nil; focused = true }
-            Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = message.text }
+            // A hidden-kind invitation has nothing worth copying; its server body stays out of the pasteboard.
+            if !Self.isHiddenGameInvitation(message) { Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = message.text } }
             ForEach(["❤️", "👍", "😂", "👀"], id: \.self) { emoji in Button(emoji) { react(message.id, emoji) } }
             if mine { Button("Delete message", systemImage: "trash", role: .destructive) { Task { _ = await store.mutate("room.delete", ["room_id": id, "message_id": message.id]) } } }
             Button("Report message", systemImage: "flag", role: .destructive) { Task { _ = await store.mutate("report", ["target_type": "message", "target_id": message.id, "reason": "Message report"]) } }
@@ -433,12 +509,13 @@ struct ChatView: View {
       }
       if let error = store.compositions.error { Text(error).font(.caption).foregroundStyle(Palette.secondary) }
       if let replyTo {
-        HStack { Text("Replying to: \(replyTo.text)").lineLimit(1).font(.caption); Spacer(); Button { self.replyTo = nil; restoredReplyID = nil } label: { Image(systemName: "xmark").frame(width: 44, height: 44) }.accessibilityLabel("Cancel reply") }
+        HStack { Text("Replying to: \(Self.displayText(replyTo))").lineLimit(1).font(.caption); Spacer(); Button { self.replyTo = nil; restoredReplyID = nil } label: { Image(systemName: "xmark").frame(width: 44, height: 44) }.accessibilityLabel("Cancel reply") }
       }
       if let media {
-        HStack { AttachmentPreview(media: media).frame(width: 44, height: 44); Text(media.kind == .video ? "Video attached" : media.kind == .gif ? "GIF attached" : "Photo attached").font(.caption); Spacer(); Button { self.media = nil; item = nil } label: { Text("Remove").frame(minHeight: 44) }.accessibilityLabel("Remove attachment") }
+        HStack { AttachmentPreview(media: media).frame(width: 44, height: 44); Text(media.kind == .video ? "Video attached" : media.kind == .gif ? "GIF attached" : "Photo attached").font(.caption); Spacer(); if media.kind == .image { Button { AppHaptics.shared.play(.impact); focused = false; editImage = true } label: { Text("Edit").frame(minHeight: 44) }.accessibilityLabel("Edit image").accessibilityIdentifier("messageEditImage") }; Button { self.media = nil; item = nil } label: { Text("Remove").frame(minHeight: 44) }.accessibilityLabel("Remove attachment") }
       }
       if loadingMedia { ProgressView("Preparing attachment…").font(.caption) }
+      if let status = offers.status { Text(status).font(.caption).foregroundStyle(Palette.secondary).accessibilityIdentifier("messageShareStatus") }
       (dynamicTypeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4)) : AnyLayout(HStackLayout(alignment: .bottom, spacing: 6))) {
         HStack(spacing: 6) {
         Menu {
@@ -452,7 +529,7 @@ struct ChatView: View {
         TextField("Message…", text: $text, axis: .vertical).lineLimit(1...(dynamicTypeSize.isAccessibilitySize ? 3 : 5)).focused($focused).submitLabel(.send)
           .padding(11).background(Palette.surface, in: RoundedRectangle(cornerRadius: 18)).accessibilityIdentifier("messageText")
           .onSubmit { send() }
-          .onChange(of: text) { _, value in if !store.fixtureMode && store.connected && !value.isEmpty && Date.now.timeIntervalSince(lastTyping) > 4 { lastTyping = .now; Task { _ = try? await store.social.perform("room.typing", payload: ["room_id": id]) } } }
+          .onChange(of: text) { _, value in if !store.fixtureMode && store.connected && !value.isEmpty && Date.now.timeIntervalSince(lastTyping) > 4 { lastTyping = .now; Task { await store.sendTyping(id) } } }
         Button(action: send) { Image(systemName: "arrow.up").font(.system(size: 20, weight: .bold)).frame(width: 40, height: 40).background(Palette.maroon, in: Circle()).foregroundStyle(Palette.onAccent).frame(width: 44, height: 44) }.buttonStyle(ControlPressStyle())
           .disabled(sending || loadingMedia || restoredReplyID != nil || text.count > 4000 || (text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && media == nil)).accessibilityLabel("Send message").accessibilityIdentifier("sendMessage")
         }
@@ -462,6 +539,8 @@ struct ChatView: View {
   private func send() {
     guard draftOwner == store.compositions.owner, canSend, !sending, !loadingMedia, restoredReplyID == nil, text.count <= 4000,
       !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || media != nil else { return }
+    // First chat message: the guidelines sheet comes first, and "I agree" sends it.
+    if guidelines.intercept(store, retry: send) { focused = false; return }
     let key=CompositionIdentity.signature(["room":id,"text":text,"media":media?.id ?? "","reply":replyTo?.id ?? restoredReplyID ?? ""])
     if key != submissionKey{submissionKey=key;nonce=UUID().uuidString}
     let submitted = draftSnapshot
@@ -469,8 +548,12 @@ struct ChatView: View {
     Task {
       guard await store.compositions.saveDraft(savedDraft.wrappedValue,key:"message:"+id,owner:draftOwner)else{store.notice=store.compositions.error;sending=false;return}
       guard draftOwner == store.compositions.owner else { return }
-      let sent = await store.sendMessage(roomID: id, text: submitted.text, media: submitted.media, replyTo: submitted.replyID, nonce: submitted.nonce)
+      var sent = false
+      let refused = await guidelines.run(store, retry: send) {
+        sent = await store.sendMessage(roomID: id, text: submitted.text, media: submitted.media, replyTo: submitted.replyID, nonce: submitted.nonce)
+      }
       guard draftOwner == store.compositions.owner else { return }
+      if refused && !sent { sending = false; return }
       AppHaptics.shared.play(sent ? (store.compositions.queue.contains { $0.id == submitted.nonce } ? .impact : .success) : .error)
       let remaining = submitted.completingSend(current: draftSnapshot, succeeded: sent)
       text = remaining.text; media = remaining.media; item = remaining.photoSelection; nonce = remaining.nonce
@@ -508,34 +591,109 @@ struct GroupManageView: View {
 }
 
 struct RemoteMedia: View {
+  enum Layout { case fill, feed }
   @Environment(AppStore.self) private var store
   let attachmentID: String
-  @State private var data: Data?
+  var layout: Layout = .fill
+  /// Width cap for the feed layout; quote cards pass a smaller one.
+  var maxWidth: CGFloat = MediaGeometry.feedMaxWidth
+  /// Loaded content, tagged with its id so a reused row never shows another attachment.
+  @State private var loaded: (id: String, content: MediaContent)?
   @State private var failed = false
-  @State private var isKlipy = false
-  @State private var isVideo = false
   @State private var retry = 0
+  /// Loads restarted because a cache clear or account switch cancelled the shared load (bounded).
+  @State private var restarts = 0
   @State private var paused = false
+  /// Read through the media cache: a memory or disk hit renders on the first pass, with no spinner.
+  private var content: MediaContent? {
+    if let loaded, loaded.id == attachmentID { return loaded.content }
+    return store.social.media.peek(attachmentID)
+  }
   var body: some View {
+    let content = content
+    let data = content?.data
+    let isKlipy = content?.isKlipy ?? false
+    let isVideo = content?.mime == "video/mp4"
     Group {
-      if let data, isVideo { VideoAttachmentView(data: data) }
+      if let data, isVideo {
+        if layout == .feed { VideoAttachmentView(data: data).postMedia(ratio: MediaGeometry.ratio(of: data), maxWidth: maxWidth) } else { VideoAttachmentView(data: data) }
+      }
       else if let data {
-        AnimatedMedia(data: data, paused: paused).overlay(alignment: .bottomLeading) { if isKlipy { Text("KLIPY").font(.caption2.bold()).padding(5).background(Palette.paper.opacity(0.9), in: RoundedRectangle(cornerRadius: 5)).padding(6) } }.frame(minHeight: 160).clipShape(RoundedRectangle(cornerRadius: 12))
+        let id = attachmentID, media = store.social.media
+        // The frame decoded the last time this attachment was shown is drawn until this view's own decode lands.
+        let picture = AnimatedMedia(data: data, paused: paused, placeholder: media.firstFrame(id), onFirstFrame: { media.rememberFrame($0, for: id) }).overlay(alignment: .bottomLeading) { if isKlipy { Text("KLIPY").font(.caption2.bold()).padding(5).background(Palette.paper.opacity(0.9), in: RoundedRectangle(cornerRadius: 5)).padding(6) } }
           .overlay(alignment: .bottomTrailing) {
             if String(data: data.prefix(6), encoding: .ascii)?.hasPrefix("GIF") == true {
               Button { paused.toggle() } label: { Image(systemName: paused ? "play.circle.fill" : "pause.circle.fill").font(.title2).padding(8).background(.ultraThinMaterial, in: Circle()) }.accessibilityLabel(paused ? "Play GIF" : "Pause GIF")
             }
           }
+        if layout == .feed { picture.postMedia(ratio: MediaGeometry.ratio(of: data), maxWidth: maxWidth) }
+        else { picture.frame(minHeight: 160).clipShape(RoundedRectangle(cornerRadius: 12)) }
       }
       else if failed { Button("Reload attachment") { retry += 1 }.font(.caption).padding(20) }
+      else if let frame = store.social.media.firstFrame(attachmentID) {
+        // Bytes were evicted from memory but the decoded first frame survived: show it while disk reads.
+        let picture = Image(uiImage: frame).resizable().scaledToFill()
+        if layout == .feed { picture.postMedia(ratio: frame.size.height > 0 ? frame.size.width / frame.size.height : nil, maxWidth: maxWidth) }
+        else { picture.frame(minHeight: 160).clipShape(RoundedRectangle(cornerRadius: 12)) }
+      }
+      else if layout == .feed { ProgressView().frame(width: min(180, maxWidth), height: 120 * min(180, maxWidth) / 180).background(Palette.elevated.opacity(0.4), in: RoundedRectangle(cornerRadius: 14, style: .continuous)).frame(maxWidth: .infinity, alignment: .leading) }
       else { ProgressView().frame(height: 120) }
-    }.task(id: "\(attachmentID)-\(retry)") { do { let result = try await store.social.attachmentContent(attachmentID); try Task.checkCancellation(); data = result.data; isKlipy = result.isKlipy; isVideo = result.mime == "video/mp4"; failed = false } catch { failed = true } }
+    }.task(id: "\(attachmentID)-\(retry)") {
+      let id = attachmentID
+      if loaded?.id == id { return }
+      if let hit = store.social.media.peek(id) { loaded = (id, hit); failed = false; return }
+      do {
+        let result = try await store.social.attachmentContent(id); try Task.checkCancellation()
+        loaded = (id, MediaContent(data: result.data, mime: result.mime, isKlipy: result.isKlipy)); failed = false; restarts = 0
+      } catch is CancellationError where !Task.isCancelled && restarts < 3 {
+        // "Clear media cache" or an account switch cancelled the shared load, not this view: load again.
+        restarts += 1; retry += 1
+      } catch { if !Task.isCancelled { failed = true } }
+    }
   }
+}
+
+/// Feed pictures keep their own shape: sized to the image, capped, left-aligned
+/// under the text with rounded corners, instead of a centered full-width box.
+enum MediaGeometry {
+  static let feedMaxWidth: CGFloat = 300
+  static let feedMaxHeight: CGFloat = 260
+  static let cornerRadius: CGFloat = 14
+  /// Width ÷ height read from the container metadata only; nothing is decoded.
+  static func ratio(of data: Data) -> CGFloat? {
+    guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+          let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+          let width = properties[kCGImagePropertyPixelWidth] as? CGFloat, let height = properties[kCGImagePropertyPixelHeight] as? CGFloat,
+          width > 0, height > 0 else { return nil }
+    return width / height
+  }
+}
+extension View {
+  /// An exact box in the picture's own proportions (so the rounded clip hugs the
+  /// picture), capped at 300×260 points and pinned to the leading edge.
+  func postMedia(ratio: CGFloat?, maxWidth: CGFloat = MediaGeometry.feedMaxWidth) -> some View {
+    let proportion = max(0.5, min(ratio ?? 4 / 3, 2.4))
+    // The height cap scales with the width cap so a smaller box keeps the feed's shape.
+    let maxHeight = MediaGeometry.feedMaxHeight * maxWidth / MediaGeometry.feedMaxWidth
+    let width = min(maxWidth, maxHeight * proportion)
+    return frame(width: width, height: width / proportion)
+      .clipShape(RoundedRectangle(cornerRadius: MediaGeometry.cornerRadius, style: .continuous))
+      .frame(maxWidth: .infinity, alignment: .leading)
+  }
+}
+extension MediaAttachment {
+  /// Local drafts and preview fixtures: the poster for video, the first frame otherwise.
+  var aspectRatio: CGFloat? { MediaGeometry.ratio(of: kind == .video ? (thumbnail ?? data) : data) }
 }
 
 struct AnimatedMedia: UIViewRepresentable {
   let data: Data
   var paused = false
+  /// Drawn while `data` decodes (the cached first frame of the same media), so a re-created row never blanks.
+  var placeholder: UIImage? = nil
+  /// Receives the decoded first frame, so it can be reused the next time this media appears.
+  var onFirstFrame: ((UIImage) -> Void)? = nil
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   final class MediaImageView: UIImageView {
     private let unavailable = UILabel()
@@ -561,12 +719,12 @@ struct AnimatedMedia: UIViewRepresentable {
     private var wantsAnimation = false
     private var playing = false
     static let animationKey = "maroonGIFFrames"
-    func display(_ data: Data, in view: UIImageView, animate: Bool) {
+    func display(_ data: Data, in view: UIImageView, animate: Bool, placeholder: UIImage? = nil, onFirstFrame: ((UIImage) -> Void)? = nil) {
       wantsAnimation = animate
       guard displayedData != data else { apply(to: view); return }
       displayedData = data; revision += 1; let expected = revision
       decodeTask?.cancel(); prepared = nil; firstFrame = nil; playing = false
-      view.layer.removeAnimation(forKey: Self.animationKey); view.image = nil
+      view.layer.removeAnimation(forKey: Self.animationKey); view.image = placeholder
       (view as? MediaImageView)?.resetStatus()
       decodeTask = Task { [weak self, weak view] in
         let worker = Task.detached(priority: .userInitiated) { try MediaCompression.displayFrames(data) }
@@ -575,6 +733,7 @@ struct AnimatedMedia: UIViewRepresentable {
           guard !Task.isCancelled, let self, let view, self.revision == expected else { return }
           self.prepared = decoded; self.firstFrame = decoded.frames.first.map { UIImage(cgImage: $0) }
           view.image = self.firstFrame; self.apply(to: view)
+          if let frame = self.firstFrame { onFirstFrame?(frame) }
         } catch {
           guard !Task.isCancelled, let self, let view, self.revision == expected else { return }
           do {
@@ -630,7 +789,7 @@ struct AnimatedMedia: UIViewRepresentable {
     return CGSize(width: width, height: max(1, height))
   }
   func updateUIView(_ view: UIImageView, context: Context) {
-    context.coordinator.display(data, in: view, animate: !paused && !reduceMotion)
+    context.coordinator.display(data, in: view, animate: !paused && !reduceMotion, placeholder: placeholder, onFirstFrame: onFirstFrame)
   }
   static func dismantleUIView(_ view: UIImageView, coordinator: Coordinator) { coordinator.stop(view) }
 

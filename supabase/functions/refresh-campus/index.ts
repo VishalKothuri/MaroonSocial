@@ -7,7 +7,13 @@ const feeds = [
   ['Rec', 'https://calendar.tamu.edu/live/json/events/group/Rec%20Sports'],
   ['Sports', 'https://calendar.tamu.edu/live/json/events/group/Aggie%20Athletics'],
 ];
-const clean = (value: unknown) => String(value ?? '').replace(/<[^>]+>/g, ' ').replace(/&amp;/g, '&').replace(/&nbsp;/g, ' ').replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/\s+/g, ' ').trim();
+// Calendar descriptions arrive as HTML; named and numeric entities (the feed
+// uses &#160; for non-breaking spaces) are decoded before the text is cached.
+const decodeEntities = (value: string) => value
+  .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+  .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Number(code)))
+  .replace(/&nbsp;/g, ' ').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+const clean = (value: unknown) => decodeEntities(String(value ?? '').replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim();
 const feedFlag = (value: unknown) => value === true || value === 1 || value === '1' || value === 'true';
 const cancelledTitle = (title: string) => /(?:^\s*cancel(?:l)?ed(?:\s*[:–—-]|\s*$)|[\[(]\s*cancel(?:l)?ed\s*[\])]|[–—-]\s*cancel(?:l)?ed\s*$)/i.test(title);
 Deno.serve(async (req: Request) => {

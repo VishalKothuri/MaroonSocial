@@ -1,7 +1,10 @@
 import { Image } from 'jsr:@matmen/imagescript@1.3.1';
 import { socialHash, SocialAuthError, authFailure } from '../_shared/social-auth.ts';
+import { mediaStore, MediaStoreError } from '../_shared/media-store.ts';
 const base=Deno.env.get('SUPABASE_URL')!,key=Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const auth={apikey:key,Authorization:'Bearer '+key};
+// group_photo_gateway only accepts bare <uuid>.jpg paths, so group photos stay on Supabase Storage.
+const store=mediaStore(undefined,{timeoutMs:15000});
 const respond=(value:unknown,status=200)=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});
 class PhotoError extends Error{constructor(message:string,public status=400){super(message)}}
 async function rpc(action:string,hash:string,input:Record<string,unknown>){const response=await fetch(base+'/rest/v1/rpc/group_photo_gateway',{method:'POST',headers:{...auth,'Content-Type':'application/json'},body:JSON.stringify({p_action:action,p_hash:hash,p_input:input}),signal:AbortSignal.timeout(15000)});if(!response.ok)throw new PhotoError('Group photos are temporarily unavailable.',503);const data=await response.json();if(data.error)throw new PhotoError(data.error,data.code==='forbidden'?403:400);return data}
@@ -14,12 +17,15 @@ Deno.serve(async request=>{
  if(request.method!=='POST')return respond({error:'Use POST.'},405);
  try{
   const raw=await request.text();if(raw.length>480000)return respond({error:'Photo too large.'},413);const input=JSON.parse(raw);if(!input||typeof input!=='object'||Array.isArray(input)||!['read','upload','remove'].includes(input.action))throw new PhotoError('Invalid group photo request.');
-  const hash=await socialHash(request);const {action,data,...scope}=input;
+  const hash=await socialHash(request);const {action,data,known_attachment_id:known,...scope}=input;
   if(action==='remove')return respond(await rpc('remove',hash,scope));
   if(action==='read'){
    const result=await rpc('read',hash,scope);if(!result.has_photo)return respond({has_photo:false});
-   const media=await fetch(base+'/storage/v1/object/authenticated/social-media/'+result.path,{headers:auth,signal:AbortSignal.timeout(15000)});if(!media.ok)throw new PhotoError('This group photo is unavailable.',404);
-   const bytes=new Uint8Array(await media.arrayBuffer());if(bytes.length>350000)throw new PhotoError('This group photo is unavailable.',404);
+   // Authorization ran above. A device that already holds this immutable photo gets no bytes back.
+   if(typeof known==='string'&&known===result.attachment_id)return respond({has_photo:true,attachment_id:result.attachment_id,unchanged:true});
+   let media;try{media=await store.read(result.path,{mime:'image/jpeg'})}catch(error){if(error instanceof MediaStoreError&&error.kind==='not_found')throw new PhotoError('This group photo is unavailable.',404);throw error}
+   if('url' in media)return respond({has_photo:true,attachment_id:result.attachment_id,url:media.url,expires:media.expires});
+   const bytes=media.bytes;if(bytes.length>350000)throw new PhotoError('This group photo is unavailable.',404);
    return respond({has_photo:true,attachment_id:result.attachment_id,media_data:base64(bytes)});
   }
   await rpc('authorize',hash,scope);if(typeof data!=='string'||data.length>470000)throw new PhotoError('Choose a smaller photo.');

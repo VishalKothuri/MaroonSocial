@@ -3,18 +3,21 @@ import MaroonCore
 import WebKit
 
 struct KlipyPickerView: View {
-  private enum LibraryTab: String, CaseIterable { case memes, gifs, recents
+  private enum LibraryTab: String, CaseIterable { case memes, gifs, community, recents
     var title: String { rawValue.capitalized }
     var category: KlipyService.Category { self == .gifs ? .gifs : .memes }
   }
   @Environment(\.dismiss) private var dismiss
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(AppStore.self) private var store
   let onAttach: (MediaAttachment) -> Void
   @State private var service: KlipyService
   @State private var recents: KlipyRecents
   @State private var tab = LibraryTab.memes
   @State private var query = ""
   @State private var selection: KlipyService.Item?
+  @State private var community: SharedMemeService?
+  @State private var communitySelection: SharedMeme?
   @State private var showInfo = false
   @State private var clearRecents = false
   @FocusState private var focused: Bool
@@ -35,8 +38,10 @@ struct KlipyPickerView: View {
     NavigationStack {
       VStack(spacing: 0) {
         searchBar
-        if service.available {
-          libraryTabs
+        libraryTabs
+        if tab == .community {
+          GeometryReader { geometry in communityResults(width: max(1, geometry.size.width - 16)) }
+        } else if service.available || tab == .recents {
           GeometryReader { geometry in
             results(width: max(1, geometry.size.width - 16))
           }
@@ -47,6 +52,16 @@ struct KlipyPickerView: View {
       }.background(Color.black.ignoresSafeArea()).toolbar(.hidden, for: .navigationBar)
         .task(id: requestID) {
           service.cancel()
+          if tab == .community {
+            let library = community ?? SharedMemeService(social: store.social, fixtureMode: store.fixtureMode)
+            community = library
+            do {
+              if !query.isEmpty { try await Task.sleep(for: .milliseconds(350)) }
+              try Task.checkCancellation()
+              await library.load(query: query)
+            } catch {}
+            return
+          }
           guard service.available, tab != .recents else { return }
           do {
             if !query.isEmpty { try await Task.sleep(for: .milliseconds(350)) }
@@ -54,7 +69,7 @@ struct KlipyPickerView: View {
             await service.load(query: query, category: tab.category)
           } catch {}
         }
-        .onDisappear { service.cancel() }
+        .onDisappear { service.cancel(); community?.cancel() }
         .sheet(item: $selection) { item in
           KlipySelectionPreview(item: item, fixtureData: KlipyPickerFixture.data(for: item.reference)) {
             guard let reference = item.reference else { return }
@@ -62,6 +77,15 @@ struct KlipyPickerView: View {
             onAttach(MediaAttachment(klipy: reference))
             AppHaptics.shared.play(.success)
             selection = nil; dismiss()
+          }
+        }
+        .sheet(item: $communitySelection) { meme in
+          if let community {
+            CommunityMemePreview(meme: meme, service: community) { data in
+              onAttach(MediaAttachment(kind: .image, data: data))
+              AppHaptics.shared.play(.success)
+              communitySelection = nil; dismiss()
+            }
           }
         }
         .alert("Clear recent media?", isPresented: $clearRecents) {
@@ -89,7 +113,7 @@ struct KlipyPickerView: View {
       }.buttonStyle(.plain).accessibilityLabel("Cancel").accessibilityIdentifier("klipyCancel")
       HStack(spacing: 9) {
         Image(systemName: "magnifyingglass").font(.body.weight(.medium)).foregroundStyle(Palette.secondary)
-        TextField(tab == .recents ? "Search recent picks" : tab == .gifs ? "Search GIFs" : "Search memes", text: $query)
+        TextField(tab == .recents ? "Search recent picks" : tab == .community ? "Search shared memes" : tab == .gifs ? "Search GIFs" : "Search memes", text: $query)
           .font(.body).focused($focused).autocorrectionDisabled().textInputAutocapitalization(.never)
           .submitLabel(.search).onSubmit { focused = false }.accessibilityIdentifier("klipySearch")
         if !query.isEmpty {
@@ -202,6 +226,55 @@ struct KlipyPickerView: View {
     }.buttonStyle(.plain).disabled(item.reference == nil)
       .accessibilityIdentifier("klipyItem-" + (item.reference?.id ?? item.id))
       .accessibilityLabel("Preview \(item.title)")
+  }
+
+  private func communityResults(width: CGFloat) -> some View {
+    let columnWidth = (width - 8) / 2
+    let memes = community?.items ?? []
+    let columns = Self.communityColumns(memes, width: columnWidth)
+    return ScrollView {
+      LazyVStack(spacing: 8) {
+        HStack(alignment: .top, spacing: 8) {
+          ForEach(0..<2, id: \.self) { column in
+            LazyVStack(spacing: 8) { ForEach(columns[column]) { meme in communityTile(meme, width: columnWidth) } }.frame(width: columnWidth)
+          }
+        }
+        if community?.loading == true { LoadingWordmark(size: 21).padding(.vertical, 18).accessibilityLabel("Loading shared memes") }
+        if let error = community?.error {
+          VStack(spacing: 10) {
+            Text(error).font(.subheadline).foregroundStyle(Palette.secondary).multilineTextAlignment(.center)
+            Button("Try again") { AppHaptics.shared.play(.impact); Task { await community?.load(query: query, more: !memes.isEmpty) } }.buttonStyle(.bordered).tint(Palette.accentText)
+          }.padding(24)
+        } else if memes.isEmpty && community?.loading != true {
+          VStack(spacing: 12) {
+            Image(systemName: "person.3").font(.system(size: 30, weight: .light)).foregroundStyle(Palette.secondary)
+            Text(query.isEmpty ? "No shared memes yet" : "No matches yet").font(.headline)
+            Text(query.isEmpty ? "When someone shares an image from a post or chat, it shows up here for everyone." : "Try another word or phrase.")
+              .font(.subheadline).foregroundStyle(Palette.secondary).multilineTextAlignment(.center)
+          }.frame(maxWidth: .infinity).padding(.vertical, 70).padding(.horizontal, 16).accessibilityIdentifier("communityEmpty")
+        }
+        if community?.hasNext == true && community?.error == nil {
+          Color.clear.frame(height: 24).onAppear { Task { await community?.load(query: query, more: true) } }
+        }
+      }.padding(.horizontal, 8).padding(.bottom, 20)
+    }.accessibilityIdentifier("communityResults").scrollDismissesKeyboard(.interactively)
+  }
+  private func communityTile(_ meme: SharedMeme, width: CGFloat) -> some View {
+    Button { AppHaptics.shared.play(.impact); focused = false; communitySelection = meme } label: {
+      ZStack {
+        Palette.surface
+        if let community { CommunityMemeThumbnail(meme: meme, service: community) }
+      }.frame(width: width, height: min(width * 2.5, max(72, width / meme.aspectRatio)))
+        .clipShape(RoundedRectangle(cornerRadius: 12)).contentShape(RoundedRectangle(cornerRadius: 12))
+    }.buttonStyle(.plain).accessibilityIdentifier("communityItem-" + meme.id).accessibilityLabel("Preview \(meme.title)")
+  }
+  static func communityColumns(_ memes: [SharedMeme], width: CGFloat) -> [[SharedMeme]] {
+    var columns: [[SharedMeme]] = [[], []]; var heights: [CGFloat] = [0, 0]
+    for meme in memes {
+      let column = heights[0] <= heights[1] ? 0 : 1
+      columns[column].append(meme); heights[column] += min(width * 2.5, max(72, width / meme.aspectRatio)) + 8
+    }
+    return columns
   }
 
   private func skeleton(width: CGFloat) -> some View {
@@ -384,3 +457,84 @@ struct KlipyAdvertisement: UIViewRepresentable {
     }
   }
 }
+
+/// Grid previews of shared memes stay still; bytes come through the social
+/// service and are cached per picker session.
+struct CommunityMemeThumbnail: View {
+  let meme: SharedMeme
+  let service: SharedMemeService
+  @State private var image: UIImage?
+  @State private var failed = false
+  var body: some View {
+    ZStack {
+      if let image { Image(uiImage: image).resizable().scaledToFill() }
+      else if failed { Image(systemName: "photo").font(.title3).foregroundStyle(Palette.secondary) }
+    }.clipped().accessibilityLabel(failed ? "Preview unavailable" : meme.title)
+      .task(id: meme.id) {
+        do {
+          let bitmap = try await MediaCompression.thumbnail(try await service.media(for: meme))
+          if !Task.isCancelled { image = UIImage(cgImage: bitmap) }
+        } catch { if !Task.isCancelled { failed = true } }
+      }
+  }
+}
+
+struct CommunityMemePreview: View {
+  @Environment(\.dismiss) private var dismiss
+  let meme: SharedMeme
+  let service: SharedMemeService
+  let onAttach: (Data) -> Void
+  @State private var data: Data?
+  @State private var error: String?
+  @State private var retry = 0
+  @State private var confirmReport = false
+  var body: some View {
+    NavigationStack {
+      GeometryReader { geometry in
+        ZStack {
+          if let data {
+            AnimatedMedia(data: data).frame(width: geometry.size.width, height: geometry.size.height).accessibilityIdentifier("communityPreview")
+          } else if let error {
+            VStack(spacing: 12) {
+              Image(systemName: "photo.badge.exclamationmark").font(.largeTitle)
+              Text(error).font(.subheadline).multilineTextAlignment(.center)
+              Button("Retry") { AppHaptics.shared.play(.impact); retry += 1 }.buttonStyle(.bordered)
+            }.padding(24)
+          } else { LoadingWordmark(size: 24).accessibilityLabel("Loading preview") }
+        }.frame(width: geometry.size.width, height: geometry.size.height)
+      }.padding(.horizontal, 8).background(Color.black.ignoresSafeArea())
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+          VStack(spacing: 10) {
+            Button { if let data { onAttach(data) } } label: { Label("Attach meme", systemImage: "plus") }
+              .buttonStyle(PrimaryButton()).disabled(data == nil).accessibilityIdentifier("communityAttach")
+            Text("Shared by another Aggie. Added to your draft; you choose when to send.").font(.caption).foregroundStyle(Palette.secondary)
+          }.padding(16).background(Color.black)
+        }
+        .navigationTitle(meme.title.isEmpty ? "Shared meme" : meme.title).navigationBarTitleDisplayMode(.inline)
+        .toolbar(.visible, for: .navigationBar)
+        .toolbarBackground(.black, for: .navigationBar).toolbarBackground(.visible, for: .navigationBar)
+        .toolbar {
+          ToolbarItem(placement: .topBarLeading) {
+            Button { AppHaptics.shared.play(.selection); dismiss() } label: { Image(systemName: "chevron.left") }
+              .accessibilityLabel("Back to results").accessibilityIdentifier("communityBack")
+          }
+          ToolbarItem(placement: .topBarTrailing) {
+            Button { AppHaptics.shared.play(.selection); confirmReport = true } label: { Image(systemName: "flag") }
+              .accessibilityLabel("Report this meme").accessibilityIdentifier("communityReport")
+          }
+        }
+        .confirmationDialog("Report this meme?", isPresented: $confirmReport, titleVisibility: .visible) {
+          Button("Report", role: .destructive) {
+            AppHaptics.shared.play(.warning)
+            Task { do { try await service.report(meme); dismiss() } catch { self.error = error.localizedDescription } }
+          }
+        } message: { Text("Reports are reviewed. A meme reported by several people disappears for everyone.") }
+    }.presentationDetents([.large]).presentationDragIndicator(.visible).presentationBackground(.black)
+      .task(id: retry) {
+        data = nil; error = nil
+        do { let result = try await service.media(for: meme); try Task.checkCancellation(); data = result }
+        catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+      }
+  }
+}
+

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Live cross-device social regression. Uses only synthetic data and keeps bearer tokens out of stdout."""
-import json,urllib.request,urllib.error,pathlib,time,uuid,os,base64,struct,zlib
-config=json.loads(pathlib.Path('MaroonSocial/Resources/Backend.json').read_text());base=config['url'];key=config['publishableKey']
+import atexit,json,urllib.request,urllib.error,pathlib,time,uuid,os,base64,struct,zlib
+import runner_backend
+config=runner_backend.load();base=config['url'];key=config['publishableKey']
 def request(action,token=None,**payload):
  headers={'Content-Type':'application/json','apikey':key}
  if token:headers['X-Social-Token']=token
@@ -28,10 +29,15 @@ def animated_gif():
  for pixel in[0,1]:data+=b'\x21\xf9\x04\x00\x14\x00\x00\x00'+b'\x2c'+struct.pack('<HHHHB',0,0,1,1,0)+b'\x02\x02'+(b'\x44\x01'if pixel==0 else b'\x4c\x01')+b'\x00'
  return data+b'\x3b'
 label='qa'+str(int(time.time()))[-8:];names=[label+x for x in 'abcd']
-sessions=[ok('register',username=name,adult=True)['token']for name in names]
+sessions=[runner_backend.accept_guidelines(config,ok('register',username=name,adult=True))['token']for name in names]
 fd=os.open('/tmp/maroon-social-test-sessions.json',os.O_CREAT|os.O_TRUNC|os.O_WRONLY,0o600)
 with os.fdopen(fd,'w')as f:json.dump(sessions,f)
 a,b,c,d=sessions
+def cleanup():
+ # Runs on success (accounts already deleted, 401s ignored) and after a failed assertion.
+ left=[token for token in sessions if request('account.delete',token)[0]==200]
+ if left:print('Synthetic accounts deleted after an early exit:',len(left))
+atexit.register(cleanup)
 assert request('snapshot','0'*64)[0]==401
 assert request('register',username='underage_'+label,adult=False)[0]==403
 print('PASS private device identity and adult access gate')
@@ -39,9 +45,11 @@ post=ok('post.create',a,text='Anonymous integration post',anonymous=True,communi
 bpost=find(snapshot(b)['posts'],post)
 assert bpost['author']=='Anonymous' and names[0]not in json.dumps(bpost)
 reply=ok('comment.create',b,post_id=post,text='Reply from another device',anonymous=False)['resource_id']
-assert find(find(snapshot(a)['posts'],post)['comments'],reply)['anonymous']is True
+# Members may reply by name under an anonymous post (see tools/test-comment-votes.py); only the post author stays anonymous.
+seen_reply=find(find(snapshot(a)['posts'],post)['comments'],reply)
+assert seen_reply['anonymous']is False and seen_reply['author']==names[1],seen_reply
 ok('post.vote',b,post_id=post,value=1);ok('post.save',b,post_id=post,saved=True)
-assert find(snapshot(a)['posts'],post)['score']==1
+assert find(snapshot(a)['posts'],post)['score']==2 # the author's own upvote plus b's
 assert find(snapshot(b)['posts'],post)['saved']is True
 assert find(snapshot(c)['posts'],post)['saved']is False
 assert request('post.delete',b,post_id=post)[0]==403

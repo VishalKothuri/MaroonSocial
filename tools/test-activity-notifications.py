@@ -3,13 +3,14 @@
 No announcements are published. Credentials stay in memory and test accounts are deleted.
 """
 import json
+import runner_backend
 import os
 import pathlib
 import urllib.error
 import urllib.request
 import uuid
 
-config = json.loads(pathlib.Path('MaroonSocial/Resources/Backend.json').read_text())
+config = runner_backend.load()
 label = 'aq' + uuid.uuid4().hex[:9]
 tokens = []
 posts = []
@@ -37,7 +38,7 @@ def ok(action, token=None, **payload):
 try:
     assert call('notifications')[0] == 401
     for suffix in 'ab':
-        tokens.append(ok('register', username=label + suffix, adult=True)['token'])
+        tokens.append(runner_backend.accept_guidelines(config,ok('register', username=label + suffix, adult=True))['token'])
     a, b = tokens
     post_id = ok('post.create', a, text='Synthetic activity inbox verification', anonymous=True)['resource_id']
     posts.append(post_id)

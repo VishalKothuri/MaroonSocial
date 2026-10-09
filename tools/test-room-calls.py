@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Accepted-DM call authorization plus actual synthetic video/data over its signaling API."""
 import asyncio,json,pathlib,urllib.request,urllib.error,time,uuid,runpy,os
+import runner_backend
 w=runpy.run_path(str(pathlib.Path(__file__).with_name('test-webrtc.py')))
 RTCConfiguration=w['RTCConfiguration'];RTCIceServer=w['RTCIceServer'];RTCPeerConnection=w['RTCPeerConnection'];SyntheticVideo=w['SyntheticVideo'];transmit=w['transmit_description'];receive=w['receive_description'];APIError=w['APIError']
 class Peer:
@@ -27,9 +28,9 @@ async def denied(peer,action,code,**payload):
  try:await peer.request(action,**payload);raise AssertionError(action+' unexpectedly accepted')
  except APIError as e:assert e.code==code,(action,e.code,str(e))
 async def main():
- config=json.loads(pathlib.Path('MaroonSocial/Resources/Backend.json').read_text());a,b,c=[Peer(config)for _ in range(3)];pcs=[];consumers=[];frames=[0,0];names=['callqa_'+uuid.uuid4().hex[:10]for _ in range(3)]
+ config=runner_backend.load();a,b,c=[Peer(config)for _ in range(3)];pcs=[];consumers=[];frames=[0,0];names=['callqa_'+uuid.uuid4().hex[:10]for _ in range(3)]
  try:
-  for peer,name in zip([a,b,c],names):await peer.request('register',username=name,adult=True)
+  for peer,name in zip([a,b,c],names):runner_backend.accept_guidelines(config,await peer.request('register',username=name,adult=True))
   room=(await a.request('dm.request',username=names[1],text='Synthetic call invitation test'))['resource_id']
   for peer in[a,b,c]:peer.room=room
   await denied(a,'invite','forbidden',mode='video',nonce=str(uuid.uuid4()),allow_direct=True)

@@ -1,4 +1,5 @@
 import { maintainCourseChats } from './course-retention.ts';
+import type { MediaStore } from './media-store.ts';
 import type { CourseCalendarDB } from './course-calendar.ts';
 function assert(value: unknown, message = 'Assertion failed'): asserts value { if (!value) throw new Error(message); }
 function equal(actual: unknown, expected: unknown) { assert(JSON.stringify(actual) === JSON.stringify(expected), `Expected ${JSON.stringify(expected)}; got ${JSON.stringify(actual)}`); }
@@ -140,4 +141,53 @@ Deno.test('generated private MP4 paths delete and acknowledge with image paths',
   const test=harness({paths:[path(1),video]});
   await maintainCourseChats(test.db,{fetcher:test.fetcher,storage});
   equal(test.deleted,[[path(1),video]]);equal(test.acknowledged,test.deleted);equal(test.queue(),[]);
+});
+
+// R2 objects (caching phase 2) are queued with an `r2/` routing prefix and drained through the R2 store.
+const r2 = (i: number, scope = 'private') => `r2/${scope}/00000000-0000-4000-8000-${i.toString(16).padStart(12,'0')}.png`;
+function fakeR2(status: 'ok' | 'fail' = 'ok') {
+  const removed: string[][] = [];
+  const store: MediaStore = {
+    put: () => Promise.reject(new Error('unused')), read: () => Promise.reject(new Error('unused')),
+    remove: (paths) => { removed.push(paths); return status === 'ok' ? Promise.resolve() : Promise.reject(new Error('R2 down')); },
+  };
+  return {store, removed};
+}
+Deno.test('mixed batches delete Supabase and R2 objects by backend and acknowledge both', async () => {
+  const test = harness({paths:[path(1),r2(2),r2(3,'public'),path(4)]});
+  const bucket = fakeR2();
+  await maintainCourseChats(test.db,{fetcher:test.fetcher,storage,r2:bucket.store});
+  equal(bucket.removed,[[r2(2),r2(3,'public')]]);
+  equal(test.deleted,[[path(1),path(4)]]);
+  equal(test.acknowledged,[[r2(2),r2(3,'public'),path(1),path(4)]]);equal(test.queue(),[]);
+});
+Deno.test('R2-only batches never call Supabase Storage', async () => {
+  const test = harness({paths:[r2(1)]});
+  const bucket = fakeR2();
+  await maintainCourseChats(test.db,{fetcher:test.fetcher,storage,r2:bucket.store});
+  equal(test.deleted,[]);equal(bucket.removed,[[r2(1)]]);equal(test.acknowledged,[[r2(1)]]);
+});
+Deno.test('unconfigured or failing R2 keeps its paths queued while Supabase paths drain', async () => {
+  for (const store of [null, fakeR2('fail').store]) {
+    const test = harness({paths:[r2(1),path(2)]});
+    await maintainCourseChats(test.db,{fetcher:test.fetcher,storage,r2:store});
+    equal(test.deleted,[[path(2)]]);equal(test.acknowledged,[[path(2)]]);equal(test.queue(),[r2(1)]);
+  }
+  const only = harness({paths:[r2(1)]});
+  await maintainCourseChats(only.db,{fetcher:only.fetcher,storage,r2:null});
+  equal(only.acknowledged,[]);equal(only.queue(),[r2(1)]);
+});
+Deno.test('a failed Supabase delete still acknowledges the R2 objects already removed', async () => {
+  const test = harness({paths:[r2(1),path(2)],storageStatus:503});
+  const bucket = fakeR2();
+  await rejects(()=>maintainCourseChats(test.db,{fetcher:test.fetcher,storage,r2:bucket.store}),'Course media cleanup pending');
+  equal(test.acknowledged,[[r2(1)]]);equal(test.queue(),[path(2)]);
+});
+Deno.test('malformed R2 paths fail closed before any deletion', async () => {
+  for (const invalid of ['r2/../x.png','r2/public/../../x.png','r2/other/00000000-0000-4000-8000-000000000001.png','r2/public/00000000-0000-4000-8000-000000000001.png?x=1']) {
+    const test = harness({paths:[r2(1),invalid]});
+    const bucket = fakeR2();
+    await rejects(()=>maintainCourseChats(test.db,{fetcher:test.fetcher,storage,r2:bucket.store}),'Invalid cleanup batch');
+    equal(bucket.removed,[]);equal(test.deleted,[]);equal(test.acknowledged,[]);
+  }
 });

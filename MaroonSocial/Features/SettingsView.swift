@@ -6,6 +6,7 @@ struct SettingsView: View {
   @Environment(\.dismiss) private var dismiss
   @State private var deleting = false
   @State private var haptics = AppHaptics.shared
+  @State private var mediaCacheCleared = false
   var body: some View {
     @Bindable var haptics = haptics
     NavigationStack {
@@ -15,14 +16,12 @@ struct SettingsView: View {
           HStack(spacing: 12) {
             Avatar(size: 48)
             VStack(alignment: .leading, spacing: 6) {
-              ViewThatFits(in: .horizontal) {
-                HStack(alignment: .firstTextBaseline, spacing: 10) { accountName; karmaLabel }
-                VStack(alignment: .leading, spacing: 5) { accountName; karmaLabel }
-              }
+              accountName
               Text(store.connected ? "Connected account" : "Connecting…").font(.caption).foregroundStyle(.secondary)
             }
           }
           }.accessibilityIdentifier("editAccountProfile")
+          ProfileStatTiles(karma: store.karma, posts: store.ownPostCount)
           if !store.fixtureMode && !store.social.hasDeviceCredential {
             if store.auth.signedIn { Label("Personal email recovery linked", systemImage: "envelope.badge.shield.half.filled").font(.subheadline) }
             else { NavigationLink("Sign in again with personal email") { EmailLoginView(linkExisting: false).appHapticOnOpen() } }
@@ -31,6 +30,11 @@ struct SettingsView: View {
           NavigationLink("TAMU mailbox verification") { VerificationView(social: store.social).appHapticOnOpen() }
           NavigationLink { PushSettingsView().appHapticOnOpen() } label: { Label("Notifications", systemImage: "bell.badge") }
             .accessibilityIdentifier("settingsPushNotifications")
+          NavigationLink { GuidelinesSettingsView().appHapticOnOpen() } label: {
+            LabeledContent {
+              Text(store.guidelinesRequired ? "Not accepted" : store.guidelines?.accepted.map { "Version \($0)" } ?? "")
+            } label: { Label("Community guidelines", systemImage: "checkmark.shield") }
+          }.accessibilityIdentifier("settingsGuidelines")
         }
         Section("Your collection") {
           NavigationLink { PersonalLibraryView(kind: .posts).appHapticOnOpen() } label: { Label("My posts", systemImage: "text.bubble") }
@@ -47,11 +51,16 @@ struct SettingsView: View {
           Toggle("Haptic feedback", isOn: $haptics.enabled).accessibilityIdentifier("hapticsEnabled")
         } header: { Text("Interaction") } footer: { Text("Subtle feedback for navigation, games, and completed actions.") }
         Section("People & privacy") {
-          NavigationLink("Friends and requests") { ConnectionsView(social: store.social).appHapticOnOpen() }
+          NavigationLink("Connections and requests") { ConnectionsView(social: store.social).appHapticOnOpen() }
           NavigationLink("Blocked accounts and data export") { PrivacyControlsView(social: store.social).appHapticOnOpen() }
-          Text("Anonymous posts and post-origin conversations do not show your username to other members. Named classes and activities use your account username. Each group uses the alias and avatar you choose for that group.").font(.subheadline)
+          Button { Task { await store.social.media.wipeAndWait(); mediaCacheCleared = true; AppHaptics.shared.play(.success) } } label: {
+            LabeledContent("Clear media cache") { if mediaCacheCleared { Text("Cleared") } }
+          }.accessibilityIdentifier("clearMediaCache").accessibilityHint("Removes downloaded photos and videos from this device. They load again when viewed.")
+          Text("Anonymous posts, anonymous replies and post-origin conversations do not show your username to other members. Posts and replies you publish by name, named classes and activities use your account username. Each group uses the alias and avatar you choose for that group.").font(.subheadline)
           Text("Messages and reports are stored on the service and are not end-to-end encrypted. Login credentials are stored securely on this device. Personal email recovery becomes available after email delivery is configured and you link your account. Verify your TAMU mailbox from the account section when email delivery is available.").font(.subheadline)
           Text("Reports are saved for review. This development service does not have a staffed emergency response team.").font(.caption).foregroundStyle(.secondary)
+          Link(destination: SupportContact.mailURL) { Label("Contact \(SupportContact.email)", systemImage: "envelope") }
+            .accessibilityIdentifier("settingsSupportEmail")
         }
         Section("Organizations") { NavigationLink("Your organizations") { OrganizationsView().appHapticOnOpen() }.accessibilityIdentifier("settingsOrganizations") }
         Section("About") {
@@ -64,7 +73,7 @@ struct SettingsView: View {
         }
         #endif
         Section {
-          Button("Delete account", role: .destructive) { AppHaptics.shared.play(.warning); deleting = true }.disabled(store.busy)
+          Button("Delete account", role: .destructive) { AppHaptics.shared.play(.warning); deleting = true }.foregroundStyle(.red).disabled(store.busy)
         } footer: { Text("Deletes the account, revokes its credential, removes private media, and replaces authored content with deleted markers where replies depend on it. If you own an organization, transfer ownership first: an organization left without an owner is suspended.") }
       }.scrollContentBackground(.hidden).appBackground().navigationTitle("Your account").navigationBarTitleDisplayMode(.inline)
         .toolbar { ToolbarItem(placement: .topBarTrailing) { Button { dismiss() } label: { Image(systemName: "xmark") }.accessibilityLabel("Close settings") } }
@@ -72,14 +81,36 @@ struct SettingsView: View {
           Button("Delete account permanently", role: .destructive) { Task {
             if await store.deleteAccount() { AppHaptics.shared.play(.success); dismiss() } else { AppHaptics.shared.play(.error) }
           } }
-        } message: { Text("This cannot be undone. Your account will immediately lose access to chats, games, and Tag.") }
+        } message: { Text(FeatureAvailability.isCampusTagAvailable() ? "This cannot be undone. Your account will immediately lose access to chats, games, and Tag." : "This cannot be undone. Your account will immediately lose access to chats and games.") }
     }
   }
   private var accountName: some View { Text("@\(store.state.username)").font(.headline) }
-  private var karmaLabel: some View {
-    Text("\(store.karma) karma").font(.caption.weight(.semibold)).monospacedDigit()
-      .padding(.horizontal, 9).padding(.vertical, 5).foregroundStyle(Palette.onAccent)
-      .background(Palette.maroon, in: Capsule()).accessibilityIdentifier("profileKarma")
+}
+/// Karma and Posts, private to the owner, with what karma means.
+struct ProfileStatTiles: View {
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+  let karma: Int
+  let posts: Int
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      (dynamicTypeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 8)) : AnyLayout(HStackLayout(spacing: 10))) {
+        tile(value: karma, title: "Karma", symbol: "arrow.up.heart", label: "\(karma) karma", identifier: "profileKarma")
+        tile(value: posts, title: "Posts", symbol: "text.bubble", label: posts == 1 ? "1 post" : "\(posts) posts", identifier: "profilePosts")
+      }
+      Text("Karma is the upvotes minus downvotes others give your posts and replies. Only you can see it.")
+        .font(.caption).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
+        .accessibilityIdentifier("profileKarmaExplanation")
+    }.padding(.vertical, 4)
+  }
+  private func tile(value: Int, title: String, symbol: String, label: String, identifier: String) -> some View {
+    VStack(alignment: .leading, spacing: 4) {
+      Label(title, systemImage: symbol).font(.caption.weight(.semibold)).foregroundStyle(Palette.secondary)
+      Text(value.formatted()).font(.title2.bold()).monospacedDigit().foregroundStyle(Palette.ink)
+        .lineLimit(1).minimumScaleFactor(0.6)
+    }.frame(maxWidth: .infinity, alignment: .leading).padding(12)
+      .background(Palette.elevated, in: RoundedRectangle(cornerRadius: 12))
+      .accessibilityElement(children: .ignore).accessibilityLabel(label).accessibilityAddTraits(.isStaticText)
+      .accessibilityIdentifier(identifier)
   }
 }
 struct AccountProfileView: View {
@@ -112,18 +143,7 @@ struct AccountProfileView: View {
     guard !saving, !store.busy, AccountUsernameRules.valid(username), normalized != store.state.username else { return }
     saving = true; error = nil
     defer { saving = false }
-    if store.fixtureMode {
-      let previous = store.state.username
-      store.state.username = normalized
-      // The preview's ownership markers use names, unlike real server IDs.
-      for index in store.state.posts.indices {
-        if store.state.posts[index].author == previous { store.state.posts[index].author = normalized }
-        for reply in store.state.posts[index].comments.indices where store.state.posts[index].comments[reply].author == previous {
-          store.state.posts[index].comments[reply].author = normalized
-        }
-      }
-      if store.save() { AppHaptics.shared.play(.success); focused = false; dismiss() } else { AppHaptics.shared.play(.error); error = store.notice }
-    } else if await store.mutate("profile.update", ["username": normalized]) { AppHaptics.shared.play(.success); focused = false; dismiss() }
+    if await store.updateUsername(normalized) { AppHaptics.shared.play(.success); focused = false; dismiss() }
     else { AppHaptics.shared.play(.error); error = store.notice ?? "Your username could not save. Please try again." }
   }
 }

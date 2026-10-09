@@ -18,6 +18,8 @@ struct PostDetailView: View {
   @State private var lastSubmittedParent: String?
   @State private var conversationID: String?
   @State private var messageTarget: Comment?
+  /// The community guidelines sheet shown before a member's first reply.
+  @State private var guidelines = GuidelinesGate()
   @FocusState private var focused: Bool
   private var post: Post? { store.state.posts.first { $0.id == id } }
   private var parent: Comment? { post?.comments.first { $0.id == replyTarget } }
@@ -40,11 +42,24 @@ struct PostDetailView: View {
               .accessibilityIdentifier("threadOriginalPost")
             HStack {
               Text("Replies").font(.headline)
-              Text("\(post.comments.filter { $0.deleted != true }.count)").font(.subheadline).foregroundStyle(.secondary)
+              // The server's total (a thread opened from the feed holds only the newest replies),
+              // less the deleted replies held here.
+              Text("\(max(0, max(post.commentCount ?? 0, post.comments.count) - post.comments.filter { $0.deleted == true }.count))").font(.subheadline).foregroundStyle(.secondary)
               Spacer()
             }.padding(.horizontal, 16).padding(.top, 20).padding(.bottom, 8)
+            if store.hasEarlierReplies(post) {
+              Button { Task { await store.loadEarlierComments(post.id) } } label: {
+                HStack(spacing: 8) {
+                  if store.loadingComments.contains(post.id) { ProgressView().controlSize(.small) }
+                  Text("Load earlier replies").font(.subheadline.bold())
+                }.frame(maxWidth: .infinity, minHeight: 44)
+              }.buttonStyle(ControlPressStyle()).foregroundStyle(Palette.accentText).padding(.horizontal, 16)
+                .disabled(store.loadingComments.contains(post.id)).accessibilityIdentifier("loadEarlierReplies")
+            }
+            let parentsMayBeEarlier = store.hasEarlierReplies(post)
             ForEach(CommentThread.flatten(post.comments)) { row in
-              ThreadReplyRow(comment: row.comment, depth: row.depth, isOrphan: row.isOrphan,
+              ThreadReplyRow(comment: row.comment, postID: post.id, depth: row.depth, isOrphan: row.isOrphan,
+                parentNotLoaded: row.isOrphan && parentsMayBeEarlier,
                 selected: replyTarget == row.id,
                 onReply: { replyTarget = row.id; focused = true },
                 onMessage: { focused = false; messageTarget = row.comment })
@@ -67,11 +82,15 @@ struct PostDetailView: View {
             withAnimation(reduceMotion ? nil : .easeOut(duration: 0.23)) { proxy.scrollTo(target, anchor: .bottom) }
           }
         }
-    }.onAppear { if draftOwner.isEmpty { draftOwner = store.compositions.owner } }.persistentDraft(draftKey,value:savedDraft).appBackground().navigationTitle("Post").navigationBarTitleDisplayMode(.inline).toolbar(.hidden, for: .tabBar)
+    }.onAppear { if draftOwner.isEmpty { draftOwner = store.compositions.owner } }
+      // Newest replies that answer replies older than the loaded window bring their parents in.
+      .task(id: id) { await store.loadMissingParents(id) }
+      .persistentDraft(draftKey,value:savedDraft).appBackground().navigationTitle("Post").navigationBarTitleDisplayMode(.inline).hidesTabBarWhenPushed()
       .navigationDestination(item: $conversationID) { ChatView(id: $0) }
       .sheet(item: $messageTarget) { comment in
         NewMessageView(commentID: comment.id, anonymous: true) { conversationID = $0 }
       }
+      .guidelinesSheet(guidelines)
       .safeAreaInset(edge: .bottom, spacing: 0) {
         if post != nil && post?.deleted != true {
           VStack(alignment: .leading, spacing: 8) {
@@ -88,10 +107,10 @@ struct PostDetailView: View {
                 }.accessibilityLabel("Reply to post instead")
               }.id(replyTarget)
             }
-            if post?.anonymous == true {
-              Label("Replying anonymously", systemImage: "eye.slash").font(.caption).foregroundStyle(.secondary)
+            if let post, post.anonymous, store.owns(post) {
+              Label("Replying anonymously as the post author", systemImage: "eye.slash").font(.caption).foregroundStyle(.secondary)
             } else {
-              Toggle("Reply anonymously", isOn: $anonymous).font(.caption)
+              PublicIdentityToggle(title: "Reply anonymously", anonymous: $anonymous, identifier: "replyAnonymous").font(.caption)
             }
             HStack(alignment: .bottom, spacing: 8) {
               TextField(replyTarget == nil ? "Reply to the post…" : "Reply to this comment…", text: $reply, axis: .vertical)
@@ -115,13 +134,13 @@ struct PostDetailView: View {
       .toolbar { ToolbarItem(placement: .topBarTrailing) { HStack { if !reply.isEmpty { Button("Discard reply",systemImage:"trash"){discardReply=true}.disabled(sending).accessibilityIdentifier("discardReplyDraft") }; if focused { KeyboardDismissButton { focused = false } } } } }
       .alert("Discard this reply draft?",isPresented:$discardReply){Button("Discard draft",role:.destructive){Task{reply="";replyTarget=nil;submissionKey="";replyNonce=UUID().uuidString;await store.compositions.removeDraft(draftKey,owner:draftOwner)}};Button("Keep editing",role:.cancel){}}
   }
+  /// Matches the reply row: your reply, OP, the replier's alias in this post, or their name.
   private func displayName(_ comment: Comment?) -> String {
-    guard let comment else { return "a reply" }
-    if store.owns(comment) { return "your reply" }
-    return comment.anonymous ? comment.isOP == true ? "OP" : "Anonymous" : "@\(comment.author)"
+    ReplyAlias.target(comment, postID: id, mine: comment.map(store.owns) ?? false)
   }
   private func send() {
     guard draftOwner == store.compositions.owner, !sending && !targetUnavailable else { return }
+    if guidelines.intercept(store, retry: send) { focused = false; return }
     let target = replyTarget
     let values=["post":id,"parent":target ?? "","text":reply.trimmingCharacters(in:.whitespacesAndNewlines),"anonymous":String(anonymous)]
     let key=(try? JSONSerialization.data(withJSONObject:values,options:[.sortedKeys]))?.base64EncodedString() ?? ""
@@ -131,9 +150,13 @@ struct PostDetailView: View {
     Task {
       guard await store.compositions.saveDraft(savedDraft.wrappedValue,key:draftKey,owner:draftOwner) else { store.notice=store.compositions.error;sending=false;return }
       guard draftOwner == store.compositions.owner else { return }
-      let succeeded = await store.createComment(postID: id, text: reply.trimmingCharacters(in: .whitespacesAndNewlines),
-                                   anonymous: anonymous, parentID: target, nonce: replyNonce)
+      var succeeded = false
+      let refused = await guidelines.run(store, retry: send) {
+        succeeded = await store.createComment(postID: id, text: reply.trimmingCharacters(in: .whitespacesAndNewlines),
+                                     anonymous: anonymous, parentID: target, nonce: replyNonce)
+      }
       guard draftOwner == store.compositions.owner else { return }
+      if refused && !succeeded { sending = false; return }
       if succeeded {
         reply = ""; replyTarget = nil; lastSubmittedParent = target; sentReplies += 1;submissionKey="";replyNonce=UUID().uuidString
         await store.compositions.removeDraft(draftKey,owner:draftOwner)
@@ -149,8 +172,11 @@ private struct ThreadReplyRow: View {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
   let comment: Comment
+  let postID: String
   let depth: Int
   let isOrphan: Bool
+  /// The parent may simply be older than the replies loaded so far (not removed).
+  var parentNotLoaded = false
   let selected: Bool
   let onReply: () -> Void
   let onMessage: () -> Void
@@ -162,13 +188,16 @@ private struct ThreadReplyRow: View {
         Avatar(symbol: comment.anonymous ? "bubble.left.fill" : "person.fill", size: 24)
         VStack(alignment: .leading, spacing: 3) {
           HStack(spacing: 6) {
-            Text(deleted ? "[deleted]" : comment.anonymous ? "Anonymous" : "@\(comment.author)")
-              .font(.caption.weight(.semibold)).lineLimit(1)
-            if comment.isOP == true && !deleted {
-              Text("OP").font(.caption2.bold()).padding(.horizontal, 6).padding(.vertical, 3)
-                .foregroundStyle(Palette.onAccent).background(Palette.maroon, in: Capsule())
+            switch ReplyAlias.display(comment, postID: postID, mine: mine) {
+            case .deleted: authorName("[deleted]")
+            case .mine(let name):
+              authorName(name)
+              if comment.isOP == true { opCapsule }
+              Text("You").font(.caption2).foregroundStyle(.secondary)
+            case .op: authorName("Anonymous"); opCapsule
+            case .alias(let alias): AliasDot(alias: alias); authorName(alias)
+            case .named(let name): authorName(name); if comment.isOP == true { opCapsule }
             }
-            if mine && !deleted { Text("You").font(.caption2).foregroundStyle(.secondary) }
           }
           if comment.isOP != true { Text("Reply").font(.caption2).foregroundStyle(.secondary) }
         }.frame(maxWidth: .infinity, alignment: .leading)
@@ -189,7 +218,7 @@ private struct ThreadReplyRow: View {
         }.accessibilityLabel("Reply options").disabled(deleted)
       }
       if isOrphan && comment.parentID != nil {
-        Label("Earlier reply unavailable", systemImage: "arrow.turn.down.right")
+        Label(parentNotLoaded ? "Reply to an earlier reply" : "Earlier reply unavailable", systemImage: "arrow.turn.down.right")
           .font(.caption2).foregroundStyle(.secondary)
       } else if depth > 3 {
         Label("Continuing this reply thread", systemImage: "arrow.turn.down.right")
@@ -227,12 +256,19 @@ private struct ThreadReplyRow: View {
       .padding(.leading, CGFloat(min(depth, 3)) * 12)
       .overlay(alignment: .bottom) { Divider().padding(.leading, 16 + CGFloat(min(depth, 3)) * 12) }
   }
+  private func authorName(_ name: String) -> some View {
+    Text(name).font(.caption.weight(.semibold)).lineLimit(1).accessibilityIdentifier("replyAuthor-\(comment.id)")
+  }
+  private var opCapsule: some View {
+    Text("OP").font(.caption2.bold()).padding(.horizontal, 6).padding(.vertical, 3)
+      .foregroundStyle(Palette.onAccent).background(Palette.maroon, in: Capsule())
+  }
   private func vote(_ value: Int, icon: String, label: String) -> some View {
     Button { AppHaptics.shared.play(.selection); store.voteComment(comment.id, value) } label: {
       Image(systemName: icon).font(.system(size: 16, weight: .bold)).frame(width: 36, height: 36)
         .background(comment.vote == value ? Palette.maroon : .clear, in: RoundedRectangle(cornerRadius: 10))
         .frame(width: 44, height: 44)
-    }.buttonStyle(ControlPressStyle()).disabled(mine)
+    }.buttonStyle(ControlPressStyle()).disabled(comment.deleted == true)
       .accessibilityLabel(label).accessibilityIdentifier("\(value == 1 ? "upvote" : "downvote")Comment-\(comment.id)")
       .accessibilityAddTraits(comment.vote == value ? .isSelected : [])
   }

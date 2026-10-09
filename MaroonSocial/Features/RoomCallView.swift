@@ -51,7 +51,7 @@ struct RoomCallView: View {
       }.padding(24)
     }
     .appBackground().navigationTitle("Voice & video").navigationBarTitleDisplayMode(.inline)
-    .toolbar(.hidden, for: .tabBar)
+    .hidesTabBarWhenPushed()
     .task { await service.activate() }
     .onDisappear { service.deactivate() }
     .onChange(of: scenePhase) { _, phase in

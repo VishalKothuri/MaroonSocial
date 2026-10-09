@@ -10,6 +10,19 @@ struct CampusView: View {
   @State private var category = "All"
   @State private var detail: CampusEvent?
   @State private var savedOnly = false
+  @State private var gameRoom: String?
+  @State private var joiningGame = false
+  /// The game whose chat is open now or opens within the next three hours.
+  private var gameDay: CampusEvent? { store.campus.gameDay(savedIDs: store.state.savedEvents) }
+  private func openGameChat(_ event: CampusEvent) {
+    guard !joiningGame else { return }
+    AppHaptics.shared.play(.impact); joiningGame = true
+    Task {
+      let result = await store.perform("join_sports", ["event_id": event.id])
+      if let room = result?.resourceID { gameRoom = room } else { AppHaptics.shared.play(.error) }
+      joiningGame = false
+    }
+  }
   var visible: [CampusEvent] {
     store.campus.displayEvents(savedIDs: store.state.savedEvents).filter { event in
       let timing = savedOnly ? store.state.savedEvents.contains(event.id)
@@ -24,14 +37,16 @@ struct CampusView: View {
   var body: some View {
     ScrollView {
       LazyVStack(alignment: .leading, spacing: 14) {
-        HStack(spacing: 10) {
-          NavigationLink { TransitView().toolbar(.visible, for: .navigationBar).appHapticOnOpen() } label: { Pill(text: "Bus routes", icon: "bus") }
-          NavigationLink { DiningView().toolbar(.visible, for: .navigationBar).appHapticOnOpen() } label: { Pill(text: "Dining", icon: "fork.knife") }
-          NavigationLink { SportsScoresView().toolbar(.visible, for: .navigationBar).appHapticOnOpen() } label: { Pill(text: "Scores", icon: "sportscourt") }.accessibilityIdentifier("campusSportsScores")
-          Spacer(minLength: 0)
-          Button { AppHaptics.shared.play(.selection); savedOnly.toggle(); selected = nil } label: {
-            Image(systemName: savedOnly ? "bookmark.fill" : "bookmark").padding(10)
-          }.accessibilityLabel("Saved events").accessibilityIdentifier("savedEventsFilter")
+        if let game = gameDay {
+          GameDayCard(event: game, joining: joiningGame) { openGameChat(game) }
+        }
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3), spacing: 10) {
+          NavigationLink { TransitView().toolbar(.visible, for: .navigationBar).appHapticOnOpen() } label: { CampusTile(title: "Bus routes", detail: "Live map & stops", icon: "bus.fill") }
+            .buttonStyle(.plain).accessibilityIdentifier("campusBusRoutes")
+          NavigationLink { DiningView().toolbar(.visible, for: .navigationBar).appHapticOnOpen() } label: { CampusTile(title: "Dining", detail: "Menus & hours", icon: "fork.knife") }
+            .buttonStyle(.plain).accessibilityIdentifier("campusDining")
+          NavigationLink { SportsScoresView().toolbar(.visible, for: .navigationBar).appHapticOnOpen() } label: { CampusTile(title: "Scores", detail: "Aggie results", icon: "sportscourt.fill") }
+            .buttonStyle(.plain).accessibilityIdentifier("campusSportsScores")
         }
         ScrollView(.horizontal, showsIndicators: false) {
           HStack(spacing: 7) {
@@ -71,11 +86,14 @@ struct CampusView: View {
             } label: { Pill(text: value, selected: category == value) }
           }
         }
-        HStack {
+        HStack(spacing: 10) {
           Text(savedOnly ? "Saved events" : selected == nil ? "Upcoming events" : "Events for this day").font(.headline)
           Spacer()
           if store.campus.loading { ProgressView().controlSize(.small) }
           else { Text("\(visible.count)").font(.caption).foregroundStyle(.secondary) }
+          Button { AppHaptics.shared.play(.selection); savedOnly.toggle(); selected = nil } label: {
+            Image(systemName: savedOnly ? "bookmark.fill" : "bookmark").font(.body.weight(.semibold)).frame(width: 44, height: 44)
+          }.accessibilityLabel("Saved events").accessibilityIdentifier("savedEventsFilter")
         }
         if let error = store.campus.error {
           HStack(alignment: .top) {
@@ -137,7 +155,56 @@ struct CampusView: View {
     }.maroonRefreshable(scope: "campus") { await store.campus.refresh(force: true) }.appBackground()
       .toolbar(.hidden, for: .navigationBar)
       .sheet(item: $detail) { EventDetailView(event: $0) }
+      .navigationDestination(item: $gameRoom) { ChatView(id: $0).toolbar(.visible, for: .navigationBar) }
       .task { await store.campus.refresh() }
+  }
+}
+/// A tall, tappable tile for the three campus utilities.
+struct CampusTile: View {
+  let title: String
+  let detail: String
+  let icon: String
+  var body: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      Image(systemName: icon).font(.system(size: 22, weight: .semibold)).foregroundStyle(Palette.accentText)
+        .frame(width: 40, height: 40).background(Palette.maroon.opacity(0.28), in: RoundedRectangle(cornerRadius: 12))
+      Text(title).font(.subheadline.weight(.bold)).foregroundStyle(Palette.ink).lineLimit(1).minimumScaleFactor(0.8)
+      Text(detail).font(.caption2).foregroundStyle(.secondary).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+    }.padding(14).frame(maxWidth: .infinity, minHeight: 118, alignment: .topLeading)
+      .background(Palette.surface, in: RoundedRectangle(cornerRadius: 16))
+      .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Palette.border.opacity(0.6), lineWidth: 0.75))
+      .contentShape(RoundedRectangle(cornerRadius: 16))
+      .accessibilityElement(children: .combine)
+  }
+}
+/// The live game-day entry: visible from three hours before a game's chat opens
+/// until the game ends, so the room is one tap away while people are watching.
+struct GameDayCard: View {
+  let event: CampusEvent
+  let joining: Bool
+  let join: () -> Void
+  private var open: Bool { event.canOpenSportsChat(at: .now) }
+  var body: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      HStack(spacing: 8) {
+        Circle().fill(open ? Color.red : Palette.secondary).frame(width: 8, height: 8)
+        Text(open ? "LIVE GAME CHAT" : "GAME DAY").font(.system(size: 11, weight: .heavy)).tracking(1.2).foregroundStyle(open ? Color(red: 1, green: 0.45, blue: 0.45) : Palette.secondary)
+        Spacer()
+        Text(event.starts, format: .dateTime.weekday(.abbreviated).hour().minute()).font(.caption).foregroundStyle(.secondary)
+      }
+      Text(event.title).font(.headline).fixedSize(horizontal: false, vertical: true)
+      if !event.location.isEmpty { Label(event.location, systemImage: "mappin.and.ellipse").font(.caption).foregroundStyle(.secondary).lineLimit(1) }
+      Button(action: join) {
+        HStack { Image(systemName: open ? "bubble.left.and.bubble.right.fill" : "clock"); Text(open ? (joining ? "Opening the chat…" : "Join the live chat") : "Chat opens \(event.chatOpenDate.formatted(date: .omitted, time: .shortened))") ; Spacer(); if open { Image(systemName: "chevron.right") } }
+          .font(.subheadline.weight(.semibold)).frame(minHeight: 44).padding(.horizontal, 14)
+          .background(open ? Palette.maroon : Palette.elevated.opacity(0.6), in: RoundedRectangle(cornerRadius: 12))
+          .foregroundStyle(open ? Palette.onAccent : Palette.ink)
+      }.disabled(!open || joining).accessibilityIdentifier("gameDayJoinChat")
+      Text("Everyone watching chats in one room with the official score at the top; the chat opens 30 minutes before kickoff.").font(.caption2).foregroundStyle(.secondary)
+    }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
+      .background(Palette.surface, in: RoundedRectangle(cornerRadius: 18))
+      .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(open ? Palette.maroon.opacity(0.8) : Palette.border.opacity(0.6), lineWidth: open ? 1.2 : 0.75))
+      .accessibilityElement(children: .contain).accessibilityIdentifier("gameDayCard")
   }
 }
 struct EventDetailView: View {
@@ -160,7 +227,7 @@ struct EventDetailView: View {
             event.starts.formatted(date: .complete, time: event.allDay ? .omitted : .shortened),
             systemImage: "calendar")
           if !event.location.isEmpty { Label(event.location, systemImage: "mappin.and.ellipse") }
-          Text(event.details).font(.subheadline).lineSpacing(5)
+          Text(event.details.decodingHTMLEntities).font(.subheadline).lineSpacing(5)
           Button(store.state.savedEvents.contains(event.id) ? "Saved" : "Save event") {
             AppHaptics.shared.play(.impact)
             saving = true
@@ -305,8 +372,12 @@ struct TransitView: View {
       }
       Section {
         Button { AppHaptics.shared.play(.impact); liveMap = true } label: {
-          Label("Live buses & departure times", systemImage: "bus.fill")
-        }
+          HStack {
+            Label("Live buses & departure times", systemImage: "bus.fill")
+            Spacer()
+            Image(systemName: "arrow.up.right").font(.caption.bold()).foregroundStyle(.secondary)
+          }
+        }.accessibilityHint("Opens the official AggieSpirit map")
         Text(
           "Browse current routes and stops below, or open the official live map for buses, departures and service changes."
         ).font(.caption).foregroundStyle(.secondary)
@@ -402,4 +473,28 @@ struct OfficialCampusBrowser: UIViewControllerRepresentable {
     return controller
   }
   func updateUIViewController(_ controller: SFSafariViewController, context: Context) {}
+}
+
+
+extension String {
+  /// Older cached campus rows still carry raw entities such as `&#160;`; the
+  /// refresh function now decodes them, and the detail sheet decodes any leftovers.
+  var decodingHTMLEntities: String {
+    guard contains("&") else { return self }
+    var result = self
+    if let regex = try? NSRegularExpression(pattern: "&#x([0-9a-fA-F]+);|&#([0-9]+);") {
+      let matches = regex.matches(in: result, range: NSRange(result.startIndex..., in: result)).reversed()
+      for match in matches {
+        guard let whole = Range(match.range, in: result) else { continue }
+        let hex = Range(match.range(at: 1), in: result).map { String(result[$0]) }
+        let dec = Range(match.range(at: 2), in: result).map { String(result[$0]) }
+        let code = hex.flatMap { UInt32($0, radix: 16) } ?? dec.flatMap { UInt32($0) }
+        if let code, let scalar = Unicode.Scalar(code) { result.replaceSubrange(whole, with: String(Character(scalar))) }
+      }
+    }
+    for (entity, value) in [("&nbsp;", " "), ("&quot;", "\""), ("&apos;", "'"), ("&lt;", "<"), ("&gt;", ">"), ("&amp;", "&")] {
+      result = result.replacingOccurrences(of: entity, with: value)
+    }
+    return result
+  }
 }

@@ -1,3 +1,4 @@
+import OSLog
 import SwiftUI
 import UIKit
 
@@ -70,6 +71,19 @@ struct SlidingFeedTabBar: UIViewRepresentable {
     private var animator: UIViewPropertyAnimator?
     private var animationGeneration = 0
     private var updatingNativeLayout = false
+    private static let live = NSHashTable<Coordinator>.weakObjects()
+
+    init() { Self.live.add(self) }
+
+    /// A navigation push or pop now owns the shared bar. Stop any feed slide
+    /// so its completion cannot commit a stale visibility under that
+    /// transition, and let the destination's own state decide a later collapse.
+    static func yieldToNavigation(in tabs: UITabBarController) {
+      for coordinator in live.allObjects {
+        coordinator.relinquishMotion(in: tabs)
+        coordinator.appliedHidden = false
+      }
+    }
 
     func attach(from probe: UIView) {
       guard !updatingNativeLayout else { return }
@@ -194,3 +208,532 @@ struct SlidingFeedTabBar: UIViewRepresentable {
 
   }
 }
+
+/// Pushed screens used to ask SwiftUI for `.toolbar(.hidden, for: .tabBar)`.
+/// On iOS 26 that hands the bar to UIKit, which fades or snaps it instead of
+/// sliding. This owns the native bar for navigation instead: visibility
+/// commits through the non-animated API at the start of a push or pop, and a
+/// picture of the bar (a window snapshot clipped to its pill) slides down with
+/// the push, back up with a soft spring on the pop, or along an interactive
+/// back swipe. The real bar is never transformed: UIKit lays it out again
+/// mid-transition, and a snapshot of the bar itself holds only the selected
+/// capsule, which is why the picture comes from the window.
+struct SlidingPushedTabBar: UIViewControllerRepresentable {
+  func makeUIViewController(context: Context) -> Probe {
+    let probe = Probe()
+    NavigationTabBarMotion.shared.register(probe)
+    return probe
+  }
+  func updateUIViewController(_ probe: Probe, context: Context) {}
+  static func dismantleUIViewController(_ probe: Probe, coordinator: Void) {
+    NavigationTabBarMotion.shared.unregister(probe)
+  }
+
+  /// SwiftUI hosts this as a child of the pushed screen's controller, so it
+  /// receives that screen's appearance callbacks and transition coordinator.
+  final class Probe: UIViewController {
+    override func viewDidLoad() {
+      super.viewDidLoad()
+      view.backgroundColor = .clear
+      view.isUserInteractionEnabled = false
+      view.isAccessibilityElement = false
+    }
+    override func didMove(toParent parent: UIViewController?) {
+      super.didMove(toParent: parent)
+      if parent != nil { NavigationTabBarMotion.shared.attach(self) }
+    }
+    override func viewWillAppear(_ animated: Bool) {
+      super.viewWillAppear(animated)
+      NavigationTabBarMotion.shared.attach(self)
+      NavigationTabBarMotion.shared.screenWillChange(self)
+    }
+    override func viewDidAppear(_ animated: Bool) {
+      super.viewDidAppear(animated)
+      NavigationTabBarMotion.shared.screenDidChange(self)
+    }
+    override func viewWillDisappear(_ animated: Bool) {
+      super.viewWillDisappear(animated)
+      NavigationTabBarMotion.shared.screenWillChange(self)
+    }
+    override func viewDidDisappear(_ animated: Bool) {
+      super.viewDidDisappear(animated)
+      NavigationTabBarMotion.shared.screenDidChange(self)
+    }
+  }
+}
+
+extension View {
+  /// Use instead of `.toolbar(.hidden, for: .tabBar)` on pushed screens. The
+  /// native bar slides down with the push and back up with the pop or back
+  /// swipe, and stays hidden for screens pushed above one that asked for
+  /// this, like UIKit's `hidesBottomBarWhenPushed`.
+  func hidesTabBarWhenPushed() -> some View {
+    background(SlidingPushedTabBar().frame(width: 0, height: 0))
+  }
+}
+
+/// One owner for the shared bar across every tab's navigation stack. Probes
+/// only report appearance changes; the stack that will be on screen decides
+/// visibility, so the two sides of one transition cannot disagree.
+@MainActor final class NavigationTabBarMotion {
+  static let shared = NavigationTabBarMotion()
+  private let probes = NSHashTable<UIViewController>.weakObjects()
+  private struct Compensation {
+    weak var controller: UIViewController?
+    var applied: CGFloat
+    var original: CGFloat
+  }
+  /// The one transient offset that keeps a screen steady during a transition.
+  private var compensation: Compensation?
+  /// Standing offsets while the bar is hidden: a pushed screen must never keep
+  /// the bar's inset once the bar is gone, whatever UIKit or SwiftUI left there.
+  private var corrections: [Compensation] = []
+  private var hooks: [ObjectIdentifier: NavigationHook] = [:]
+  static let log = Logger(subsystem: "app.maroonsocial.MaroonSocial", category: "TabBarMotion")
+
+  /// The navigation controller's own delegate callbacks are the reliable
+  /// moment to slide: they fire with the transition coordinator for every
+  /// push and pop, whether or not SwiftUI forwards appearance to the probe.
+  func attach(_ probe: UIViewController) {
+    var node = probe.parent
+    while let current = node {
+      if let navigation = current as? UINavigationController {
+        let key = ObjectIdentifier(navigation)
+        let hook = hooks[key] ?? NavigationHook(owner: self)
+        hooks[key] = hook
+        hook.install(on: navigation)
+        return
+      }
+      node = current.parent
+    }
+  }
+
+  /// UIKit calls the probes' appearance methods and the navigation delegate from inside its own
+  /// transition setup: while the navigation controller lays itself out and adds the incoming screen
+  /// to the window. Committing the bar there forces a layout of the tab controller, and SwiftUI then
+  /// updates a hosting view that is only half moved into its window; its environment read traps
+  /// (EXC_BREAKPOINT in EnvironmentValues' getter). So every entry point only records the moment
+  /// (the navigation and tab controllers, read from parent pointers only, since a popped screen
+  /// leaves its navigation controller before the next turn) and does its work on the next
+  /// main-queue turn, asking the navigation controller for the transition coordinator again then.
+  /// The push or pop is still running, so its coordinator still carries the slide. A coordinator is
+  /// never kept across turns: once its transition ends it points at a freed context.
+  private func onNextTurn(_ work: @escaping @MainActor (NavigationTabBarMotion) -> Void) {
+    DispatchQueue.main.async { [weak self] in
+      guard let self else { return }
+      work(self)
+    }
+  }
+
+  /// Delegate-driven entry: `shown` is the controller the stack is moving to.
+  func navigationWillShow(_ navigation: UINavigationController, shown: UIViewController, coordinator _: (any UIViewControllerTransitionCoordinator)?) {
+    onNextTurn { [weak navigation, weak shown] motion in
+      guard let navigation, let shown else { return }
+      motion.stackWillShow(navigation, shown: shown, coordinator: navigation.transitionCoordinator)
+    }
+  }
+  func navigationDidShow(_ navigation: UINavigationController, shown: UIViewController) {
+    onNextTurn { [weak navigation, weak shown] motion in
+      guard let navigation, let shown else { return }
+      motion.stackDidShow(navigation, shown: shown)
+    }
+  }
+  private func stackWillShow(_ navigation: UINavigationController, shown: UIViewController, coordinator: (any UIViewControllerTransitionCoordinator)?) {
+    guard let tabs = Self.tabBarController(above: navigation), tabs.view.window != nil else { return }
+    let hidden = wantsHidden(stack: navigation.viewControllers, top: shown)
+    let departing = coordinator?.viewController(forKey: .from)
+    Self.log.info("willShow stack=\(navigation.viewControllers.count) hidden=\(hidden) committed=\(tabs.isTabBarHidden) animated=\(coordinator?.isAnimated ?? false)")
+    if tabs.isTabBarHidden == hidden { return }
+    apply(hidden: hidden, in: tabs, coordinator: coordinator, arriving: shown, departing: departing)
+  }
+  private func stackDidShow(_ navigation: UINavigationController, shown: UIViewController) {
+    guard let tabs = Self.tabBarController(above: navigation), tabs.view.window != nil else { return }
+    let hidden = wantsHidden(stack: navigation.viewControllers, top: shown)
+    if !hidden, !tabs.isTabBarHidden, motionView == nil { refreshCachedPicture(in: tabs) }
+    Self.log.info("didShow hidden=\(hidden) committed=\(tabs.isTabBarHidden) inset=\(Double(shown.view.safeAreaInsets.bottom)) device=\(Double(tabs.view.window?.safeAreaInsets.bottom ?? -1))")
+    if tabs.isTabBarHidden == hidden { if hidden { correctHiddenLayout(of: shown, in: tabs) }; return }
+    apply(hidden: hidden, in: tabs, coordinator: nil, arriving: shown, departing: nil)
+  }
+  private var generation = 0
+  private var applying = false
+  private var handledTransition: ObjectIdentifier?
+
+  func register(_ probe: UIViewController) { probes.add(probe) }
+  func unregister(_ probe: UIViewController) { probes.remove(probe) }
+
+  /// A pushed screen is about to appear or disappear: decide the destination
+  /// state on the next turn, while the transition coordinator can still carry the slide.
+  func screenWillChange(_ probe: UIViewController) {
+    let tabs = Self.tabBarController(above: probe), navigation = Self.navigation(above: probe)
+    onNextTurn { [weak tabs, weak navigation] motion in
+      guard let tabs else { return }
+      // A navigation controller answers with its own transition, else its tab controller's.
+      motion.evaluate(in: tabs, coordinator: (navigation ?? tabs).transitionCoordinator, settling: false)
+    }
+  }
+  /// The transition has ended. Reconcile without motion in case the slide
+  /// could not be queued, so a pushed screen never keeps a visible bar.
+  func screenDidChange(_ probe: UIViewController) {
+    let tabs = Self.tabBarController(above: probe)
+    onNextTurn { [weak tabs] motion in if let tabs { motion.evaluate(in: tabs, coordinator: nil, settling: true) } }
+  }
+
+  private func evaluate(in tabs: UITabBarController, coordinator: (any UIViewControllerTransitionCoordinator)?, settling: Bool) {
+    guard !applying, tabs.view.window != nil else { return }
+    // A cancelled interactive pop re-appears the departing screen while the
+    // original completion is still responsible for restoring the bar.
+    if let coordinator, coordinator.isCancelled { return }
+    guard let destination = Self.destination(in: tabs, coordinator: coordinator) else { return }
+    let hidden = wantsHidden(stack: destination.navigation.viewControllers, top: destination.top)
+    Self.log.debug("appearance settling=\(settling) hidden=\(hidden) committed=\(tabs.isTabBarHidden) coordinator=\(coordinator != nil)")
+    if tabs.isTabBarHidden == hidden {
+      // Nothing to move. A screen that appeared above a hidden bar still needs
+      // its layout checked, since only transitions apply the offset below.
+      if settling, hidden { correctHiddenLayout(of: destination.top, in: tabs) }
+      return
+    }
+    apply(hidden: hidden, in: tabs, coordinator: coordinator, arriving: destination.top, departing: destination.departing)
+  }
+
+  private struct Destination {
+    var navigation: UINavigationController
+    var top: UIViewController?
+    var departing: UIViewController?
+  }
+  /// The stack that will be visible once the current transition (a push, pop
+  /// or root tab change) finishes, plus the screen leaving in its place.
+  private static func destination(in tabs: UITabBarController,
+    coordinator: (any UIViewControllerTransitionCoordinator)?) -> Destination? {
+    var root = tabs.selectedTab?.viewController ?? tabs.selectedViewController
+    var departing: UIViewController?
+    let to = coordinator?.viewController(forKey: .to), from = coordinator?.viewController(forKey: .from)
+    if let to, to.parent === tabs {
+      root = to
+      if let from, from.parent === tabs { departing = navigation(in: from)?.topViewController }
+    }
+    guard let root, let navigation = navigation(in: root) else { return nil }
+    var top = navigation.topViewController
+    if let to, to.parent === navigation { top = to; departing = from }
+    return Destination(navigation: navigation, top: top, departing: departing)
+  }
+
+  /// UIKit's `hidesBottomBarWhenPushed` rule: hidden while any pushed screen
+  /// in the destination stack asks for it, never because of the root alone.
+  private func wantsHidden(stack: [UIViewController], top: UIViewController?) -> Bool {
+    var entries = Array(stack.dropFirst())
+    if let top, top !== stack.first, !entries.contains(where: { $0 === top }) { entries.append(top) }
+    guard !entries.isEmpty else { return false }
+    return probes.allObjects.contains { probe in
+      var node: UIViewController? = probe
+      while let current = node {
+        if entries.contains(where: { $0 === current }) { return true }
+        node = current.parent
+      }
+      return false
+    }
+  }
+
+  /// The view carrying the slide. During a navigation transition iOS 26 lays
+  /// the real bar out again and overrides any transform placed on it, so the
+  /// real bar only ever commits visibility; a snapshot of it does the moving.
+  private(set) var motionView: UIView?
+  private var motionGeneration = 0
+  /// The bar's picture taken while it was on screen (as a push hides it). A bar
+  /// that was just un-hidden has not been rendered yet on iOS 26, so a snapshot
+  /// taken at pop time is blank; the picture from the push is reused instead.
+  private var cachedBarSnapshot: UIView?
+  private var cachedBarFrame = CGRect.zero
+
+  /// The bar as the user sees it. On iOS 26 the floating bar's platter and
+  /// items are composited by the system: a snapshot of the UITabBar itself or
+  /// a drawn hierarchy contains only the selected capsule. A snapshot of the
+  /// window, clipped to the platter's rounded rect, carries the whole bar.
+  /// Returns the picture and its frame in window coordinates.
+  private static func picture(of bar: UITabBar, in tabs: UITabBarController) -> (view: UIView, frame: CGRect)? {
+    guard !bar.isHidden, bar.alpha > 0.01, let window = bar.window, let shot = window.snapshotView(afterScreenUpdates: false) else { return nil }
+    let platter = bar.subviews.first { $0.clipsToBounds && $0.bounds.height > 0 && $0.bounds.height <= bar.bounds.height } ?? bar
+    let inWindow = platter.convert(platter.bounds, to: window)
+    guard inWindow.width > 0, inWindow.height > 0 else { return nil }
+    let clip = UIView(frame: inWindow)
+    // Built while a navigation transition's animation block may be active:
+    // every property here must land immediately, never as part of that block.
+    UIView.performWithoutAnimation {
+      clip.clipsToBounds = true
+      clip.layer.cornerRadius = platter.layer.cornerRadius > 0 ? platter.layer.cornerRadius : platter.bounds.height / 2
+      clip.layer.cornerCurve = .continuous
+      shot.frame = CGRect(x: -inWindow.minX, y: -inWindow.minY, width: window.bounds.width, height: window.bounds.height)
+      clip.addSubview(shot)
+      clip.layer.removeAllAnimations(); shot.layer.removeAllAnimations()
+    }
+    return (clip, inWindow)
+  }
+
+  private func apply(hidden: Bool, in tabs: UITabBarController, coordinator: (any UIViewControllerTransitionCoordinator)?,
+    arriving: UIViewController?, departing: UIViewController?) {
+    // Only our committed visibility matters here. In-flight slides of either
+    // owner are picked up from the bar's live position below.
+    guard tabs.isTabBarHidden != hidden else { return }
+    if let coordinator, handledTransition == ObjectIdentifier(coordinator) { return }
+    applying = true
+    defer { applying = false }
+    generation += 1
+    let generation = self.generation
+    handledTransition = coordinator.map { ObjectIdentifier($0) }
+    let bar = tabs.tabBar
+    SlidingFeedTabBar.Coordinator.yieldToNavigation(in: tabs)
+    settleCompensation()
+    clearMotion(in: tabs)
+    let animated = coordinator?.isAnimated == true && !UIAccessibility.isReduceMotionEnabled && bar.window != nil
+    guard animated, let coordinator else {
+      // A push that arrives without a transition (for example a conversation
+      // pushed while its request sheet dismisses) still needs the bar's
+      // picture later, when the user comes back with an animated pop.
+      if hidden, let picture = Self.picture(of: bar, in: tabs) { cachedBarSnapshot = picture.view; cachedBarFrame = picture.frame }
+      Self.log.info("commit without motion hidden=\(hidden)")
+      commit(hidden: hidden, in: tabs, entry: arriving); return
+    }
+    // Visibility commits now in both directions, so every screen is laid out
+    // for its final bar state from the first frame. The departing screen keeps
+    // its previous layout through a transient inset while it slides away.
+    var snapshot: UIView?
+    var frame = CGRect.zero
+    var distance: CGFloat = 0
+    UIView.performWithoutAnimation {
+      bar.transform = .identity; bar.alpha = 1
+      let before = Self.contentInset(in: tabs)
+      if hidden {
+        distance = Self.travel(of: bar, in: tabs)
+        if let picture = Self.picture(of: bar, in: tabs), let window = bar.window {
+          snapshot = picture.view; frame = picture.frame; cachedBarSnapshot = picture.view; cachedBarFrame = picture.frame
+          // A window snapshot samples its source when it joins the window, so
+          // the picture must be on screen before the real bar is hidden below.
+          picture.view.frame = picture.frame
+          picture.view.isUserInteractionEnabled = false
+          picture.view.isAccessibilityElement = false
+          window.addSubview(picture.view)
+        }
+      }
+      tabs.setTabBarHidden(hidden, animated: false)
+      tabs.view.layoutIfNeeded()
+      let after = Self.contentInset(in: tabs)
+      if let departing, abs(after - before) > 0.5 { compensate(departing, by: before - after) }
+      if !hidden {
+        distance = Self.travel(of: bar, in: tabs)
+        snapshot = cachedBarSnapshot; frame = cachedBarFrame
+        snapshot?.transform = .identity
+        snapshot?.removeFromSuperview()
+      }
+    }
+    let settled = coordinator.animate(alongsideTransition: nil) { [weak self] context in
+      guard let self, self.generation == generation else { return }
+      self.handledTransition = nil
+      UIView.performWithoutAnimation {
+        if context.isCancelled {
+          // An interactive pop returned to the pushed screen: hide for it again.
+          self.clearMotion(in: tabs)
+          if tabs.isTabBarHidden == hidden { tabs.setTabBarHidden(!hidden, animated: false) }
+          self.settleCompensation()
+          tabs.view.layoutIfNeeded()
+          if !hidden { self.correctHiddenLayout(of: departing, in: tabs) }
+        } else {
+          self.settleCompensation()
+          if hidden { self.correctHiddenLayout(of: arriving, in: tabs) } else { self.releaseCorrections() }
+          tabs.view.layoutIfNeeded()
+        }
+      }
+    }
+    if !settled {
+      handledTransition = nil
+      settleCompensation()
+      if hidden { correctHiddenLayout(of: arriving, in: tabs) } else { releaseCorrections() }
+    }
+    guard let snapshot, distance > 0 else {
+      // No picture to move (a bar that was never seen on this launch): the
+      // committed bar simply appears, which is still better than a fade.
+      Self.log.info("committed without a snapshot hidden=\(hidden)")
+      return
+    }
+    // Host the picture on the window: UIKit hides its own bar container with
+    // the bar and re-orders the tab controller's subviews during a navigation
+    // transition, both of which would cover the picture. The window does neither.
+    guard let host = bar.window ?? tabs.view.window else { Self.log.info("no window for the bar picture hidden=\(hidden)"); snapshot.removeFromSuperview(); return }
+    if snapshot.superview !== host {
+      snapshot.frame = frame
+      snapshot.isUserInteractionEnabled = false
+      snapshot.isAccessibilityElement = false
+      host.addSubview(snapshot)
+    }
+    motionGeneration += 1
+    let motion = motionGeneration
+    motionView = snapshot
+    let finish: () -> Void = { [weak self] in
+      guard let self, self.motionGeneration == motion else { return }
+      self.motionView = nil
+      snapshot.removeFromSuperview()
+      bar.alpha = 1
+    }
+    let interactive = coordinator.isInteractive
+    // UIKit delivers the incoming screen's viewWillAppear with animations
+    // disabled, which would complete the slide instantly and remove the
+    // picture at once. The slide runs with animations explicitly enabled.
+    let animationsWereEnabled = UIView.areAnimationsEnabled
+    UIView.setAnimationsEnabled(true)
+    defer { UIView.setAnimationsEnabled(animationsWereEnabled) }
+    if hidden {
+      UIView.animate(withDuration: 0.3, delay: 0, options: [.curveEaseIn, .beginFromCurrentState],
+        animations: { snapshot.transform = CGAffineTransform(translationX: 0, y: distance) }, completion: { _ in finish() })
+    } else {
+      // The real bar is already in place for layout; it stays transparent while
+      // its picture rises from below. A tap gets a soft spring, a back swipe
+      // follows the finger through the transition coordinator.
+      bar.alpha = 0
+      snapshot.transform = CGAffineTransform(translationX: 0, y: distance)
+      if interactive {
+        let queued = coordinator.animate(alongsideTransition: { _ in snapshot.transform = .identity }, completion: { _ in finish() })
+        if !queued { UIView.animate(withDuration: 0.34, animations: { snapshot.transform = .identity }, completion: { _ in finish() }) }
+      } else {
+        UIView.animate(withDuration: 0.55, delay: 0, usingSpringWithDamping: 0.72, initialSpringVelocity: 0.35,
+          options: [.beginFromCurrentState, .allowUserInteraction], animations: { snapshot.transform = .identity }, completion: { _ in finish() })
+      }
+    }
+    // The real bar must never stay transparent, whatever interrupts the slide.
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { finish() }
+    Self.log.info("\(hidden ? "hide" : "show") motion started distance=\(Double(distance)) interactive=\(interactive) settled=\(settled) animationsEnabledOnEntry=\(animationsWereEnabled)")
+  }
+
+  /// Keep the picture current while the bar rests on screen, so the next push
+  /// or pop has a fresh copy even if the push itself cannot animate.
+  private func refreshCachedPicture(in tabs: UITabBarController) {
+    guard tabs.tabBar.alpha > 0.99, let picture = Self.picture(of: tabs.tabBar, in: tabs) else { return }
+    cachedBarSnapshot = picture.view; cachedBarFrame = picture.frame
+  }
+
+  /// Remove an in-flight slide and give the real bar its appearance back.
+  private func clearMotion(in tabs: UITabBarController) {
+    motionGeneration += 1
+    motionView?.removeFromSuperview()
+    motionView = nil
+    tabs.tabBar.alpha = 1
+  }
+
+  private func commit(hidden: Bool, in tabs: UITabBarController, entry: UIViewController?) {
+    clearMotion(in: tabs)
+    UIView.performWithoutAnimation {
+      tabs.tabBar.transform = .identity
+      if tabs.isTabBarHidden != hidden { tabs.setTabBarHidden(hidden, animated: false) }
+      settleCompensation()
+      if !hidden { releaseCorrections() }
+      tabs.view.layoutIfNeeded()
+      if hidden { correctHiddenLayout(of: entry, in: tabs) }
+    }
+  }
+
+  /// Tells one screen the bar is already gone (or still there) while UIKit's
+  /// committed visibility says otherwise, so its layout never jumps mid-slide.
+  private func compensate(_ controller: UIViewController, by inset: CGFloat) {
+    guard abs(inset) > 0.5 else { return }
+    let original = controller.additionalSafeAreaInsets.bottom
+    controller.additionalSafeAreaInsets.bottom = original + inset
+    compensation = Compensation(controller: controller, applied: original + inset, original: original)
+  }
+  /// Undo exactly our own write. If something else changed the inset since,
+  /// leave that value alone rather than shifting it by our amount.
+  private func settleCompensation() {
+    guard let pending = compensation else { return }
+    compensation = nil
+    restore(pending)
+  }
+  private func restore(_ entry: Compensation) {
+    guard let controller = entry.controller, abs(controller.additionalSafeAreaInsets.bottom - entry.applied) < 0.5 else { return }
+    controller.additionalSafeAreaInsets.bottom = entry.original
+  }
+  /// With the bar committed hidden, the on-screen pushed screen must sit on the
+  /// device's own bottom inset. Cancel any bar-height inset that remains.
+  private func correctHiddenLayout(of entry: UIViewController?, in tabs: UITabBarController) {
+    guard let entry, entry.isViewLoaded, let window = entry.view.window, tabs.isTabBarHidden else { return }
+    let excess = entry.view.safeAreaInsets.bottom - window.safeAreaInsets.bottom
+    guard excess > 1 else { return }
+    let original = entry.additionalSafeAreaInsets.bottom
+    entry.additionalSafeAreaInsets.bottom = original - excess
+    corrections.removeAll { $0.controller == nil || $0.controller === entry }
+    corrections.append(Compensation(controller: entry, applied: original - excess, original: original))
+    entry.view.layoutIfNeeded()
+  }
+  private func releaseCorrections() {
+    let pending = corrections
+    corrections = []
+    for entry in pending { restore(entry) }
+  }
+
+  private static func contentInset(in tabs: UITabBarController) -> CGFloat {
+    let selected = tabs.selectedTab?.viewController ?? tabs.selectedViewController
+    return selected?.view.safeAreaInsets.bottom ?? 0
+  }
+  /// The bottom inset the visible bar adds beyond the device's own. A
+  /// destination that has not laid out yet (a root tab change) falls back to
+  /// the bar's resting geometry.
+  private static func barInset(in tabs: UITabBarController) -> CGFloat {
+    let device = tabs.view.window?.safeAreaInsets.bottom ?? 0
+    let measured = contentInset(in: tabs) - device
+    if measured > 0.5 { return measured }
+    let bar = tabs.tabBar
+    return max(0, tabs.view.bounds.maxY - bar.convert(bar.bounds, to: tabs.view).minY - device)
+  }
+  private static func travel(of bar: UIView, in tabs: UITabBarController) -> CGFloat {
+    max(bar.bounds.height, tabs.view.bounds.maxY - bar.convert(bar.bounds, to: tabs.view).minY) + 8
+  }
+  private static func navigation(above controller: UIViewController) -> UINavigationController? {
+    var node = controller.parent
+    while let current = node {
+      if let navigation = current as? UINavigationController { return navigation }
+      node = current.parent
+    }
+    return nil
+  }
+  private static func tabBarController(above controller: UIViewController) -> UITabBarController? {
+    var node = controller.parent
+    while let current = node {
+      if let tabs = current as? UITabBarController { return tabs }
+      node = current.parent
+    }
+    return nil
+  }
+  private static func navigation(in controller: UIViewController) -> UINavigationController? {
+    if let navigation = controller as? UINavigationController { return navigation }
+    for child in controller.children { if let found = navigation(in: child) { return found } }
+    return nil
+  }
+}
+
+
+/// Forwards every delegate callback SwiftUI's navigation controller expects,
+/// adding only the will/didShow observation the bar slide needs.
+@MainActor final class NavigationHook: NSObject, UINavigationControllerDelegate {
+  private unowned let owner: NavigationTabBarMotion
+  private weak var navigation: UINavigationController?
+  private weak var forwardedDelegate: (any UINavigationControllerDelegate)?
+  init(owner: NavigationTabBarMotion) { self.owner = owner }
+  func install(on navigation: UINavigationController) {
+    self.navigation = navigation
+    guard navigation.delegate !== self else { return }
+    // SwiftUI may refresh its delegate; keep forwarding to whatever it set last.
+    forwardedDelegate = navigation.delegate
+    navigation.delegate = self
+  }
+  override func responds(to selector: Selector!) -> Bool {
+    super.responds(to: selector) || forwardedDelegate?.responds(to: selector) == true
+  }
+  override func forwardingTarget(for selector: Selector!) -> Any? {
+    if forwardedDelegate?.responds(to: selector) == true { return forwardedDelegate }
+    return super.forwardingTarget(for: selector)
+  }
+  func navigationController(_ navigationController: UINavigationController, willShow viewController: UIViewController, animated: Bool) {
+    forwardedDelegate?.navigationController?(navigationController, willShow: viewController, animated: animated)
+    owner.navigationWillShow(navigationController, shown: viewController, coordinator: navigationController.transitionCoordinator)
+  }
+  func navigationController(_ navigationController: UINavigationController, didShow viewController: UIViewController, animated: Bool) {
+    forwardedDelegate?.navigationController?(navigationController, didShow: viewController, animated: animated)
+    owner.navigationDidShow(navigationController, shown: viewController)
+  }
+}
+

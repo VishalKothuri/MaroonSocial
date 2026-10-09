@@ -14,9 +14,11 @@ final class MaroonSocialUITests: XCTestCase {
     }
   }
 
-  private func launch(onboard: Bool = true, accessibilityText: Bool = false) -> XCUIApplication {
+  private func launch(onboard: Bool = true, accessibilityText: Bool = false, hiddenFeatures: Bool = false) -> XCUIApplication {
     let app = XCUIApplication()
     app.launchArguments = ["--uitesting"]
+    // 8 Ball, Cup Pong and Campus Tag are hidden in the app; their journeys turn them back on.
+    if hiddenFeatures { app.launchArguments += ["--enable-hidden-features"] }
     if accessibilityText { app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"] }
     app.launch()
     let username = app.textFields["username"]
@@ -85,6 +87,8 @@ final class MaroonSocialUITests: XCTestCase {
     XCTAssertFalse(app.buttons["publishPost"].isEnabled)
     post.tap(); post.typeText("Testing our campus conversation")
     XCTAssertEqual(post.value as? String, "Testing our campus conversation")
+    XCTAssertFalse(app.buttons["publishPost"].isEnabled, "On All, a topic is required")
+    app.pickPostTopic()
     XCTAssertTrue(app.buttons["publishPost"].isEnabled)
     shot(app, "Post editor typed text")
     app.buttons["publishPost"].tap()
@@ -120,11 +124,16 @@ final class MaroonSocialUITests: XCTestCase {
     app.buttons["useMeme"].tap()
     let attachment = app.buttons["Remove attachment"]
     XCTAssertTrue(attachment.waitForExistence(timeout: 5))
-    app.buttons["Cancel"].tap()
+    // A device's first image shows the photo policy once, then offers sharing.
+    let understand = app.alerts.buttons["I understand"]
+    if understand.waitForExistence(timeout: 3) { understand.tap() }
+    if app.buttons["Not now"].waitForExistence(timeout: 3) { app.buttons["Not now"].tap() }
+    let discard = app.buttons["postDiscard"]
+    app.revealInComposer(discard); discard.tap()
     XCTAssertTrue(app.buttons["Discard draft"].waitForExistence(timeout: 3))
     app.buttons["Keep editing"].tap()
     XCTAssertTrue(attachment.exists)
-    app.buttons["Cancel"].tap(); app.buttons["Discard draft"].tap()
+    app.revealInComposer(discard); discard.tap(); app.buttons["Discard draft"].tap()
     XCTAssertTrue(app.buttons["Create post"].waitForExistence(timeout: 3))
   }
 
@@ -134,7 +143,7 @@ final class MaroonSocialUITests: XCTestCase {
     let search = app.textFields["postSearch"]
     XCTAssertTrue(search.waitForExistence(timeout: 3))
     search.tap(); search.typeText("ZZZUNMATCHED")
-    XCTAssertTrue(app.staticTexts["No matching posts"].waitForExistence(timeout: 3))
+    XCTAssertTrue(app.descendants(matching: .any)["searchNoMatches"].waitForExistence(timeout: 5))
     app.buttons["Search posts"].tap()
     XCTAssertFalse(search.exists)
     app.buttons["savedPostsFilter"].tap()
@@ -300,9 +309,9 @@ final class MaroonSocialUITests: XCTestCase {
     XCTAssertLessThanOrEqual(hide.frame.maxX, app.frame.maxX)
     XCTAssertLessThanOrEqual(hide.frame.maxY, app.keyboards.firstMatch.frame.minY)
     hide.tap()
-    let options = app.scrollViews["postOptions"], cancel = app.buttons["Cancel"]
-    for _ in 0..<4 where !cancel.isHittable { options.swipeUp(velocity: .slow) }
-    XCTAssertTrue(cancel.isHittable); cancel.tap(); app.alerts.buttons["Discard draft"].tap()
+    XCTAssertFalse(app.scrollViews["postOptions"].exists, "The options panel has no scroll box of its own")
+    let discard = app.buttons["postDiscard"]
+    app.revealInComposer(discard); discard.tap(); app.alerts.buttons["Discard draft"].tap()
     app.tabBars.buttons["Inbox"].tap()
     app.buttons["newConversation"].tap(); app.buttons["New message"].tap()
     let username = app.textFields["requestUsername"]
@@ -357,7 +366,7 @@ final class MaroonSocialUITests: XCTestCase {
   }
 
   func testLocalPhysicsGameControlsAndReplay() {
-    let app = launch()
+    let app = launch(hiddenFeatures: true)
     openGame("8 Ball", app: app)
     let shotButton = app.webViews.buttons["Take shot"]
     XCTAssertTrue(shotButton.waitForExistence(timeout: 15))

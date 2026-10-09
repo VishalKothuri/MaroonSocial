@@ -3,7 +3,8 @@
 Credentials stay in memory; only generated resource IDs are retained for fixture cleanup.
 """
 import json, pathlib, urllib.request, urllib.error, uuid, os
-config=json.loads(pathlib.Path('MaroonSocial/Resources/Backend.json').read_text())
+import runner_backend
+config=runner_backend.load()
 tokens=[]; resources={'posts':[], 'rooms':[]}; label='rq'+uuid.uuid4().hex[:9]
 def call(action,token=None,**payload):
     headers={'Content-Type':'application/json','apikey':config['publishableKey']}
@@ -27,7 +28,7 @@ def remember(kind,id):
     return id
 try:
     names=[label+suffix for suffix in 'abc']
-    for name in names:tokens.append(ok('register',username=name,adult=True)['token'])
+    for name in names:tokens.append(runner_backend.accept_guidelines(config,ok('register',username=name,adult=True))['token'])
     a,b,c=tokens
     p=remember('posts',ok('post.create',a,text='Synthetic nested reply verification',anonymous=True)['resource_id'])
     named=remember('posts',ok('post.create',a,text='Synthetic named context verification',anonymous=False,acceptsDM=False)['resource_id'])
@@ -38,15 +39,23 @@ try:
     assert call('comment.create',c,**dict(payload,text='Changed retry'))[0]==400
     assert call('comment.create',c,post_id=named,parent_id=root,text='Wrong post')[0]==403
     child_view=reply(a,p,child)
-    assert child_view['parentID']==root and child_view['anonymous'] is True
-    assert names[1] not in json.dumps(post(a,p)) and names[2] not in json.dumps(post(a,p))
+    assert child_view['parentID']==root and child_view['anonymous'] is False, 'members may reply by name under an anonymous post'
+    assert child_view['score']==1 and reply(c,p,child)['vote']==1, 'a reply starts with its author\'s upvote'
+    assert post(a,p)['vote']==1 and post(a,p)['score']==1 and snapshot(a)['karma']==0, 'a post starts with its author\'s upvote, not karma'
+    opnamed=ok('comment.create',a,post_id=p,text='OP stays anonymous',anonymous=False)['resource_id']
+    assert reply(b,p,opnamed)['anonymous'] is True and reply(b,p,opnamed)['author']=='OP'
+    assert names[1] not in json.dumps(post(a,p)), 'anonymous replier leaked'
+    assert names[2] in json.dumps(post(a,p)), 'named reply hides its author'
+    assert names[1] not in json.dumps(post(c,p)) and names[0] not in json.dumps(post(c,p)), 'anonymous post author or replier leaked'
     print('PASS three-client nested hierarchy, exact retry and anonymous source projection',flush=True)
-    assert call('comment.vote',b,comment_id=root,value=1)[0]==403
-    assert call('post.vote',a,post_id=p,value=1)[0]==403
+    ok('comment.vote',b,comment_id=root,value=0); assert reply(b,p,root)['score']==0 and reply(b,p,root)['vote']==0
+    ok('comment.vote',b,comment_id=root,value=1); assert reply(b,p,root)['score']==1 and reply(b,p,root)['vote']==1
+    ok('post.vote',a,post_id=p,value=0); assert post(a,p)['score']==0
+    ok('post.vote',a,post_id=p,value=1); assert post(a,p)['score']==1 and snapshot(a)['karma']==0
     ok('comment.vote',a,comment_id=root,value=1)
     ok('comment.vote',c,comment_id=root,value=1)
     ok('comment.vote',c,comment_id=root,value=1)
-    assert snapshot(b)['karma']==2 and reply(a,p,root)['score']==2
+    assert snapshot(b)['karma']==2 and reply(a,p,root)['score']==3
     ok('comment.vote',c,comment_id=root,value=-1)
     assert snapshot(b)['karma']==0 and reply(c,p,root)['vote']==-1
     ok('comment.vote',c,comment_id=root,value=0)
@@ -56,7 +65,7 @@ try:
     ok('comment.vote',b,comment_id=ownreply,value=1)
     assert snapshot(a)['karma']==2
     assert not any('karma'in item for item in post(c,p)['comments'])
-    print('PASS independent vote net, repeated-vote idempotency, own combined karma and self-vote denial',flush=True)
+    print('PASS independent vote net, repeated-vote idempotency, own combined karma and author self-vote toggling',flush=True)
     assert call('dm.request',c,post_id=named)[0]==403
     namedreply=ok('comment.create',b,post_id=named,text='A named commenter',anonymous=False)['resource_id']
     room=remember('rooms',ok('dm.request',c,comment_id=namedreply,text='Private reply request',anonymous=False)['resource_id'])

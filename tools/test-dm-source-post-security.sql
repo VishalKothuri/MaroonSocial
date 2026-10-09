@@ -1,0 +1,77 @@
+-- Transactional regression for the "From this post" tag on post-originated DMs; all accounts and content roll back.
+begin;
+set local role service_role;
+create function pg_temp.source_tag(p_me uuid,p_room text)returns jsonb language sql as $f$select e->'sourcePost' from jsonb_array_elements(social_private.snapshot(p_me)->'conversationMeta')e where e->>'id'=p_room$f$;
+create function pg_temp.listed_title(p_me uuid,p_room text)returns text language sql as $f$select e->>'title' from jsonb_array_elements(social_private.snapshot(p_me)->'conversations')e where e->>'id'=p_room$f$;
+do $$
+declare ha text:=encode(extensions.gen_random_bytes(32),'hex');hb text:=encode(extensions.gen_random_bytes(32),'hex');hc text:=encode(extensions.gen_random_bytes(32),'hex');hd text:=encode(extensions.gen_random_bytes(32),'hex');
+ a uuid;b uuid;c uuid;d uuid;post_id uuid;adult_post uuid;comment_id uuid;post_room text;named_room text;reply_room text;adult_room text;second_room text;later_room text;plan_room text;excerpt text;out jsonb;tag jsonb;who uuid;
+begin
+ if has_function_privilege('anon','social_private.snapshot(uuid)','EXECUTE')or has_table_privilege('authenticated','social_private.rooms','SELECT')then raise exception 'Private snapshot/rooms exposed';end if;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(ha,'src_a_'||substr(ha,1,8),true,ha)returning id into a;insert into social_private.guidelines_acceptances(member,version)select a,required_version from social_private.guidelines_settings;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hb,'src_b_'||substr(hb,1,8),true,hb)returning id into b;insert into social_private.guidelines_acceptances(member,version)select b,required_version from social_private.guidelines_settings;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hc,'src_c_'||substr(hc,1,8),true,hc)returning id into c;insert into social_private.guidelines_acceptances(member,version)select c,required_version from social_private.guidelines_settings;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hd,'src_d_'||substr(hd,1,8),true,hd)returning id into d;insert into social_private.guidelines_acceptances(member,version)select d,required_version from social_private.guidelines_settings;
+ out:=public.social_gateway('post.create',ha,jsonb_build_object('text',repeat('Synthetic source post for the direct-message tag. ',4),'anonymous',true,'acceptsDM',true));post_id:=(out->>'resource_id')::uuid;
+ if post_id is null then raise exception 'Post creation failed %',out;end if;
+ select left(body,140)into excerpt from social_private.posts where id=post_id;
+ if char_length(excerpt)<>140 then raise exception 'Fixture body too short for truncation check';end if;
+ out:=public.social_gateway('dm.request',hb,jsonb_build_object('post_id',post_id,'text','Hello from your post'));post_room:=out->>'resource_id';
+ if post_room is null then raise exception 'Post request failed %',out;end if;
+ if not exists(select 1 from social_private.rooms where id=post_room and context_post=post_id and meta->>'source_post'=post_id::text and not(meta?'source_comment'))then raise exception 'Room meta did not record the source post';end if;
+ foreach who in array array[a,b]loop
+  tag:=pg_temp.source_tag(who,post_room);
+  if tag->>'postID'<>post_id::text or tag->>'excerpt'<>excerpt or(tag->>'deleted')::boolean or(tag->>'fromReply')::boolean then raise exception 'Live tag wrong for %: %',who,tag;end if;
+  if pg_temp.listed_title(who,post_room)<>'Anonymous conversation'then raise exception 'Post conversation not listed anonymously for %',who;end if;
+  if tag::text like '%'||a::text||'%'or tag::text like '%src_a_%'or tag::text like '%src_b_%'or tag?'author'then raise exception 'Tag leaked identity %',tag;end if;
+ end loop;
+ out:=public.social_gateway('dm.request',hb,jsonb_build_object('post_id',post_id,'text','Hello again'));
+ if out->>'resource_id'<>post_room then raise exception 'Repeat post request did not reuse its room %',out;end if;
+ out:=public.social_gateway('dm.accept',ha,jsonb_build_object('room_id',post_room));
+ if out?'error'or pg_temp.source_tag(b,post_room)->>'excerpt'<>excerpt then raise exception 'Tag lost after acceptance %',out;end if;
+ out:=public.social_gateway('dm.request',hb,jsonb_build_object('username',(select username from social_private.members where id=a),'text','Named hello'));named_room:=out->>'resource_id';
+ if named_room is null or named_room=post_room then raise exception 'Named request merged into the post room %',out;end if;
+ select e into tag from jsonb_array_elements(social_private.snapshot(b)->'conversationMeta')e where e->>'id'=named_room;
+ if not(tag?'sourcePost')or tag->'sourcePost'<>'null'::jsonb then raise exception 'Username-originated room carries a tag %',tag;end if;
+ out:=public.social_gateway('comment.create',hc,jsonb_build_object('post_id',post_id,'text','A synthetic reply'));comment_id:=(out->>'resource_id')::uuid;
+ out:=public.social_gateway('dm.request',hb,jsonb_build_object('comment_id',comment_id,'text','Hello from your reply'));reply_room:=out->>'resource_id';
+ if reply_room is null or reply_room in(post_room,named_room)then raise exception 'Reply request failed %',out;end if;
+ if not exists(select 1 from social_private.rooms where id=reply_room and meta->>'source_post'=post_id::text and meta->>'source_comment'=comment_id::text)then raise exception 'Reply room meta incomplete';end if;
+ tag:=pg_temp.source_tag(c,reply_room);
+ if not(tag->>'fromReply')::boolean or tag->>'postID'<>post_id::text or tag->>'excerpt'<>excerpt or(tag->>'deleted')::boolean then raise exception 'Reply tag wrong %',tag;end if;
+ out:=public.social_gateway('activity.create',ha,jsonb_build_object('title','Synthetic plan','kind','Study','place','Library','starts',extract(epoch from now()+interval '1 day'),'capacity',3,'details',''));plan_room:=out->>'resource_id';
+ select e into tag from jsonb_array_elements(social_private.snapshot(a)->'conversationMeta')e where e->>'id'=plan_room;
+ if tag is null or tag->'sourcePost'<>'null'::jsonb then raise exception 'Non-dm room tagged %',tag;end if;
+ update social_private.members set nsfw_enabled=true where id in(a,b);
+ out:=public.social_gateway('post.create',ha,jsonb_build_object('text','Adult-community source post','community','NSFW','acceptsDM',true));adult_post:=(out->>'resource_id')::uuid;
+ out:=public.social_gateway('dm.request',hb,jsonb_build_object('post_id',adult_post,'text','Hello from the adult post'));adult_room:=out->>'resource_id';
+ if adult_room is null or pg_temp.source_tag(b,adult_room)->>'excerpt'<>'Adult-community source post'then raise exception 'Adult post tag missing %',out;end if;
+ out:=public.social_gateway('community.leave',hb,'{"community":"NSFW"}');
+ tag:=pg_temp.source_tag(b,adult_room);
+ if tag->'excerpt'<>'null'::jsonb or(tag->>'deleted')::boolean or tag->>'postID'<>adult_post::text then raise exception 'Unreadable post should hide only the excerpt %',tag;end if;
+ if pg_temp.source_tag(a,adult_room)->>'excerpt'<>'Adult-community source post'then raise exception 'Author lost the adult excerpt';end if;
+ out:=public.social_gateway('dm.request',hd,jsonb_build_object('post_id',post_id,'text','Second requester'));second_room:=out->>'resource_id';
+ if second_room is null then raise exception 'Second requester failed %',out;end if;
+ out:=public.social_gateway('post.delete',ha,jsonb_build_object('post_id',post_id));
+ if out?'error'then raise exception 'Delete failed %',out;end if;
+ foreach who in array array[a,b]loop
+  tag:=pg_temp.source_tag(who,post_room);
+  if tag->>'postID'<>post_id::text or tag->'excerpt'<>'null'::jsonb or not(tag->>'deleted')::boolean or(tag->>'fromReply')::boolean then raise exception 'Soft-deleted tag wrong for %: %',who,tag;end if;
+  if pg_temp.listed_title(who,post_room)<>'Anonymous conversation'then raise exception 'Conversation dropped or renamed after soft delete for %',who;end if;
+ end loop;
+ tag:=pg_temp.source_tag(c,reply_room);
+ if not(tag->>'deleted')::boolean or not(tag->>'fromReply')::boolean or tag->'excerpt'<>'null'::jsonb then raise exception 'Reply tag after soft delete wrong %',tag;end if;
+ delete from social_private.posts where id=post_id;
+ if exists(select 1 from social_private.rooms where id=post_room and context_post is not null)or not exists(select 1 from social_private.rooms where id=post_room and meta->>'source_post'=post_id::text)then raise exception 'Hard delete did not null context_post or lost meta';end if;
+ foreach who in array array[a,b]loop
+  tag:=pg_temp.source_tag(who,post_room);
+  if tag->>'postID'<>post_id::text or tag->'excerpt'<>'null'::jsonb or not(tag->>'deleted')::boolean then raise exception 'Hard-deleted tag wrong for %: %',who,tag;end if;
+  if pg_temp.listed_title(who,post_room)<>'Anonymous conversation'then raise exception 'Conversation dropped or renamed after hard delete for %',who;end if;
+ end loop;
+ out:=public.social_gateway('dm.request',hd,jsonb_build_object('username',(select username from social_private.members where id=a),'text','Named after the post vanished'));later_room:=out->>'resource_id';
+ if later_room is null or later_room=second_room then raise exception 'Named request merged into an orphaned post room %',out;end if;
+ if not(pg_temp.source_tag(d,second_room)->>'deleted')::boolean or pg_temp.source_tag(d,later_room)<>'null'::jsonb then raise exception 'Orphaned post room lost its tag or named room gained one';end if;
+ if(select count(*)from social_private.rooms where kind='dm' and context_post is not null and not(meta?'source_post'))>0 then raise exception 'Backfill left rooms without source_post';end if;
+end $$;
+select 'PASS post-originated DM tag: meta.source_post recorded and backfilled, excerpt for both participants, reply origin flagged, named/activity rooms untagged, adult-rule hides only the excerpt, soft and hard post deletion keep the conversation with a deleted placeholder, named requests never merge into an orphaned post room' result;
+rollback;

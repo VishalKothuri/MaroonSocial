@@ -32,14 +32,16 @@ import XCTest
     XCTAssertFalse(app.navigationBars["New post"].exists)
     XCTAssertTrue(app.switches["postAnonymous"].exists); XCTAssertTrue(app.switches["postAcceptDMs"].exists)
     editor.tap(); editor.typeText("Inline post draft stays here")
-    app.buttons["Post attachments"].tap(); app.buttons["postKlipyPicker"].tap()
+    // Expanded, GIF search is a tool-row button.
+    app.buttons["postKlipyPicker"].tap()
     XCTAssertTrue(app.staticTexts["KLIPY library is being connected"].waitForExistence(timeout: 3))
     app.buttons["klipyCancel"].tap()
     XCTAssertEqual(editor.value as? String, "Inline post draft stays here")
-    app.buttons["Cancel"].tap()
+    let discard = app.buttons["postDiscard"]; app.revealInComposer(discard); discard.tap()
     XCTAssertTrue(app.alerts["Discard this post draft?"].waitForExistence(timeout: 3))
     app.alerts.buttons["Keep editing"].tap()
     XCTAssertEqual(editor.value as? String, "Inline post draft stays here")
+    app.pickPostTopic()
     app.buttons["publishPost"].tap()
     XCTAssertTrue(app.buttons["Inline post draft stays here"].waitForExistence(timeout: 5))
     XCTAssertTrue(app.buttons["Create post"].exists)
@@ -56,6 +58,7 @@ import XCTest
     app.buttons["Create post"].tap()
     let editor = app.textViews["postText"]; XCTAssertTrue(editor.waitForExistence(timeout: 3))
     editor.tap(); editor.typeText(String(repeating: "A longer campus conversation makes this feed scrollable. ", count: 12))
+    app.pickPostTopic()
     app.buttons["publishPost"].tap()
     XCTAssertTrue(app.buttons["Create post"].waitForExistence(timeout: 3))
     let feed = app.scrollViews["communityFeed"]
@@ -94,14 +97,14 @@ import XCTest
     let search = app.textFields["postSearch"]
     XCTAssertTrue(search.waitForExistence(timeout: 3))
     search.tap(); search.typeText("ZZZRESTOREDHEADER")
-    XCTAssertTrue(app.staticTexts["No matching posts"].waitForExistence(timeout: 3))
+    XCTAssertTrue(app.descendants(matching: .any)["searchNoMatches"].waitForExistence(timeout: 5))
     XCTAssertEqual(search.value as? String, "ZZZRESTOREDHEADER")
     // Changing a query after scrolling restored results must also release the
     // old lazy row positions, without requiring the search row to reopen.
     app.buttons["Clear search"].tap()
     feed.swipeUp(velocity: .slow)
     search.tap(); search.typeText("ZZZSCROLLEDRESULTS")
-    XCTAssertTrue(app.staticTexts["No matching posts"].waitForExistence(timeout: 3))
+    XCTAssertTrue(app.descendants(matching: .any)["searchNoMatches"].waitForExistence(timeout: 5))
     XCTAssertEqual(search.value as? String, "ZZZSCROLLEDRESULTS")
   }
   func testPullRefreshRetainsFeedComposerAndRootNavigation() {

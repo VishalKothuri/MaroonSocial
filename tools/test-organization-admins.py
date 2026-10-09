@@ -7,8 +7,9 @@ deployed social function. All three accounts are deleted in finally; the receipt
 exact organization and invitation IDs for the operator's scoped SQL cleanup.
 """
 import hashlib,json,os,pathlib,sys,time,urllib.error,urllib.request,uuid
-config=json.loads(pathlib.Path('MaroonSocial/Resources/Backend.json').read_text())
-receipt=pathlib.Path('build/oct4-organization-admins-receipt.json');tokens=[];org=None;invitations=[]
+import runner_backend
+config=runner_backend.load()
+receipt=runner_backend.receipt('build/oct4-organization-admins-receipt.json');tokens=[];org=None;invitations=[]
 def save(extra=None):
  data={'test':'organization-admins','token_hashes':[hashlib.sha256(t.encode()).hexdigest()for t in tokens],'organization':org,'invitations':invitations}
  if extra:data.update(extra)

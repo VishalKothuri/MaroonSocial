@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Prove that anonymous post-origin DMs retain anonymity in game snapshots."""
 import json,pathlib,time,urllib.request,urllib.error,uuid
-config=json.loads(pathlib.Path('MaroonSocial/Resources/Backend.json').read_text())
+import runner_backend
+config=runner_backend.load()
 def call(endpoint,action,token=None,**payload):
  headers={'Content-Type':'application/json','apikey':config['publishableKey']}
  if token:headers['X-Social-Token']=token
@@ -15,7 +16,7 @@ def private(response):
  for g in response.get('games',[]):assert g['players']==['Player 1','Player 2']
  return response
 try:
- for name in names:tokens.append(call('social','register',username=name,adult=True)['token'])
+ for name in names:tokens.append(runner_backend.accept_guidelines(config,call('social','register',username=name,adult=True))['token'])
  a,b=tokens
  post=call('social','post.create',a,text='Synthetic anonymous game privacy verification',anonymous=True,community='Texas A&M',acceptsDM=True,nonce=str(uuid.uuid4()))['resource_id']
  room=call('social','dm.request',b,post_id=post,text='Synthetic private game invitation')['resource_id']

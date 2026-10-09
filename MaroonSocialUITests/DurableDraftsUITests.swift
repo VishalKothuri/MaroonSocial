@@ -41,6 +41,27 @@ import XCTest
     XCTAssertNotEqual(app.textFields["requestUsername"].value as? String,"same_recipient")
     XCTAssertNotEqual(field("requestText",app).value as? String,"A request I have not sent")
   }
+  func testPollDraftKeepsItsQuestionTextAndChoicesAcrossRelaunch() {
+    let app=launch();app.buttons["Create post"].tap()
+    let editor=app.textViews["postText"];XCTAssertTrue(editor.waitForExistence(timeout:3))
+    app.buttons["postAddPoll"].tap()
+    // The post text is the poll's question; Return in a choice moves to the next one.
+    editor.tap();editor.typeText("Which dining hall?")
+    let first=app.textFields["pollOption0"];app.revealInComposer(first);first.tap();first.typeText("Sbisa\n")
+    app.textFields["pollOption1"].typeText("Commons")
+    app.buttons["closePostComposer"].tap()
+    XCTAssertTrue(app.buttons["Create post"].waitForExistence(timeout:3))
+    Thread.sleep(forTimeInterval:1)
+    relaunch(app);app.buttons["Create post"].tap()
+    XCTAssertTrue(editor.waitForExistence(timeout:3))
+    XCTAssertEqual(editor.value as? String,"Which dining hall?")
+    XCTAssertTrue(app.buttons["postAddPoll"].isSelected)
+    XCTAssertEqual(app.textFields["pollOption0"].value as? String,"Sbisa")
+    XCTAssertEqual(app.textFields["pollOption1"].value as? String,"Commons")
+    XCTAssertEqual(app.descendants(matching:.any)["postCharacterCount"].label,"18 of 180 characters")
+    let discard=app.buttons["postDiscard"];app.revealInComposer(discard);discard.tap();app.alerts.buttons["Discard draft"].tap()
+    XCTAssertTrue(app.buttons["Create post"].waitForExistence(timeout:3))
+  }
   func testGroupDetailsRestoreAfterExplicitSaveAndDeviceRelaunch() {
     let app=launch();app.tabBars.buttons["Inbox"].tap()
     app.buttons["newConversation"].tap();app.buttons["New group"].tap()

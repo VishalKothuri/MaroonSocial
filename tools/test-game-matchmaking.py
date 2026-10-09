@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Synthetic live matching test. No existing users or posts are touched."""
 import concurrent.futures, json, pathlib, time, urllib.request, urllib.error, uuid
-config=json.loads(pathlib.Path('MaroonSocial/Resources/Backend.json').read_text())
+import runner_backend
+config=runner_backend.load()
 tokens=[]
 def call(endpoint, action, token=None, **payload):
  headers={'Content-Type':'application/json','apikey':config['publishableKey']}

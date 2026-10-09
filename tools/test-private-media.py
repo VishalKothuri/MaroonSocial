@@ -4,7 +4,8 @@ Run make-synthetic-video.swift first. Credentials are a mode-0600 temporary file
 never printed; this script deletes only these synthetic accounts in finally.
 """
 import base64,json,pathlib,sys,urllib.request,urllib.error,uuid
-config=json.loads(pathlib.Path('MaroonSocial/Resources/Backend.json').read_text())
+import runner_backend
+config=runner_backend.load()
 fixture=pathlib.Path(sys.argv[1]); people=json.loads(fixture.read_text()); rooms=[]
 def call(endpoint,action,token,**payload):
  req=urllib.request.Request(config['url']+'/functions/v1/'+endpoint,data=json.dumps(dict(action=action,**payload)).encode(),headers={'Content-Type':'application/json','apikey':config['publishableKey'],'X-Social-Token':token})
@@ -15,6 +16,8 @@ def ok(endpoint,action,token,**payload):
  status,value=call(endpoint,action,token,**payload);assert status==200,(endpoint,action,status,value);return value
 try:
  a,b,c=[x['token']for x in people]
+ # The provisioned accounts accept the community guidelines (required before sending messages).
+ for token in(a,b,c):runner_backend.accept_guidelines(config,ok('social','snapshot',token),token)
  payload=dict(title='Synthetic private media QA',description='Temporary video/avatar authorization test.',category='Friends',avatar='gold',is_public=False,alias='Captain',member_avatar='sage',nonce=str(uuid.uuid4()))
  room=ok('communities','create',a,**payload)['room_id'];rooms.append(room)
  path=pathlib.Path('build/synthetic-media');video=(path/'synthetic-upload.mp4').read_bytes();photo=(path/'synthetic-photo.jpg').read_bytes()
@@ -50,7 +53,7 @@ try:
  ok('communities','close',a,room_id=room)
  print('PASS mute/unmute access, immediate leave revocation for video/member photo/preferences, photo removal')
 finally:
- pathlib.Path('build/synthetic-media/room-receipts.json').write_text(json.dumps(rooms))
+ runner_backend.receipt('build/synthetic-media/room-receipts.json').write_text(json.dumps(rooms))
  for person in people:
   status,result=call('social','account.delete',person['token']);assert status==200,result
  print('PASS synthetic accounts deleted; no credentials retained in repository or output')

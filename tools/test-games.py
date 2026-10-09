@@ -3,7 +3,8 @@
 Run from the repository root. Public config is bundled; no service-role key is used.
 """
 import concurrent.futures,hashlib,json,pathlib,time,urllib.request,urllib.error,uuid,os
-config=json.loads(pathlib.Path('MaroonSocial/Resources/Backend.json').read_text())
+import runner_backend
+config=runner_backend.load()
 fixtures=[]
 def call(endpoint,action,token=None,**payload):
  headers={'Content-Type':'application/json','apikey':config['publishableKey']}
@@ -19,7 +20,7 @@ def ok(endpoint,action,token=None,**payload):
 label='qagame'+str(int(time.time()))[-7:];names=[label+x for x in 'abc'];tokens=[]
 try:
  for name in names:
-  token=ok('social','register',username=name,adult=True)['token'];tokens.append(token)
+  token=runner_backend.accept_guidelines(config,ok('social','register',username=name,adult=True))['token'];tokens.append(token)
   fixtures.append({'username':name,'hash':hashlib.sha256(token.encode()).hexdigest()})
  fd=os.open('/tmp/maroon-game-test-fixtures.json',os.O_CREAT|os.O_TRUNC|os.O_WRONLY,0o600)
  with os.fdopen(fd,'w')as f:json.dump(fixtures,f)

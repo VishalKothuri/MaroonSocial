@@ -1,0 +1,45 @@
+begin;
+set local role service_role;
+do $$
+declare ha text:=repeat('a',32)||replace(gen_random_uuid()::text,'-','');hb text:=repeat('b',32)||replace(gen_random_uuid()::text,'-','');hc text:=repeat('c',32)||replace(gen_random_uuid()::text,'-','');hd text:=repeat('d',32)||replace(gen_random_uuid()::text,'-','');
+ aid uuid;r jsonb;meme uuid;i integer;meme_path text;paths text[];
+begin
+ if has_function_privilege('anon','public.social_memes(text,text,jsonb)','EXECUTE')or has_function_privilege('authenticated','public.social_memes(text,text,jsonb)','EXECUTE')then raise exception 'Shared meme RPC is exposed to clients';end if;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(ha,'meme_a_'||substr(ha,33,10),true,ha)returning id into aid;insert into social_private.guidelines_acceptances(member,version)select aid,required_version from social_private.guidelines_settings;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hb,'meme_b_'||substr(hb,33,10),true,hb);insert into social_private.guidelines_acceptances(member,version)select (select id from social_private.members where token_hash=hb),required_version from social_private.guidelines_settings;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hc,'meme_c_'||substr(hc,33,10),true,hc);insert into social_private.guidelines_acceptances(member,version)select (select id from social_private.members where token_hash=hc),required_version from social_private.guidelines_settings;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hd,'meme_d_'||substr(hd,33,10),true,hd);insert into social_private.guidelines_acceptances(member,version)select (select id from social_private.members where token_hash=hd),required_version from social_private.guidelines_settings;
+ r:=public.social_memes('list',repeat('0',64),'{}');if r->>'code'<>'unauthorized'then raise exception 'Unknown credential listed memes %',r;end if;
+ r:=public.social_memes('publish',ha,'{"path":"../escape.png","mime":"image/png","size":10,"width":1,"height":1}');if r->>'code'<>'invalid'then raise exception 'Unsafe path accepted %',r;end if;
+ r:=public.social_memes('publish',ha,jsonb_build_object('path',gen_random_uuid()::text||'.gif','mime','image/gif','size',10,'width',1,'height',1));if r->>'code'<>'invalid'then raise exception 'GIF accepted as meme %',r;end if;
+ for i in 1..30 loop
+  r:=public.social_memes('publish',ha,jsonb_build_object('path',gen_random_uuid()::text||'.png','mime','image/png','size',100,'width',24,'height',16,'title','Synthetic meme '||i));
+  if r->>'meme_id' is null then raise exception 'Publish % failed %',i,r;end if;
+ end loop;
+ meme:=(r->>'meme_id')::uuid;
+ r:=public.social_memes('publish',ha,jsonb_build_object('path',gen_random_uuid()::text||'.png','mime','image/png','size',100,'width',24,'height',16));if r->>'code'<>'rate_limit'then raise exception 'Daily quota not enforced %',r;end if;
+ r:=public.social_memes('list',hb,'{"query":"Synthetic meme 30"}');
+ if jsonb_array_length(r->'memes')<>1 or r->'memes'->0->>'id'<>meme::text then raise exception 'Search failed %',r;end if;
+ if r->'memes'->0 ? 'owner' or r->'memes'->0 ? 'path' then raise exception 'List exposed owner or storage path %',r;end if;
+ r:=public.social_memes('list',hb,'{"page":1}');if jsonb_array_length(r->'memes')<>24 or (r->>'has_next')::boolean is not true then raise exception 'First page wrong %',jsonb_array_length(r->'memes');end if;
+ r:=public.social_memes('list',hb,'{"page":2}');if jsonb_array_length(r->'memes')<>6 or (r->>'has_next')::boolean then raise exception 'Second page wrong %',jsonb_array_length(r->'memes');end if;
+ r:=public.social_memes('list',hb,'{"query":"%"}');if jsonb_array_length(r->'memes')<>0 then raise exception 'Wildcard query not escaped';end if;
+ r:=public.social_memes('read',hb,jsonb_build_object('meme_id',meme));meme_path:=r->>'path';if meme_path is null or r->>'mime'<>'image/png' then raise exception 'Read failed %',r;end if;
+ r:=public.social_memes('remove',hb,jsonb_build_object('meme_id',meme));if r->>'code'<>'forbidden'then raise exception 'Non-owner removed a meme %',r;end if;
+ r:=public.social_memes('report',ha,jsonb_build_object('meme_id',meme));if r->>'code'<>'invalid'then raise exception 'Owner self-report accepted %',r;end if;
+ r:=public.social_memes('report',hb,jsonb_build_object('meme_id',meme,'reason','test'));if (r->>'removed')::boolean then raise exception 'One report removed a meme';end if;
+ r:=public.social_memes('report',hb,jsonb_build_object('meme_id',meme,'reason','again'));if (r->>'removed')::boolean then raise exception 'Repeated report by one member counted twice';end if;
+ r:=public.social_memes('report',hc,jsonb_build_object('meme_id',meme));if (r->>'removed')::boolean then raise exception 'Two reporters removed a meme';end if;
+ r:=public.social_memes('report',hd,jsonb_build_object('meme_id',meme));if (r->>'removed')::boolean is not true then raise exception 'Three distinct reporters did not remove %',r;end if;
+ r:=public.social_memes('read',hb,jsonb_build_object('meme_id',meme));if r->>'code'<>'not_found'then raise exception 'Removed meme still readable %',r;end if;
+ if not exists(select 1 from social_private.storage_deletions sd where sd.path=meme_path)then raise exception 'Removed meme not queued for storage deletion';end if;
+ if not exists(select 1 from social_private.reports where target_type='shared_meme' and target_id=meme::text)then raise exception 'Reports not recorded for operators';end if;
+ r:=public.social_memes('list',hb,'{"page":1}');if jsonb_array_length(r->'memes')<>24 then raise exception 'Removed meme still listed';end if;
+ meme:=(r->'memes'->0->>'id')::uuid;
+ r:=public.social_memes('remove',ha,jsonb_build_object('meme_id',meme));if (r->>'ok')::boolean is not true then raise exception 'Owner removal failed %',r;end if;
+ select array_agg(sm.path) into paths from social_private.shared_memes sm where sm.owner=aid and sm.removed_at is null;
+ delete from social_private.members where id=aid;
+ if array_length(paths,1)<>28 or exists(select 1 from unnest(paths) p where not exists(select 1 from social_private.storage_deletions sd where sd.path=p))then raise exception 'Account deletion did not release stored memes';end if;
+end $$;
+select 'PASS: client denial, path/mime validation, daily quota, owner-free listing and search, escaped wildcards, pagination, owner-only removal, three-report removal, storage release' as result;
+rollback;

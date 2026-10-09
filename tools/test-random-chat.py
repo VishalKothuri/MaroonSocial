@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Black-box tests against the real random-chat Edge Function. Never prints credentials."""
 import json, pathlib, urllib.request, urllib.error, uuid, time, os
-config=json.loads(pathlib.Path('MaroonSocial/Resources/Backend.json').read_text())
+import runner_backend
+config=runner_backend.load()
 base=config['url']; key=config['publishableKey']
 session_file=pathlib.Path('/tmp/maroon-random-chat-test-sessions.json')
 def request(action,token=None,**payload):

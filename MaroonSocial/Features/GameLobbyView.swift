@@ -12,7 +12,12 @@ struct GameLobbyView: View {
   }
   @ViewBuilder
   var body: some View {
-    if title == "8 Ball" && !store.fixtureMode {
+    if !FeatureAvailability.isGameAvailable(title: title) {
+      // Reached for a hidden kind (deep link, stale state): no hosted pool, no matchmaking.
+      ContentUnavailableView(FeatureAvailability.unavailableMessage(for: title), systemImage: "gamecontroller", description: Text("This game is turned off for now. Chess is still available from Explore."))
+        .accessibilityIdentifier("hiddenGameUnavailable")
+        .appBackground().navigationTitle("").navigationBarTitleDisplayMode(.inline).hidesTabBarWhenPushed()
+    } else if title == "8 Ball" && !store.fixtureMode {
       WebPoolView()
     } else {
       classicLobby
@@ -30,7 +35,7 @@ struct GameLobbyView: View {
             .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
         }
         if matching.searching {
-          LoadingWordmark(animating: true, size: 24).frame(height: 56).accessibilityLabel("Searching for a player")
+          BlinkingWordmark(size: 40).frame(maxWidth: .infinity).padding(.vertical, 6).accessibilityLabel("Searching for a player")
           Button("Cancel search") {
             AppHaptics.shared.play(.impact)
             Task { await matching.cancel(using: store.social) }
@@ -57,7 +62,7 @@ struct GameLobbyView: View {
         }.font(.subheadline.weight(.semibold)).buttonStyle(.plain).background(Palette.surface, in: RoundedRectangle(cornerRadius: 16)).disabled(matching.searching || matching.busy)
         Text("Prefer a friend? Send a game invitation from your chat.").font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
       }.padding(24)
-    }.appBackground().navigationTitle("").navigationBarTitleDisplayMode(.inline).toolbar(.hidden, for: .tabBar)
+    }.appBackground().navigationTitle("").navigationBarTitleDisplayMode(.inline).hidesTabBarWhenPushed()
       .navigationDestination(item: $destination) { OnlineGameView(sessionID: $0) }
       .onChange(of: matching.game?.id) { _, id in if let id { destination = id; matching.clearMatch() } }
       .task(id: "\(matching.searching)-\(scenePhase)") {

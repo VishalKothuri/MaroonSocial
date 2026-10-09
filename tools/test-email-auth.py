@@ -6,8 +6,9 @@ Execute --cleanup <fixture> SQL even after failures. Never enable the public gat
 Temporary credentials are private mode-0600 files and are never printed by --run.
 """
 import argparse, hashlib, json, os, pathlib, secrets, tempfile, time, urllib.request, urllib.error, uuid
+import runner_backend
 ROOT=pathlib.Path(__file__).resolve().parents[1]
-CONFIG=json.loads((ROOT/'MaroonSocial/Resources/Backend.json').read_text())
+CONFIG=runner_backend.load()
 def prepare():
     peers=[]
     for suffix in ('a','b'):
@@ -48,6 +49,8 @@ def run(path):
         p.update(access_token=login['access_token'],refresh_token=login['refresh_token'])
         assert ok(call(p,'auth-account','register',username='',adult=False))['state']=='linked'
         snap=ok(call(p,'social','snapshot'))['snapshot'];assert snap['username']==p['username']
+        # Accept the community guidelines (required before posting, replying or messaging).
+        if isinstance(snap.get('guidelines'),dict):assert ok(call(p,'social','guidelines.accept',version=snap['guidelines']['required']))['snapshot']['guidelines']['accepted']==snap['guidelines']['required']
         for endpoint,action in [('games','list'),('tag-game','poll'),('account-controls','connections')]:ok(call(p,endpoint,action))
         status=ok(call(p,'verification','status'));assert not status['verified']
     post=ok(call(a,'social','post.create',text='Synthetic Auth isolation test',anonymous=True,community='Texas A&M',acceptsDM=True,nonce=str(uuid.uuid4())))

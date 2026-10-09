@@ -44,15 +44,22 @@ import XCTest
     app.buttons["Message reply author anonymously"].firstMatch.tap()
     XCTAssertTrue(app.descendants(matching: .any)["fixedAnonymousIdentity"].firstMatch.waitForExistence(timeout: 3))
     XCTAssertFalse(app.textFields["requestUsername"].exists)
-    XCTAssertEqual(app.switches.count, 0)
+    // The request sheet offers no identity switch; the reply composer's own toggle sits behind it.
+    let replyToggle = app.switches["replyAnonymous"]
+    // The system switch inside the toggle row overhangs its labelled frame by a couple of points.
+    let toggleRow = replyToggle.frame.insetBy(dx: -8, dy: -4)
+    XCTAssertTrue(app.switches.allElementsBoundByIndex.allSatisfy { toggleRow.contains($0.frame) }, app.switches.debugDescription)
     let request = app.descendants(matching: .any)["requestText"].firstMatch
     request.tap(); request.typeText("A private anonymous reply request")
     XCTAssertTrue(app.buttons["sendMessageRequest"].isEnabled)
     app.buttons["Cancel"].tap(); app.buttons["Discard draft"].tap()
     app.navigationBars.buttons.element(boundBy: 0).tap()
     app.buttons["Profile and settings"].tap()
-    XCTAssertTrue(app.staticTexts["profileKarma"].waitForExistence(timeout: 3))
-    XCTAssertEqual(app.staticTexts["profileKarma"].label, "0 karma")
+    // The Karma tile (a combined element) keeps the identifier and its spoken value.
+    let karma = app.descendants(matching: .any)["profileKarma"]
+    XCTAssertTrue(karma.waitForExistence(timeout: 3))
+    XCTAssertEqual(karma.label, "0 karma")
+    XCTAssertTrue(app.descendants(matching: .any)["profilePosts"].exists)
     XCTAssertTrue(app.staticTexts["@thread_tester"].exists)
   }
 }

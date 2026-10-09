@@ -19,7 +19,7 @@ struct WebPoolView: View {
       if let error = lease.error { VStack(spacing: 16) { Image(systemName: "wifi.exclamationmark").font(.title); Text(error).multilineTextAlignment(.center); Button("Retry") { Task { await connect() } }.buttonStyle(PrimaryButton()) }.padding(24).background(Palette.surface, in: RoundedRectangle(cornerRadius: 18)).padding(24) }
     }
     .navigationTitle("Pool").navigationBarTitleDisplayMode(.inline)
-    .toolbar(.hidden, for: .tabBar)
+    .hidesTabBarWhenPushed()
     .task(id: identity) { await connect() }
     .onDisappear { lease.invalidate(revoke: WebPoolSessionStore.revoke) }
   }

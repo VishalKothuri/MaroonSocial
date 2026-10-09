@@ -9,6 +9,7 @@ do $$declare a text:=encode(extensions.gen_random_bytes(32),'hex');label text:=s
  if course_private.term_open('Fall 2026','2026-12-11 06:00:00+00')then raise exception 'Semester accessible at closing boundary';end if;
  if (select purge_at from course_private.terms where term='Fall 2026')<>'2027-01-11 06:00:00+00'::timestamptz then raise exception 'Calendar month retention is incorrect';end if;
  r:=public.social_gateway('register',a,jsonb_build_object('username','termqa_'||label,'adult',true,'network',a));
+ r:=public.social_gateway('guidelines.accept',a,jsonb_build_object('version',r->'snapshot'->'guidelines'->'required'));if r?'error'then raise exception 'Guidelines acceptance failed %',r;end if;
  me:=social_private.require_member(a);
  r:=public.social_gateway('course.join',a,'{"code":"CHEM 107","term":"Spring 2027"}');
  if r->>'code'<>'closed'then raise exception 'Future class join not locked: %',r;end if;

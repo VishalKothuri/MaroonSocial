@@ -4,7 +4,8 @@ No fabricated moderation reports, ad impressions/clicks, or provider share event
 All three temporary social accounts and their references are deleted in finally.
 """
 import json,pathlib,urllib.request,urllib.error,urllib.parse,uuid,sys
-config=json.loads(pathlib.Path('MaroonSocial/Resources/Backend.json').read_text())
+import runner_backend
+config=runner_backend.load()
 key=json.loads(pathlib.Path('MaroonSocial/Resources/Klipy.json').read_text())['appKey'].strip()
 assert key,'Save a KLIPY mobile app key first.'
 
@@ -45,7 +46,7 @@ def ok(action,token=None,**payload):
 references=[provider('static-memes'),provider('gifs')]
 accounts=[];label='klipy_'+uuid.uuid4().hex[:10]
 try:
- for suffix in['a','b','c']:accounts.append(ok('register',username=label+suffix,adult=True)['token'])
+ for suffix in['a','b','c']:accounts.append(runner_backend.accept_guidelines(config,ok('register',username=label+suffix,adult=True))['token'])
  a,b,c=accounts
  room=ok('dm.request',a,username=label+'b',text='Temporary KLIPY integration check')['resource_id']
  ok('dm.accept',b,room_id=room)

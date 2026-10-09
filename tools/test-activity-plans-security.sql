@@ -3,8 +3,8 @@ set local role service_role;
 do $$
 declare ha text:=encode(extensions.gen_random_bytes(32),'hex');hb text:=encode(extensions.gen_random_bytes(32),'hex');a uuid;b uuid;o uuid;nonce uuid:=gen_random_uuid();p jsonb;r jsonb;r2 jsonb;aid uuid;sid uuid;att uuid;bad uuid;first_start timestamptz;last_start timestamptz;
 begin
- insert into social_private.members(token_hash,username,adult,network_hash)values(ha,'plan_'||substr(ha,1,8),true,ha)returning id into a;
- insert into social_private.members(token_hash,username,adult,network_hash)values(hb,'plan_'||substr(hb,1,8),true,hb)returning id into b;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(ha,'plan_'||substr(ha,1,8),true,ha)returning id into a;insert into social_private.guidelines_acceptances(member,version)select a,required_version from social_private.guidelines_settings;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hb,'plan_'||substr(hb,1,8),true,hb)returning id into b;insert into social_private.guidelines_acceptances(member,version)select b,required_version from social_private.guidelines_settings;
  p:=jsonb_build_object('nonce',nonce,'title','Weekly QA','place','MSC','starts',extract(epoch from '2026-10-25 10:00 America/Chicago'::timestamptz),'weeks',3,'capacity',6,'details','Synthetic rollback fixture','course','CHEM 107','approval_required',true);
  r:=public.activity_plans('series.create',ha,p);sid:=(r->>'series_id')::uuid;
  if sid is null or jsonb_array_length(r->'activity_ids')<>3 then raise exception 'Series create failed %',r;end if;

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Live three-client scoped-group regression; owns and deletes its synthetic accounts only."""
 import base64,json,os,pathlib,struct,time,urllib.request,urllib.error,uuid,zlib
-config=json.loads(pathlib.Path('MaroonSocial/Resources/Backend.json').read_text());tokens=[];rooms=[]
+import runner_backend
+config=runner_backend.load();tokens=[];rooms=[]
 def call(endpoint,action,token=None,**payload):
  headers={'Content-Type':'application/json','apikey':config['publishableKey']}
  if token:headers['X-Social-Token']=token
@@ -27,7 +28,7 @@ def no_other_names(data,own):
  assert all(name not in encoded for name in names if name!=own),'Another account username was exposed'
 label='qagid'+str(int(time.time()))[-7:];names=[label+x for x in'abc']
 try:
- for name in names:tokens.append(ok('social','register',username=name,adult=True)['token'])
+ for name in names:tokens.append(runner_backend.accept_guidelines(config,ok('social','register',username=name,adult=True))['token'])
  a,b,c=tokens
  payload=dict(title=label+' Public',description='Synthetic scoped identity integration test.',category='Friends',avatar='gold',is_public=True,alias='Captain',member_avatar='sage',nonce=str(uuid.uuid4()))
  created=community('create',a,**payload);room=remember(created['room_id']);assert community('create',a,**payload)['room_id']==room

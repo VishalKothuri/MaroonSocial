@@ -41,7 +41,8 @@ struct RootView: View {
           .onAppear { startupPresentation.begin(at: ProcessInfo.processInfo.systemUptime) }
       } else if store.state.onboarded {
         VStack(spacing: 0) {
-          ActiveTagBanner(service: store.tag) { showActiveTag = true }
+          // Campus Tag is hidden (FeatureAvailability): no banner, no sheet, no polling.
+          if FeatureAvailability.isCampusTagAvailable() { ActiveTagBanner(service: store.tag) { showActiveTag = true } }
           if let error = store.connectionError {
             HStack(spacing: 8) {
               Image(systemName: "wifi.exclamationmark")
@@ -74,7 +75,13 @@ struct RootView: View {
       }
     }.background(Palette.paper.ignoresSafeArea())
       .routePushNotifications()
-      .sheet(isPresented: $showActiveTag) { NavigationStack { TagView().toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { showActiveTag = false } } } } }
+      // Post links: the custom scheme, and share links handed over as universal links once the
+      // Associated Domains entitlement exists. Signed out, the post waits until sign-in.
+      .onOpenURL { store.openLink($0) }
+      .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
+        if let url = activity.webpageURL { store.openLink(url) }
+      }
+      .sheet(isPresented: Binding(get: { showActiveTag && FeatureAvailability.isCampusTagAvailable() }, set: { showActiveTag = $0 })) { NavigationStack { TagView().toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { showActiveTag = false } } } } }
       .sheet(isPresented: $recoverLogin) { NavigationStack { EmailLoginView(linkExisting: store.social.hasDeviceCredential).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { recoverLogin = false }.disabled(store.auth.busy || store.busy) } } } }
       .task(id: shouldConnect) { if shouldConnect { await store.runUpdates() } }
       .task(id: StartupCompletion(ready: store.connected, presented: startupPresentation.isPresented, reduceMotion: reduceMotion)) {
@@ -91,7 +98,7 @@ struct RootView: View {
       }
       .onChange(of: scenePhase) { _, phase in
         if phase == .background { store.tag.background() }
-        if phase == .active, store.tag.hasSession { Task { await store.tag.activate() } }
+        if phase == .active, FeatureAvailability.isCampusTagAvailable(), store.tag.hasSession { Task { await store.tag.activate() } }
         if phase != .active { startupPresentation.cancel() }
         else if starting, !recoverLogin { startupPresentation.begin(at: ProcessInfo.processInfo.systemUptime) }
       }

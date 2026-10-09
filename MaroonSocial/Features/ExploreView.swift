@@ -10,8 +10,11 @@ struct ExploreView: View {
           NavigationLink { RandomChatView().appHapticOnOpen().toolbar(.visible, for: .navigationBar) } label: {
             featureTile("Meet people", detail: "Interests · Text & video", icon: "person.2")
           }
-          NavigationLink { TagView().appHapticOnOpen().toolbar(.visible, for: .navigationBar) } label: {
-            featureTile("Campus Tag", detail: "Create or join a lobby", icon: "location.north.circle")
+          // Campus Tag is hidden (FeatureAvailability); "Meet people" fills the row.
+          if FeatureAvailability.isCampusTagAvailable() {
+            NavigationLink { TagView().appHapticOnOpen().toolbar(.visible, for: .navigationBar) } label: {
+              featureTile("Campus Tag", detail: "Create or join a lobby", icon: "location.north.circle")
+            }
           }
         }.buttonStyle(.plain)
         NavigationLink { CommunitiesView(social: store.social, fixtureMode: store.fixtureMode).appHapticOnOpen().toolbar(.visible, for: .navigationBar) } label: {
@@ -33,7 +36,7 @@ struct ExploreView: View {
           }
         }
         HStack { Text("Games").font(.headline); Spacer(); NavigationLink("Online matches") { OnlineGamesListView().appHapticOnOpen().toolbar(.visible, for: .navigationBar) }.font(.subheadline) }
-        ForEach(["8 Ball", "Chess", "Cup Pong"], id: \.self) { game in
+        ForEach(["8 Ball", "Chess", "Cup Pong"].filter { FeatureAvailability.isGameAvailable(title: $0) }, id: \.self) { game in
           NavigationLink { GameLobbyView(kind: game).appHapticOnOpen().toolbar(.visible, for: .navigationBar) } label: {
             HStack(spacing: 12) {
               Avatar(symbol: game == "Chess" ? "crown.fill" : game == "8 Ball" ? "8.circle.fill" : "cup.and.saucer.fill")
@@ -42,9 +45,11 @@ struct ExploreView: View {
             }.padding(14).background(Palette.surface, in: RoundedRectangle(cornerRadius: 14))
           }.buttonStyle(.plain)
         }
-        if !store.state.activities.isEmpty {
+        // Only plans that are still ahead earn the heading; past or cancelled ones leave it out.
+        let upcoming = store.state.activities.filter { !$0.cancelled && $0.starts > .now }.sorted { $0.starts < $1.starts }.prefix(4)
+        if !upcoming.isEmpty {
           Text("Upcoming plans").font(.headline)
-          ForEach(store.state.activities.filter { !$0.cancelled && $0.starts > .now }.sorted { $0.starts < $1.starts }.prefix(4)) { activity in
+          ForEach(upcoming) { activity in
             NavigationLink { ActivityDetailView(id: activity.id).appHapticOnOpen().toolbar(.visible, for: .navigationBar) } label: { ActivityCard(activity: activity) }.buttonStyle(.plain)
           }
         }
@@ -84,7 +89,7 @@ struct ActivityListView: View {
           ForEach(activities) { activity in NavigationLink { ActivityDetailView(id: activity.id).appHapticOnOpen() } label: { ActivityCard(activity: activity) }.buttonStyle(.plain) }
           if activities.isEmpty {
             EmptyCard(icon: filter.icon, title: "No plans yet", detail: "Create a plan or try another search.")
-            Button("Create \(filter.rawValue.lowercased())") { AppHaptics.shared.play(.selection); create = true }.buttonStyle(.borderedProminent).tint(Palette.maroon).foregroundStyle(Palette.onAccent)
+            Button("Create a plan") { AppHaptics.shared.play(.selection); create = true }.buttonStyle(.borderedProminent).tint(Palette.maroon).foregroundStyle(Palette.onAccent)
           }
         }.padding(.horizontal, 16).padding(.bottom, 18)
       }.maroonRefreshable { await store.refreshAndWait() }
@@ -172,7 +177,7 @@ struct ActivityDetailView: View {
           Label("Meet in a public place. Share only what you choose.", systemImage: "hand.raised").font(.caption).foregroundStyle(.secondary)
         } else { EmptyCard(icon: "calendar.badge.exclamationmark", title: "Plan unavailable", detail: "It may have been cancelled or removed.") }
       }.padding(16)
-    }.maroonRefreshable { await store.refreshAndWait() }.appBackground().navigationTitle("Plan details").navigationBarTitleDisplayMode(.inline).toolbar(.hidden, for: .tabBar)
+    }.maroonRefreshable { await store.refreshAndWait() }.appBackground().navigationTitle("Plan details").navigationBarTitleDisplayMode(.inline).hidesTabBarWhenPushed()
       .toolbar { Button("Report", systemImage: "flag") { Task { _ = await store.mutate("report", ["target_type": "activity", "target_id": id, "reason": "Activity report"]) } } }
       .confirmationDialog(isHost ? "Cancel this activity?" : "Leave this activity?", isPresented: $confirmLeave, titleVisibility: .visible) {
         Button(isHost ? "Cancel activity" : "Leave activity", role: .destructive) {

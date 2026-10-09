@@ -3,9 +3,9 @@ set local role service_role;
 do $$
 declare ha text:=encode(extensions.gen_random_bytes(32),'hex'); hb text:=encode(extensions.gen_random_bytes(32),'hex'); hc text:=encode(extensions.gen_random_bytes(32),'hex');a uuid;b uuid;c uuid;rid text;result jsonb;att uuid;memberatt uuid;k text;oldpath text;content uuid;
 begin
- insert into social_private.members(token_hash,username,adult,network_hash)values(ha,'photo_'||substr(ha,1,8),true,ha)returning id into a;
- insert into social_private.members(token_hash,username,adult,network_hash)values(hb,'photo_'||substr(hb,1,8),true,hb)returning id into b;
- insert into social_private.members(token_hash,username,adult,network_hash)values(hc,'photo_'||substr(hc,1,8),true,hc)returning id into c;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(ha,'photo_'||substr(ha,1,8),true,ha)returning id into a;insert into social_private.guidelines_acceptances(member,version)select a,required_version from social_private.guidelines_settings;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hb,'photo_'||substr(hb,1,8),true,hb)returning id into b;insert into social_private.guidelines_acceptances(member,version)select b,required_version from social_private.guidelines_settings;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hc,'photo_'||substr(hc,1,8),true,hc)returning id into c;insert into social_private.guidelines_acceptances(member,version)select c,required_version from social_private.guidelines_settings;
  result:=public.communities_gateway('create',ha,jsonb_build_object('title','Photo QA','description','Private rollback photo test.','category','Friends','avatar','gold','is_public',false,'alias','Captain','member_avatar','sage','nonce',gen_random_uuid()));rid:=result->>'room_id';if rid is null then raise exception 'Create %',result;end if;
  oldpath:=gen_random_uuid()::text||'.jpg';
  result:=public.group_photo_gateway('reserve',ha,jsonb_build_object('room_id',rid,'scope','group','path',oldpath,'size',123));att:=(result->>'attachment_id')::uuid;if att is null then raise exception 'Reserve %',result;end if;

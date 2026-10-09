@@ -29,6 +29,8 @@ targets:
       - package: MaroonCore
       - package: Supabase
         product: Auth
+      - package: Supabase
+        product: Realtime
     entitlements:
       path: MaroonSocial/MaroonSocial.entitlements
       properties:
@@ -55,6 +57,10 @@ targets:
         NSPhotoLibraryUsageDescription: Choose a photo, GIF, or short video to share.
         NSCalendarsWriteOnlyAccessUsageDescription: Save campus events you choose to your calendar.
         UIApplicationSupportsIndirectInputEvents: YES
+        # Post links open the app: maroonsocial://post/<id> (share links reach it through the web page).
+        CFBundleURLTypes:
+          - CFBundleURLName: app.maroonsocial.MaroonSocial.post-link
+            CFBundleURLSchemes: [maroonsocial]
   MaroonSocialTests:
     type: bundle.unit-test
     platform: iOS

@@ -3,7 +3,8 @@
 Creates/deletes only exact synthetic accounts; no private credentials logged.
 """
 import concurrent.futures,json,pathlib,time,urllib.request,urllib.error,uuid
-cfg=json.loads(pathlib.Path('MaroonSocial/Resources/Backend.json').read_text());tokens=[];scopes=[]
+import runner_backend
+cfg=runner_backend.load();tokens=[];scopes=[]
 def call(endpoint,action,index=0,scoped=False,**data):
  h={'Content-Type':'application/json','apikey':cfg['publishableKey']}
  if tokens:
@@ -18,7 +19,7 @@ def ok(endpoint,action,index=0,**data):
 label='wpiv'+str(int(time.time()))[-7:];names=[label+x for x in'abc']
 try:
  for name in names:
-  tokens.append(ok('social','register',username=name,adult=True)['token'])
+  tokens.append(runner_backend.accept_guidelines(cfg,ok('social','register',username=name,adult=True))['token'])
   scopes.append(ok('web-pool','session',len(tokens)-1)['token'])
  room=ok('social','dm.request',username=names[1],text='Synthetic pool invitation test')['resource_id']
  assert call('web-pool','invite',room=room,kind='pool',nonce=str(uuid.uuid4()))[0]==403

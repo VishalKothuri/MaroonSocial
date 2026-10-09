@@ -11,6 +11,24 @@ struct SocialGroupMember: Codable, Equatable {
   var avatar: String? = nil
   var isMe: Bool? = nil
 }
+/// Where a direct message started. The server keeps the origin in room meta, so the
+/// tag outlives the post: once it is deleted only the excerpt goes away. Never the author.
+struct SourcePostContext: Codable, Equatable {
+  var postID: String
+  var excerpt: String? = nil
+  var deleted = false
+  var fromReply = false
+  init(postID: String, excerpt: String? = nil, deleted: Bool = false, fromReply: Bool = false) {
+    self.postID = postID; self.excerpt = excerpt; self.deleted = deleted; self.fromReply = fromReply
+  }
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    postID = try container.decode(String.self, forKey: .postID)
+    excerpt = try container.decodeIfPresent(String.self, forKey: .excerpt)
+    deleted = try container.decodeIfPresent(Bool.self, forKey: .deleted) ?? false
+    fromReply = try container.decodeIfPresent(Bool.self, forKey: .fromReply) ?? false
+  }
+}
 struct SocialConversationMeta: Codable, Equatable {
   var id: String
   var kind: String
@@ -27,6 +45,7 @@ struct SocialConversationMeta: Codable, Equatable {
   var category: String? = nil
   var myAlias: String? = nil
   var myAvatar: String? = nil
+  var sourcePost: SourcePostContext? = nil
 }
 struct SocialAttachmentReference: Codable, Identifiable, Equatable {
   var id: String
@@ -61,6 +80,122 @@ struct SocialSnapshot: Codable {
   var attachments: [SocialAttachmentReference]
   var organizations: [SocialOrganization]
   var savedEvents: [String]
+  /// Cursor after the first feed page the snapshot carries; nil when that page is the whole feed.
+  var feedNext: SocialPageCursor? = nil
+  /// Server clock (with overlap) to start `feed.delta` from. Absent on older servers.
+  var serverNow: Double? = nil
+  /// The member's community guidelines acceptance. Absent on servers without guidelines, which
+  /// gate nothing on the client.
+  var guidelines: GuidelinesStatus? = nil
+  /// The member's posts that are not deleted (`ownPostIDs` also lists deleted ones). Absent on
+  /// older servers.
+  var postCount: Int? = nil
+  enum CodingKeys: String, CodingKey {
+    case username, feedCommunity, karma, nsfwEnabled, posts, courses, activities, conversations, ownPostIDs, ownCommentIDs, ownMessageIDs
+    case conversationMeta, attachments, organizations, savedEvents, feedNext, serverNow, guidelines, postCount
+  }
+  init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    username = try values.decode(String.self, forKey: .username)
+    feedCommunity = try values.decodeIfPresent(Community.self, forKey: .feedCommunity)
+    karma = try values.decodeIfPresent(Int.self, forKey: .karma)
+    nsfwEnabled = try values.decode(Bool.self, forKey: .nsfwEnabled)
+    posts = try values.decode([Post].self, forKey: .posts)
+    courses = try values.decode([Course].self, forKey: .courses)
+    activities = try values.decode([Activity].self, forKey: .activities)
+    conversations = try values.decode([Conversation].self, forKey: .conversations)
+    ownPostIDs = try values.decode([String].self, forKey: .ownPostIDs)
+    ownCommentIDs = try values.decode([String].self, forKey: .ownCommentIDs)
+    ownMessageIDs = try values.decode([String].self, forKey: .ownMessageIDs)
+    conversationMeta = try values.decode([SocialConversationMeta].self, forKey: .conversationMeta)
+    attachments = try values.decode([SocialAttachmentReference].self, forKey: .attachments)
+    organizations = try values.decode([SocialOrganization].self, forKey: .organizations)
+    savedEvents = try values.decode([String].self, forKey: .savedEvents)
+    feedNext = try values.decodeIfPresent(SocialPageCursor.self, forKey: .feedNext)
+    serverNow = try values.decodeIfPresent(Double.self, forKey: .serverNow)
+    // A malformed status never costs the snapshot; it reads as a server without guidelines.
+    guidelines = (try? values.decodeIfPresent(GuidelinesStatus.self, forKey: .guidelines)) ?? nil
+    postCount = (try? values.decodeIfPresent(Int.self, forKey: .postCount)) ?? nil
+  }
+}
+/// `snapshot.guidelines`: the version the server requires and the one this member accepted.
+struct GuidelinesStatus: Codable, Equatable {
+  var required: Int
+  var accepted: Int?
+  var acceptedAt: Date?
+  init(required: Int, accepted: Int? = nil, acceptedAt: Date? = nil) {
+    self.required = required; self.accepted = accepted; self.acceptedAt = acceptedAt
+  }
+  /// The member has accepted the version the server requires (or a later one).
+  var satisfied: Bool { (accepted ?? 0) >= required }
+  enum CodingKeys: String, CodingKey { case required, accepted, acceptedAt = "accepted_at" }
+  init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    required = try values.decode(Int.self, forKey: .required)
+    accepted = try values.decodeIfPresent(Int.self, forKey: .accepted)
+    if let text = try? values.decodeIfPresent(String.self, forKey: .acceptedAt) { acceptedAt = Self.date(text) }
+    else if let seconds = try? values.decodeIfPresent(Double.self, forKey: .acceptedAt) { acceptedAt = Date(timeIntervalSince1970: seconds) }
+    else { acceptedAt = nil }
+  }
+  func encode(to encoder: Encoder) throws {
+    var values = encoder.container(keyedBy: CodingKeys.self)
+    try values.encode(required, forKey: .required)
+    try values.encodeIfPresent(accepted, forKey: .accepted)
+    try values.encodeIfPresent(acceptedAt.map { ISO8601DateFormatter().string(from: $0) }, forKey: .acceptedAt)
+  }
+  /// ISO 8601 as Postgres writes it (`2026-10-07T10:00:00.123456+00:00`), with or without fractions.
+  static func date(_ text: String) -> Date? {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    if let date = formatter.date(from: text) { return date }
+    formatter.formatOptions = [.withInternetDateTime]
+    if let date = formatter.date(from: text) { return date }
+    // More than millisecond precision: drop the fraction (sub-second accuracy is not shown).
+    guard let dot = text.firstIndex(of: "."), let end = text[dot...].dropFirst().firstIndex(where: { !$0.isNumber }) else { return nil }
+    return formatter.date(from: String(text[..<dot]) + String(text[end...]))
+  }
+}
+/// Keyset position: everything strictly older than (before_created, before_id).
+/// `beforeCreated` is the server's own epoch value, kept as received so no rounding moves it.
+struct SocialPageCursor: Codable, Equatable {
+  var beforeCreated: Double
+  var beforeID: String
+  enum CodingKeys: String, CodingKey { case beforeCreated = "before_created", beforeID = "before_id" }
+  var payload: [String: Any] { ["before_created": beforeCreated, "before_id": beforeID] }
+}
+struct SocialFeedPage: Decodable {
+  var posts: [Post]
+  var next: SocialPageCursor?
+}
+struct SocialFeedDelta: Decodable {
+  var changed: [Post]
+  var removed: [String]
+  var now: Double
+  var truncated: Bool? = nil
+  /// Something only this member sees changed (a block, a hidden post, their own rename):
+  /// the held posts are refetched with `feed.posts`.
+  var resync: Bool? = nil
+}
+/// `feed.posts`: current copies of held posts, and the requested ids that are gone.
+struct SocialFeedPosts: Decodable {
+  var posts: [Post]
+  var removed: [String]
+}
+struct SocialCommentsPage: Decodable {
+  var comments: [Comment]
+  var next: SocialPageCursor?
+  var commentCount: Int?
+}
+struct SocialRoomMessages: Decodable {
+  var roomID: String
+  var messages: [Message]
+  var meta: SocialConversationMeta?
+  var more: Bool?
+  /// Held messages (up to `after_seq`) deleted, edited or reacted to after `changed_since`.
+  var changed: [Message]? = nil
+  /// Server clock (with overlap) for the next `changed_since`.
+  var now: Double? = nil
+  enum CodingKeys: String, CodingKey { case roomID = "room_id", messages, meta, more, changed, now }
 }
 struct SocialTagQuery: Hashable {
   let tag: String
@@ -80,12 +215,15 @@ struct SocialResponse: Decodable {
   var mediaData: String?
   var externalMedia: KlipyReference?
   var mime: String?
+  /// Set instead of `media_data` when the media store hands out a URL (R2 presigned GET or CDN).
+  var url: URL?
+  var expires: Double?
   // Filled by the authenticated transport for active navigation scopes. These
   // are separate from the feed so discovering old posts cannot expand it.
   var tagPages: [SocialTagPage]? = nil
   var libraryPages: [SocialLibraryPage]? = nil
   enum CodingKeys: String, CodingKey {
-    case snapshot, token, mime
+    case snapshot, token, mime, url, expires
     case resourceID = "resource_id", attachmentID = "attachment_id", mediaData = "media_data", externalMedia = "external_media"
   }
 }
@@ -124,7 +262,11 @@ struct SocialServiceError: Error, Decodable, LocalizedError {
   private let credentials: SocialCredentialStore
   private let transport: Transport?
   let auth: EmailAuthService?
-  private var identityGeneration = 0
+  /// On-device attachment cache; wiped whenever the identity changes.
+  let media: MediaStore
+  /// GET for store-issued media URLs. Injectable for tests.
+  var mediaDownloader: (URL) async throws -> (data: Data, mime: String?) = { try await MediaDownload.fetch($0) }
+  private var identityGeneration = 0 { didSet { media.wipe() } }
   var identityRevision: Int { identityGeneration }
   var hasStoredCredential: Bool { token != nil || auth?.signedIn == true }
   var usesEmailSession: Bool { token == nil && auth?.signedIn == true }
@@ -139,10 +281,12 @@ struct SocialServiceError: Error, Decodable, LocalizedError {
     return decoder
   }()
 
-  init(credentials: SocialCredentialStore? = nil, auth: EmailAuthService? = nil, transport: Transport? = nil) {
+  init(credentials: SocialCredentialStore? = nil, auth: EmailAuthService? = nil, transport: Transport? = nil, media: MediaStore? = nil) {
     let credentials = credentials ?? .keychain
     self.credentials = credentials
     self.transport = transport
+    // Injected transports (tests) never share the app's on-disk cache.
+    self.media = media ?? (transport == nil ? .shared : .temporary())
     self.auth = auth
     token = credentials.read()
   }
@@ -179,7 +323,10 @@ struct SocialServiceError: Error, Decodable, LocalizedError {
       let data = try await raw("social", action: action, payload: payload, authenticated: true)
       guard epoch == identityGeneration else { throw CancellationError() }
       var response = try decoder.decode(SocialResponse.self, from: data)
-      if response.snapshot != nil {
+      // A plain snapshot (launch, polling, pull-to-refresh) never re-fetches the retained
+      // tag/library pages: their views load them on demand. A mutation still refreshes
+      // them, because a vote, save, block or deletion may change or remove their posts.
+      if response.snapshot != nil && action != "snapshot" {
         let queries = Set(tagOwners.values).sorted { ($0.community.rawValue, $0.tag) < ($1.community.rawValue, $1.tag) }
         var pages: [SocialTagPage] = []
         for query in queries {
@@ -210,6 +357,83 @@ struct SocialServiceError: Error, Decodable, LocalizedError {
     }
     tail = Task { _ = try? await task.value }
     return try await task.value
+  }
+  /// Incremental reads share the request queue with mutations, so a page or delta can never
+  /// overtake the write that preceded it, and an account switch cancels them the same way.
+  private func queued<Value: Decodable>(_ action: String, payload: [String: Any], as type: Value.Type) async throws -> Value {
+    let previous = tail
+    let epoch = identityGeneration
+    let task = Task { @MainActor [self] in
+      await previous?.value
+      guard epoch == identityGeneration else { throw CancellationError() }
+      let data = try await raw("social", action: action, payload: payload, authenticated: true)
+      guard epoch == identityGeneration else { throw CancellationError() }
+      return try decoder.decode(Value.self, from: data)
+    }
+    tail = Task { _ = try? await task.value }
+    return try await task.value
+  }
+  /// One keyset page of the selected community, newest first (30 by default, at most 50).
+  /// `topic` narrows the page to one topic; it is sent only when set (a server without topics never sees it).
+  func feedPage(community: Community, cursor: SocialPageCursor?, limit: Int = 30, topic: String? = nil) async throws -> SocialFeedPage {
+    var payload: [String: Any] = ["community": community.rawValue, "limit": min(50, max(1, limit))]
+    if let cursor { payload.merge(cursor.payload) { _, new in new } }
+    if let topic { payload["topic"] = topic }
+    let page = try await queued("feed.page", payload: payload, as: SocialFeedPage.self)
+    guard page.posts.count <= 50, topic == nil || page.posts.allSatisfy({ $0.deleted == true || $0.topic == topic }) else { throw URLError(.badServerResponse) }
+    return page
+  }
+  /// Posts changed after `since` (new ones, or ones in `knownIDs`) and known ids that are gone.
+  /// With a topic, `removed` also lists known posts whose topic no longer matches.
+  func feedDelta(community: Community, since: Double, knownIDs: [String], topic: String? = nil) async throws -> SocialFeedDelta {
+    var payload: [String: Any] = ["community": community.rawValue, "since": since, "known_ids": Array(knownIDs.prefix(300))]
+    if let topic { payload["topic"] = topic }
+    return try await queued("feed.delta", payload: payload, as: SocialFeedDelta.self)
+  }
+  /// Current copies of held feed posts (at most 50 per call) and the ids that are gone (or, with a
+  /// topic, no longer in it).
+  func feedPosts(community: Community, ids: [String], topic: String? = nil) async throws -> SocialFeedPosts {
+    let requested = Array(ids.prefix(50))
+    var payload: [String: Any] = ["community": community.rawValue, "ids": requested]
+    if let topic { payload["topic"] = topic }
+    let page = try await queued("feed.posts", payload: payload, as: SocialFeedPosts.self)
+    guard page.posts.count <= requested.count else { throw URLError(.badServerResponse) }
+    return page
+  }
+  /// `topics.list`: the active topics in catalog order with their 7-day counts in `community`.
+  /// A server that predates topics answers with an error ("Unknown social action.").
+  func topics(community: Community) async throws -> [Topic] {
+    struct Payload: Decodable { var topics: [Topic] }
+    let result = try await queued("topics.list", payload: ["community": community.rawValue], as: Payload.self)
+    guard result.topics.count <= 64 else { throw URLError(.badServerResponse) }
+    return result.topics
+  }
+  /// Older replies of one post, returned oldest first.
+  func commentsPage(postID: String, cursor: SocialPageCursor?, limit: Int = 50) async throws -> SocialCommentsPage {
+    var payload: [String: Any] = ["post_id": postID, "limit": min(50, max(1, limit))]
+    if let cursor { payload.merge(cursor.payload) { _, new in new } }
+    let page = try await queued("comments.page", payload: payload, as: SocialCommentsPage.self)
+    guard page.comments.count <= 50 else { throw URLError(.badServerResponse) }
+    return page
+  }
+  /// Messages of one room newer than `afterSequence` or older than `beforeSequence` (oldest
+  /// first), or the newest page. With `changedSince` (and `afterSequence`) the answer also lists
+  /// held messages that were deleted, edited or reacted to since that server clock.
+  func roomMessages(roomID: String, afterSequence: Int? = nil, beforeSequence: Int? = nil, changedSince: Double? = nil, limit: Int = 50) async throws -> SocialRoomMessages {
+    var payload: [String: Any] = ["room_id": roomID, "limit": min(50, max(1, limit))]
+    if let afterSequence { payload["after_seq"] = afterSequence }
+    else if let beforeSequence { payload["before_seq"] = beforeSequence }
+    if let changedSince, afterSequence != nil { payload["changed_since"] = changedSince }
+    let page = try await queued("room.messages", payload: payload, as: SocialRoomMessages.self)
+    guard page.messages.count <= 50, (page.changed?.count ?? 0) <= 50, page.roomID == roomID else { throw URLError(.badServerResponse) }
+    return page
+  }
+  /// A Realtime token for this member's private channels, or `{realtime: false}` (keep polling).
+  /// The token is held in memory only and never logged.
+  func realtimeGrant() async throws -> RealtimeGrant {
+    let grant = try await queued("realtime.token", payload: [:], as: RealtimeGrant.self)
+    guard !grant.realtime || (grant.token?.isEmpty == false && grant.member != nil && grant.expiresAt != nil) else { throw URLError(.badServerResponse) }
+    return grant
   }
   func credential() async throws -> String {
     guard let token else { throw SocialServiceError(error: "Sign in to continue.", code: "unauthorized") }
@@ -260,11 +484,38 @@ struct SocialServiceError: Error, Decodable, LocalizedError {
     return id
   }
   func attachment(_ id: String) async throws -> Data { try await attachmentContent(id).data }
+  /// Cache first (memory, then disk); a miss loads once from the network and is stored.
   func attachmentContent(_ id: String) async throws -> (data: Data, isKlipy: Bool, mime: String?) {
-    let response = try await perform("attachment.read", payload: ["attachment_id": id])
-    if let reference = response.externalMedia { return (try await KlipyNetwork.media(reference), true, reference.mime) }
-    guard let value = response.mediaData, let data = Data(base64Encoded: value) else { throw URLError(.cannotDecodeRawData) }
-    return (data, false, response.mime)
+    let content = try await media.content(id) { [weak self] id in
+      guard let self else { throw CancellationError() }
+      return try await self.fetchAttachment(id)
+    }
+    return (content.data, content.isKlipy, content.mime)
+  }
+  /// Warms the cache for the next feed rows.
+  func prefetchAttachments(_ ids: [String]) {
+    media.prefetch(ids: ids) { [weak self] id in
+      guard let self else { throw CancellationError() }
+      return try await self.fetchAttachment(id)
+    }
+  }
+  /// Media reads do not mutate anything, so they skip the serial mutation queue (a screen of
+  /// attachments must not delay a vote); the identity epoch still cancels them on account switch.
+  private func fetchAttachment(_ id: String) async throws -> MediaContent {
+    let epoch = identityGeneration
+    let data = try await raw("social", action: "attachment.read", payload: ["attachment_id": id], authenticated: true)
+    // A 5 MB attachment is ~6.7 MB of JSON and base64: parse it off the main actor (prefetch runs this while scrolling).
+    let reply = try await Task.detached(priority: Task.currentPriority) { try AttachmentReply.decode(data) }.value
+    let content: MediaContent
+    switch reply {
+    case .external(let reference): content = MediaContent(data: try await KlipyNetwork.media(reference), mime: reference.mime, isKlipy: true)
+    case .url(let url, let mime):
+      let download = try await mediaDownloader(url)
+      content = MediaContent(data: download.data, mime: mime ?? download.mime)
+    case .bytes(let bytes, let mime): content = MediaContent(data: bytes, mime: mime)
+    }
+    guard epoch == identityGeneration else { throw CancellationError() }
+    return content
   }
   func clearCredentialAfterDeletion() {
     identityGeneration += 1
@@ -434,5 +685,27 @@ private enum SocialCredential {
     SecItemDelete(query as CFDictionary)
     SecItemDelete(deletionQuery as CFDictionary)
     clearLinkPending()
+  }
+}
+
+/// `attachment.read`'s answer: a KLIPY reference, a store-issued URL, or inline base64 bytes.
+/// Decoded with no actor isolation so the JSON and base64 work never runs on the main thread.
+enum AttachmentReply: Sendable {
+  case external(KlipyReference)
+  case url(URL, mime: String?)
+  case bytes(Data, mime: String?)
+  private struct Body: Decodable {
+    var mediaData: String?
+    var externalMedia: KlipyReference?
+    var mime: String?
+    var url: URL?
+    enum CodingKeys: String, CodingKey { case mime, url, mediaData = "media_data", externalMedia = "external_media" }
+  }
+  static func decode(_ data: Data) throws -> AttachmentReply {
+    let body = try JSONDecoder().decode(Body.self, from: data)
+    if let reference = body.externalMedia { return .external(reference) }
+    if let url = body.url { return .url(url, mime: body.mime) }
+    guard let value = body.mediaData, let bytes = Data(base64Encoded: value) else { throw URLError(.cannotDecodeRawData) }
+    return .bytes(bytes, mime: body.mime)
   }
 }

@@ -3,7 +3,8 @@
 Account cleanup is automatic. Synthetic closed room IDs are recorded for owner SQL cleanup.
 """
 import base64,json,os,pathlib,struct,time,urllib.request,urllib.error,uuid,zlib
-config=json.loads(pathlib.Path('MaroonSocial/Resources/Backend.json').read_text());tokens=[];rooms=[]
+import runner_backend
+config=runner_backend.load();tokens=[];rooms=[]
 def call(endpoint,action,token=None,**payload):
  headers={'Content-Type':'application/json','apikey':config['publishableKey']}
  if token:headers['X-Social-Token']=token
@@ -24,7 +25,7 @@ def png():
  return b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',1,1,8,2,0,0,0))+chunk(b'IDAT',zlib.compress(b'\x00\xff\x00\x00'))+chunk(b'IEND',b'')
 label='qacom'+str(int(time.time()))[-7:];names=[label+x for x in'abc']
 try:
- for name in names:tokens.append(ok('social','register',username=name,adult=True)['token'])
+ for name in names:tokens.append(runner_backend.accept_guidelines(config,ok('social','register',username=name,adult=True))['token'])
  a,b,c=tokens
  assert call('communities','list','0'*64)[0]==401
  nonce=str(uuid.uuid4());public=community('create',a,title=label+' Public',description='Synthetic campus chat integration test',category='Friends',is_public=True,nonce=nonce,avatar='maroon',alias='Captain',member_avatar='gold');room=remember(public['room_id'])

@@ -73,7 +73,7 @@ import XCTest
   private func back(_ app: XCUIApplication) { app.buttons["groupBack"].tap() }
   private func discard(_ app: XCUIApplication) {
     app.buttons["groupCancel"].tap()
-    XCTAssertTrue(app.alerts["Discard this group draft?"].waitForExistence(timeout: 3))
+    XCTAssertTrue(app.alerts["Keep this group draft?"].waitForExistence(timeout: 3))
     app.alerts.buttons["Discard draft"].tap()
   }
   private func enterDetails(_ app: XCUIApplication, name: String, about: String) {
@@ -143,7 +143,7 @@ import XCTest
     XCTAssertEqual(error.label, unavailable); assertStep("Invitations", in: app)
     XCTAssertEqual(field("groupInviteUsernames", in: app).value as? String, "friend_one, @friend_two")
     app.buttons["groupCancel"].tap()
-    XCTAssertTrue(app.alerts["Discard this group draft?"].waitForExistence(timeout: 3))
+    XCTAssertTrue(app.alerts["Keep this group draft?"].waitForExistence(timeout: 3))
     app.alerts.buttons["Keep editing"].tap()
     XCTAssertEqual(field("groupInviteUsernames", in: app).value as? String, "friend_one, @friend_two")
     discard(app)

@@ -3,8 +3,8 @@ do $$
 declare h text:=replace(gen_random_uuid()::text,'-','')||replace(gen_random_uuid()::text,'-','');h2 text:=replace(gen_random_uuid()::text,'-','')||replace(gen_random_uuid()::text,'-','');m uuid;m2 uuid;c uuid:=gen_random_uuid();out jsonb;i integer;expected text:=repeat('a',64);mail text:=repeat('b',64);
 begin
  if has_function_privilege('anon','public.verification_gateway(text,text,jsonb)','EXECUTE')or has_function_privilege('authenticated','public.verification_gateway(text,text,jsonb)','EXECUTE')or has_schema_privilege('anon','verification_private','USAGE')then raise exception 'Verifier exposed';end if;
- insert into social_private.members(token_hash,username,adult,network_hash)values(h,'verifyqa_'||substr(h,1,8),true,h)returning id into m;
- insert into social_private.members(token_hash,username,adult,network_hash)values(h2,'verifyqa_'||substr(h2,1,8),true,h2)returning id into m2;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(h,'verifyqa_'||substr(h,1,8),true,h)returning id into m;insert into social_private.guidelines_acceptances(member,version)select m,required_version from social_private.guidelines_settings;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(h2,'verifyqa_'||substr(h2,1,8),true,h2)returning id into m2;insert into social_private.guidelines_acceptances(member,version)select m2,required_version from social_private.guidelines_settings;
  out:=public.verification_gateway('prepare',h,jsonb_build_object('domain','evil.tamu.edu','email_hash',mail,'code_hash',expected,'challenge_id',c,'network_hash',h));if out->>'code'<>'invalid'then raise exception 'Domain bypass';end if;
  out:=public.verification_gateway('prepare',h,jsonb_build_object('domain','tamu.edu','email_hash',mail,'code_hash',expected,'challenge_id',c,'network_hash',h));if out?'error'then raise exception 'Prepare failed %',out;end if;
  out:=public.verification_gateway('confirm',h,jsonb_build_object('challenge_id',c,'code_hash',expected));if out->>'code'<>'invalid_code'then raise exception 'Unsent code allowed';end if;

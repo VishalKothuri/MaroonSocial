@@ -36,7 +36,12 @@ import XCTest
     assertTab("Community", in: app); XCTAssertTrue(app.buttons["New"].isSelected)
     swipe(app, left: true)
     assertTab("Community", in: app); XCTAssertTrue(app.buttons["Hot"].isSelected)
+    // Fixture mode answers `feed.top`, so the swipe continues to Top and stops there.
     swipe(app, left: true)
+    assertTab("Community", in: app); XCTAssertTrue(app.buttons["feedSort-top"].isSelected)
+    swipe(app, left: true)
+    assertTab("Community", in: app); XCTAssertTrue(app.buttons["feedSort-top"].isSelected)
+    swipe(app, left: false)
     assertTab("Community", in: app); XCTAssertTrue(app.buttons["Hot"].isSelected)
     swipe(app, left: false)
     assertTab("Community", in: app); XCTAssertTrue(app.buttons["New"].isSelected)
@@ -91,7 +96,9 @@ import XCTest
     XCTAssertTrue(app.buttons["communityPicker"].isHittable)
     XCTAssertTrue(app.buttons["Create post"].isHittable)
     app.buttons["savedPostsFilter"].tap()
-    app.swipeUp(); assertTab("Community", in: app)
+    // The full feed is long enough to collapse the bars on the way up; bringing
+    // them back must land on the same tab, never on a neighbour.
+    app.swipeUp(); app.swipeDown(); assertTab("Community", in: app)
     app.swipeDown(); assertTab("Community", in: app)
     app.buttons["Search posts"].tap()
     let search = app.textFields["postSearch"]; XCTAssertTrue(search.waitForExistence(timeout: 3))
@@ -120,6 +127,6 @@ import XCTest
     swipe(app, left: true, y: 0.35)
     XCTAssertTrue(app.textViews["postText"].exists)
     XCTAssertTrue(app.buttons["New"].isSelected, "Composition keeps its own gestures and feed order")
-    app.buttons["Cancel"].tap(); assertTab("Community", in: app)
+    app.buttons["closePostComposer"].tap(); assertTab("Community", in: app)
   }
 }

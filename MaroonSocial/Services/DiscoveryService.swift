@@ -157,7 +157,12 @@ private struct DiscoveryResponse: Decodable {
         let value = try await requestData("ack", ["session_id": session.id])
         guard active, epoch == generation, self.session?.id == session.id else { return }
         acknowledged = session.id; apply(value)
-      } catch { if epoch == generation { self.error = error.localizedDescription; stopLocal(); _ = enqueue("leave", [:]) }; return }
+      } catch {
+        guard epoch == generation else { return }
+        // The admission wrapper's deadlock backstop (code "retry", HTTP 400) is transient: keep the session and acknowledge again on the next heartbeat.
+        if (error as? SocialServiceError)?.code == "retry" { return }
+        self.error = error.localizedDescription; stopLocal(); _ = enqueue("leave", [:]); return
+      }
     }
     guard active, epoch == generation, state == "connected", acknowledged == session.id, iceServers.isEmpty, !preparingMedia else { return }
     preparingMedia = true; defer { if epoch == generation { preparingMedia = false } }

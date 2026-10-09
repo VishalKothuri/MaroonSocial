@@ -3,7 +3,8 @@
 Never alters a real organization or account; both accounts deleted in finally.
 """
 import base64,json,pathlib,sys,time,urllib.request,urllib.error,uuid
-config=json.loads(pathlib.Path('MaroonSocial/Resources/Backend.json').read_text());fixture=pathlib.Path(sys.argv[1]);data=json.loads(fixture.read_text());people=data['people'];org=data['organization'];ids=[]
+import runner_backend
+config=runner_backend.load();fixture=pathlib.Path(sys.argv[1]);data=json.loads(fixture.read_text());people=data['people'];org=data['organization'];ids=[]
 def call(endpoint,action,token,**payload):
  request=urllib.request.Request(config['url']+'/functions/v1/'+endpoint,data=json.dumps(dict(action=action,**payload)).encode(),headers={'Content-Type':'application/json','apikey':config['publishableKey'],'X-Social-Token':token})
  try:
@@ -13,6 +14,8 @@ def ok(endpoint,action,token,**payload):
  status,result=call(endpoint,action,token,**payload);assert status==200,(action,status,result);return result
 try:
  a,b=[p['token']for p in people]
+ # A new series needs the community guidelines accepted (does nothing on a server without them).
+ for token in(a,b):runner_backend.accept_guidelines(config,ok('social','snapshot',token),token)
  payload=dict(nonce=str(uuid.uuid4()),title='Synthetic weekly study',place='MSC test only',starts=int(time.time()+86400),weeks=3,capacity=6,details='Synthetic API validation',approval_required=True,course='CHEM 107')
  result=ok('activity-plans','series.create',a,**payload);ids.extend(result['activity_ids']);assert len(ids)==3
  assert ok('activity-plans','series.create',a,**payload)==result
@@ -35,7 +38,7 @@ try:
  ok('activity-plans','poster.remove',a,activity_id=event);assert not ok('activity-plans','poster.read',b,activity_id=event)['has_poster']
  print('PASS verified admin publication, nonadmin denial, same promotion on retry, real sanitized JPEG poster read/removal, organization byline hides admin usernames')
 finally:
- pathlib.Path('build/synthetic-media/plan-receipts.json').write_text(json.dumps({'activities':ids,'organization':org}))
+ runner_backend.receipt('build/synthetic-media/plan-receipts.json').write_text(json.dumps({'activities':ids,'organization':org}))
  for person in people:
   status,result=call('social','account.delete',person['token']);assert status==200,result
  fixture.unlink(missing_ok=True)

@@ -1,3 +1,4 @@
+import MaroonCore
 import SwiftUI
 import UIKit
 
@@ -88,9 +89,6 @@ struct LoadingWordmark: View {
     mark.foregroundStyle(Palette.ink)
       .overlay(alignment: .leading) {
         mark.foregroundStyle(Palette.maroon)
-          // A fine light edge keeps the thin serif letters legible without
-          // changing their maroon interior or hiding the initial white mark.
-          .shadow(color: Palette.ink.opacity(0.55), radius: 0.5)
           .mask(alignment: .leading) {
             Rectangle().frame(width: 320 * size / 43 * fill)
           }
@@ -140,27 +138,76 @@ struct CompactSelector: View {
   let options: [String]
   @Binding var selection: String
   var expands = false
+  /// Pill-sized (matches `Pill`): a 32pt capsule inside the same 44pt tap target.
+  var compact = false
+  /// A small "+N" badge on an option (the home feed's New: posts waiting above the list).
+  var badges: [String: Int] = [:]
+  /// A tap on the option that is already selected.
+  var onReselect: ((String) -> Void)? = nil
+  /// Names each option `<prefix>-<option in lower case>` for UI tests (the feed's `feedSort-top`).
+  var identifierPrefix: String? = nil
+  /// More than two options stack vertically at accessibility sizes unless this is false (the feed's
+  /// compact New/Hot/Top keeps its fixed-size row, which fits at every text size).
+  var stacksAtAccessibilitySizes = true
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
   @Namespace private var highlight
   var body: some View {
-    let layout = dynamicTypeSize.isAccessibilitySize && options.count > 2
+    let layout = stacksAtAccessibilitySizes && dynamicTypeSize.isAccessibilitySize && options.count > 2
       ? AnyLayout(VStackLayout(spacing: 2)) : AnyLayout(HStackLayout(spacing: 2))
     layout {
       ForEach(options, id: \.self) { option in
-        Button { selection = option } label: {
-          Text(option).font(.subheadline.weight(.semibold))
+        Button { if selection == option { onReselect?(option) } else { selection = option } } label: {
+          HStack(spacing: 4) {
+            Text(option)
+            if let count = badges[option], count > 0 {
+              Text(count > 99 ? "+99" : "+\(count)").font(.system(size: 10, weight: .bold)).monospacedDigit()
+                .foregroundStyle(Palette.paper).padding(.horizontal, 5).frame(minHeight: 15)
+                .background(Palette.maroonBright, in: Capsule())
+                .transition(.scale.combined(with: .opacity))
+            }
+          }.font(compact ? .system(size: 12, weight: .semibold) : .subheadline.weight(.semibold))
             .foregroundStyle(selection == option ? Palette.ink : Palette.secondary)
-            .padding(.horizontal, 12).padding(.vertical, 4).frame(maxWidth: expands ? .infinity : nil, minHeight: 44)
+            .padding(.horizontal, compact ? 11 : 12).padding(.vertical, compact ? 6 : 4)
+            .frame(maxWidth: expands ? .infinity : nil, minHeight: compact ? 28 : 44)
             .background {
               if selection == option {
                 Capsule().fill(Palette.maroon).matchedGeometryEffect(id: "selection", in: highlight)
               }
-            }.contentShape(Capsule())
+            }
+            .frame(minHeight: 44).contentShape(Capsule())
         }.buttonStyle(.plain).accessibilityAddTraits(selection == option ? .isSelected : [])
+          .accessibilityLabel(option)
+          .accessibilityValue(badges[option].map { $0 > 0 ? "\($0) new \($0 == 1 ? "post" : "posts")" : "" } ?? "")
+          .accessibilityIdentifier(identifierPrefix.map { "\($0)-\(option.lowercased())" } ?? "")
       }
-    }.padding(3).background(Palette.surface, in: Capsule())
+    }.padding(.horizontal, compact ? 2 : 3).padding(.vertical, compact ? 0 : 3)
+      .background {
+        Capsule().fill(Palette.surface)
+          .overlay(Capsule().strokeBorder(Palette.border, lineWidth: compact ? 0.75 : 0))
+          .frame(height: compact ? 32 : nil)
+      }
       .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.86), value: selection)
+      .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.8), value: badges)
+  }
+}
+
+/// Matchmaking wait: the whole wordmark breathes between white and maroon.
+/// No fill mask and no edge halo, so the thin serif letters stay crisp.
+struct BlinkingWordmark: View {
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  var size: CGFloat = 43
+  @State private var maroon = false
+  var body: some View {
+    Image("LaunchWordmark").resizable().renderingMode(.template)
+      .frame(width: 320 * size / 43, height: 56 * size / 43)
+      .foregroundStyle(maroon ? Palette.maroon : Palette.ink)
+      .onAppear {
+        guard !reduceMotion else { maroon = true; return }
+        withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) { maroon = true }
+      }
+      .accessibilityElement(children: .ignore).accessibilityLabel("Maroon Social, searching")
+      .accessibilityIdentifier("blinkingWordmark")
   }
 }
 
@@ -246,5 +293,31 @@ struct KeyboardDismissButton: View {
         .font(.system(size: 18, weight: .medium)).frame(minWidth: 44, minHeight: 44)
     }.buttonStyle(.plain).accessibilityLabel("Hide keyboard")
       .accessibilityIdentifier("hideKeyboard")
+  }
+}
+
+extension Palette {
+  /// Readable maroon for text, underlines and scores on dark: 5.47:1 on paper, 4.85:1 on surface.
+  static let maroonBright = Color(red: 0xD0 / 255, green: 0x6A / 255, blue: 0x73 / 255) // #D06A73
+}
+/// Base values for the topic strip, pills and chips; views scale them with @ScaledMetric.
+enum TopicMetrics {
+  static let chipHeight: CGFloat = 32   // visual height of a composer chip (tap target stays 44)
+  static let tagHeight: CGFloat = 22    // visual height of a topic pill on a card
+  static let underline: CGFloat = 2.5
+  static let tabGap: CGFloat = 20
+  static let edgeFade: CGFloat = 24
+}
+extension Topic {
+  /// Text and underline tone.
+  var textColor: Color { Color(hex: textHex) ?? Palette.secondary }
+  /// Opaque fill drawn on `surface`.
+  var fillColor: Color { Color(hex: fillHex) ?? Palette.elevated }
+}
+extension Color {
+  /// `#RRGGBB` (the topic catalog's format); nil for anything else.
+  init?(hex: String) {
+    guard hex.count == 7, hex.first == "#", let value = UInt32(hex.dropFirst(), radix: 16) else { return nil }
+    self.init(red: Double((value >> 16) & 0xFF) / 255, green: Double((value >> 8) & 0xFF) / 255, blue: Double(value & 0xFF) / 255)
   }
 }

@@ -28,7 +28,8 @@ import XCTest
       throw XCTSkip("Requires the two explicitly prepared QA accounts and concurrent simulator runners")
     }
     account = configuredAccount; ranLiveFlow = true
-    let app = XCUIApplication(); app.launchArguments = []; app.launch()
+    // 8 Ball is hidden in the app; the live pool journey turns it back on.
+    let app = XCUIApplication(); app.launchArguments = ["--enable-hidden-features"]; app.launch()
     XCTAssertTrue(app.tabBars.buttons["Community"].waitForExistence(timeout: 30), "An existing signed-in account is required")
     app.tabBars.buttons["Community"].tap()
     let profile = app.buttons["Profile and settings"]

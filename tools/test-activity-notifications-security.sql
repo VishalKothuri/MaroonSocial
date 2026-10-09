@@ -7,9 +7,9 @@ declare ha text:=encode(extensions.gen_random_bytes(32),'hex');hb text:=encode(e
 begin
  if has_function_privilege('anon','public.social_activity(text,text,jsonb)','EXECUTE')or has_function_privilege('authenticated','public.social_activity(text,text,jsonb)','EXECUTE')or has_table_privilege('authenticated','social_private.notifications','SELECT')or has_table_privilege('service_role','social_private.announcements','INSERT')or has_function_privilege('service_role','social_private.operator(text,jsonb,text)','EXECUTE')then raise exception 'Activity or operator permissions exposed';end if;
  if not exists(select 1 from pg_class where oid='social_private.notifications'::regclass and relrowsecurity)then raise exception 'Notification RLS missing';end if;
- insert into social_private.members(token_hash,username,adult,network_hash)values(ha,'activity_a_'||substr(ha,1,8),true,ha)returning id into a;
- insert into social_private.members(token_hash,username,adult,network_hash)values(hb,'activity_b_'||substr(hb,1,8),true,hb)returning id into b;
- insert into social_private.members(token_hash,username,adult,network_hash)values(hc,'activity_c_'||substr(hc,1,8),true,hc)returning id into c;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(ha,'activity_a_'||substr(ha,1,8),true,ha)returning id into a;insert into social_private.guidelines_acceptances(member,version)select a,required_version from social_private.guidelines_settings;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hb,'activity_b_'||substr(hb,1,8),true,hb)returning id into b;insert into social_private.guidelines_acceptances(member,version)select b,required_version from social_private.guidelines_settings;
+ insert into social_private.members(token_hash,username,adult,network_hash)values(hc,'activity_c_'||substr(hc,1,8),true,hc)returning id into c;insert into social_private.guidelines_acceptances(member,version)select c,required_version from social_private.guidelines_settings;
  out:=public.social_activity('notifications','bad');if out->>'code'is distinct from'unauthorized'then raise exception 'Unauthenticated activity allowed';end if;
  out:=public.social_gateway('post.create',ha,'{"text":"Activity test post","anonymous":true}');post_id:=(out->>'resource_id')::uuid;
  out:=public.social_gateway('comment.create',ha,jsonb_build_object('post_id',post_id,'text','Self reply'));parent_id:=(out->>'resource_id')::uuid;
