@@ -143,7 +143,7 @@ final class MaroonSocialUITests: XCTestCase {
     let search = app.textFields["postSearch"]
     XCTAssertTrue(search.waitForExistence(timeout: 3))
     search.tap(); search.typeText("ZZZUNMATCHED")
-    XCTAssertTrue(app.staticTexts["No matching posts"].waitForExistence(timeout: 3))
+    XCTAssertTrue(app.descendants(matching: .any)["searchNoMatches"].waitForExistence(timeout: 5))
     app.buttons["Search posts"].tap()
     XCTAssertFalse(search.exists)
     app.buttons["savedPostsFilter"].tap()

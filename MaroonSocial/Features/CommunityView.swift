@@ -41,7 +41,17 @@ struct CommunityView: View {
   /// The selected topic (nil = All). The store owns it so catalog drift can reset it.
   private var topic: String? { store.topicsAvailable ? store.feedTopic : nil }
   private var feedKey: FeedKey { FeedKey(community: community, topic: topic) }
+  /// The search field asks the server (a valid query, a server with `posts.search`, not the Saved
+  /// filter). Otherwise it filters the loaded posts, as before.
+  private var searchesServer: Bool { store.serverSearchAvailable && !savedOnly && PostSearchRules.query(search) != nil }
+  /// Server results are shown (not the loaded-post filter a failed first page falls back to).
+  private var serverSearching: Bool { searchesServer && store.searchShowsServerResults }
+  private var topKey: TopFeedKey { TopFeedKey(community: community, topic: topic, window: store.topWindow) }
   private var posts: [Post] {
+    if serverSearching { return store.searchResults() }
+    if sort == "Top" {
+      return store.topPosts(topKey).filter { (!savedOnly || $0.saved) && PostSearchRules.locallyMatches($0, search) }
+    }
     let ids = store.feedIDs(for: feedKey)
     // New posts a delta brought while the member read further down wait above the list ("+N" on New).
     let waiting = store.newPosts(for: feedKey)
@@ -54,7 +64,7 @@ struct CommunityView: View {
     let posts = window.filter {
       $0.deleted != true && !store.state.hiddenPosts.contains($0.id) && (!savedOnly || $0.saved)
         // A poll post's words are its question (the body is empty).
-        && (search.isEmpty || $0.text.localizedCaseInsensitiveContains(search) || ($0.poll?.question.localizedCaseInsensitiveContains(search) ?? false))
+        && PostSearchRules.locallyMatches($0, search)
     }
     return sort == "Hot" ? posts.sorted { rank($0) > rank($1) } : posts
   }
@@ -105,8 +115,9 @@ struct CommunityView: View {
         }.id(community).transaction { $0.animation = nil }.accessibilityIdentifier("communityPicker").disabled(compose)
         if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 0) }
         HStack(spacing: 8) {
-          CompactSelector(options: ["New", "Hot"], selection: Binding(get: { sort }, set: chooseSort), compact: true,
-            badges: ["New": store.newPostCount(for: feedKey)], onReselect: { if $0 == "New" { showNewPosts() } })
+          CompactSelector(options: store.feedSorts, selection: Binding(get: { sort }, set: chooseSort), compact: true,
+            badges: ["New": store.newPostCount(for: feedKey)], onReselect: { if $0 == "New" { showNewPosts() } else if $0 == "Top" { scrollFeedToTop() } },
+            identifierPrefix: "feedSort", stacksAtAccessibilitySizes: false)
           if dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 0) }
           Button { AppHaptics.shared.play(.impact); savedOnly.toggle() } label: {
           Image(systemName: savedOnly ? "bookmark.fill" : "bookmark").frame(width: 44, height: 44)
@@ -119,7 +130,8 @@ struct CommunityView: View {
       if showSearch {
         HStack {
           Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-          TextField("Search posts", text: $search).autocorrectionDisabled().accessibilityIdentifier("postSearch")
+          TextField("Search posts", text: Binding(get: { search }, set: { search = PostSearchRules.clamped($0) }))
+            .autocorrectionDisabled().submitLabel(.search).accessibilityIdentifier("postSearch")
           if !search.isEmpty { Button { AppHaptics.shared.play(.impact); search = "" } label: { Image(systemName: "xmark.circle.fill").frame(width: 44, height: 44) }.accessibilityLabel("Clear search") }
         }.frame(minHeight: 44).padding(11).background(Palette.surface, in: RoundedRectangle(cornerRadius: 12)).padding(.horizontal, 16).padding(.bottom, 10)
       }
@@ -129,7 +141,7 @@ struct CommunityView: View {
         // The Dynamic Type cap is applied here, outside the strip, so it also reaches the strip's own
         // @ScaledMetric sizes (emoji, gaps, underline, fades), not only its child views.
         TopicTabStrip(topics: folded.shown, more: folded.more, selection: Binding(get: { topic }, set: chooseTopic), onReselect: scrollFeedToTop,
-          allTopics: store.topics, sort: Binding(get: { sort }, set: chooseSort))
+          allTopics: store.topics, sort: Binding(get: { sort }, set: chooseSort), sortOptions: store.feedSorts)
           .dynamicTypeSize(...DynamicTypeSize.accessibility2)
       } else {
         Divider()
@@ -145,10 +157,12 @@ struct CommunityView: View {
           .id(topic ?? "all").transition(reduceMotion ? .identity : .opacity)
           .id(sort).transition(feedSortTransition)
           .task(id: sort == "Hot" ? "\(community.rawValue)#\(topic ?? "")#\(store.feedGeneration)" : nil) { if sort == "Hot" { await store.fillFeedForHot() } }
+          // Top loads its first page per community, topic and window.
+          .task(id: sort == "Top" ? topKey : nil) { if sort == "Top" { await store.loadTopFeed(topKey) } }
       }
       // Outside the pages, so the New/Hot swipe survives a page change (it re-attaches to the new page).
       .background(CommunitySortSwipeNavigation(selection: Binding(get: { sort }, set: chooseSort),
-        enabled: !chromeInteractionLocked, page: "\(sort)#\(topic ?? "")").frame(width: 0, height: 0))
+        enabled: !chromeInteractionLocked, options: store.feedSorts, page: "\(sort)#\(topic ?? "")").frame(width: 0, height: 0))
       }
     }.appBackground().navigationBarTitleDisplayMode(.inline)
       .toolbar(.hidden, for: .navigationBar)
@@ -164,7 +178,14 @@ struct CommunityView: View {
       .onChange(of: chromeInteractionLocked) { _, locked in if locked { resetChrome() } }
       .onChange(of: store.tab) { _, _ in resetChrome() }
       // A topic change (a tab, a pill, or catalog drift back to All) opens a new page at the top.
-      .onChange(of: topic) { _, _ in resetChrome() }
+      .onChange(of: topic) { _, _ in resetChrome(); refreshSearch() }
+      // Server search follows the field, the community and the topic (debounced in the store).
+      .onChange(of: search) { _, _ in refreshSearch() }
+      .onChange(of: community) { _, _ in refreshSearch() }
+      .onChange(of: savedOnly) { _, _ in refreshSearch() }
+      .onChange(of: store.serverSearchAvailable) { _, _ in refreshSearch() }
+      // A server that loses `feed.top` (or never had it) shows New/Hot as before.
+      .onChange(of: store.topSortAvailable) { _, available in if !available && sort == "Top" { sortMovesForward = false; sort = "New" } }
       .onDisappear { resetChrome(); interacting = false }
       .sheet(isPresented: $settings) { SettingsView() }
       .navigationDestination(item: $conversationID) { ChatView(id: $0).toolbar(.visible, for: .navigationBar) }
@@ -193,7 +214,11 @@ struct CommunityView: View {
         if community == .nsfw {
           Text("18+ discussion only. No explicit media.").font(.caption).foregroundStyle(.secondary).padding(12)
         }
-        if posts.isEmpty && (topic == nil ? store.loadingCommunity : topicFeedLoading) {
+        if serverSearching {
+          searchContent
+        } else if sort == "Top" {
+          topContent
+        } else if posts.isEmpty && (topic == nil ? store.loadingCommunity : topicFeedLoading) {
           LoadingWordmark(size: 25).padding(.top, 24).accessibilityLabel("Loading \(topic.map { store.topicDisplay($0).title } ?? community.rawValue)")
         } else if posts.isEmpty, let topic, let error = store.feedState(for: feedKey).error {
           EmptyCard(icon: "wifi.exclamationmark", title: "Posts couldn’t load", detail: error)
@@ -222,7 +247,11 @@ struct CommunityView: View {
       }.padding(.bottom, 12)
     }.accessibilityIdentifier("communityFeed")
       .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { feedWidth = $0 }
-      .maroonRefreshable(onProgressChanged: { refreshPresentation = $0 }) { await store.refreshFeed() }.scrollDismissesKeyboard(.interactively)
+      .maroonRefreshable(onProgressChanged: { refreshPresentation = $0 }) {
+        await store.refreshFeed()
+        if sort == "Top" { await store.loadTopFeed(topKey, reset: true) }
+        if searchesServer { await MainActor.run { store.retrySearch() } }
+      }.scrollDismissesKeyboard(.interactively)
       .onScrollPhaseChange { _, phase in interacting = phase == .interacting }
       .onScrollGeometryChange(for: FeedScrollMetrics.self) { geometry in
         let maximumOffset = max(0, geometry.contentSize.height + geometry.contentInsets.top + geometry.contentInsets.bottom - geometry.containerSize.height)
@@ -258,12 +287,95 @@ struct CommunityView: View {
       .onChange(of: showSearch) { _, visible in if visible { resetSearchPosition(using: proxy) } }
       .onChange(of: search) { _, _ in resetSearchPosition(using: proxy) }
       .onChange(of: savedOnly) { _, _ in resetSearchPosition(using: proxy) }
+      .onChange(of: store.topWindow) { _, _ in resetSearchPosition(using: proxy) }
+  }
+  /// Server results: a loading row, "No posts match", a retry, or the posts with their next pages.
+  @ViewBuilder private var searchContent: some View {
+    let results = posts
+    if results.isEmpty && store.search.loading {
+      HStack(spacing: 10) { ProgressView().controlSize(.small); Text("Searching…").font(.subheadline).foregroundStyle(.secondary) }
+        .frame(maxWidth: .infinity, minHeight: 56).padding(.top, 12).accessibilityElement(children: .combine).accessibilityIdentifier("searchLoading")
+    } else if results.isEmpty, let error = store.search.error {
+      EmptyCard(icon: "wifi.exclamationmark", title: "Search couldn’t load", detail: error)
+      Button("Try again") { store.retrySearch() }
+        .buttonStyle(.borderedProminent).tint(Palette.maroon).foregroundStyle(Palette.onAccent).accessibilityIdentifier("searchRetry")
+    } else if results.isEmpty {
+      EmptyCard(icon: "magnifyingglass", title: "No posts match",
+        detail: topic.map { "Nothing in \(store.topicDisplay($0).title) matches “\(search.trimmingCharacters(in: .whitespacesAndNewlines))”. Try other words or All." }
+          ?? "Nothing in \(community.rawValue) matches “\(search.trimmingCharacters(in: .whitespacesAndNewlines))”. Try other words.")
+        .accessibilityElement(children: .combine).accessibilityIdentifier("searchNoMatches")
+    } else {
+      ForEach(results) { post in
+        PostCard(post: post, onConversationCreated: { conversationID = $0 }, onRepost: { store.quoteRequest = $0 }, onTopicSelect: selectTopicFromPill)
+          .onAppear { prefetchMedia(after: post) }
+      }
+      if store.search.more {
+        PagingRow(loading: store.search.loadingMore, failed: store.search.moreFailed, page: store.search.cursor, identifier: "searchLoadMore") {
+          await store.loadMoreSearch()
+        }
+      }
+    }
+  }
+  /// Top: the window menu, then the window's posts by score with their next pages.
+  @ViewBuilder private var topContent: some View {
+    let entry = store.topFeedState(topKey), list = posts
+    topWindowMenu
+    if list.isEmpty && entry.showsLoading {
+      LoadingWordmark(size: 25).padding(.top, 24).accessibilityLabel("Loading top posts")
+    } else if list.isEmpty, let error = entry.error {
+      EmptyCard(icon: "wifi.exclamationmark", title: "Posts couldn’t load", detail: error)
+      Button("Retry") { Task { await store.loadTopFeed(topKey, reset: true) } }
+        .buttonStyle(.borderedProminent).tint(Palette.maroon).foregroundStyle(Palette.onAccent).accessibilityIdentifier("topRetry")
+    } else if list.isEmpty {
+      EmptyCard(icon: savedOnly ? "bookmark" : "arrow.up.circle", title: savedOnly ? "No saved posts" : search.isEmpty ? "No top posts yet" : "No matching posts",
+        detail: savedOnly ? "Save a post from its menu to keep it here." : store.topWindow == .all ? "Upvote the posts you like and they rise here." : "Nothing has been upvoted \(store.topWindow == .day ? "today" : "this week") yet. Try All time.")
+        .accessibilityElement(children: .combine).accessibilityIdentifier("topEmpty")
+    } else {
+      ForEach(list) { post in
+        PostCard(post: post, onConversationCreated: { conversationID = $0 }, onRepost: { store.quoteRequest = $0 }, onTopicSelect: selectTopicFromPill)
+          .onAppear { prefetchMedia(after: post) }
+      }
+      if entry.more {
+        PagingRow(loading: entry.loadingMore, failed: entry.moreFailed, page: entry.cursor, identifier: "topLoadMore") {
+          await store.loadMoreTop(topKey)
+        }
+      }
+    }
+  }
+  /// Today, This week or All time (This week by default).
+  private var topWindowMenu: some View {
+    HStack {
+      Menu {
+        ForEach(TopWindow.allCases) { window in
+          Button {
+            AppHaptics.shared.play(.selection)
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { store.selectTopWindow(window) }
+          } label: {
+            if window == store.topWindow { Label(window.title, systemImage: "checkmark") } else { Text(window.title) }
+          }.accessibilityIdentifier("topWindow-\(window.rawValue)")
+        }
+      } label: {
+        HStack(spacing: 6) {
+          Image(systemName: "arrow.up.circle").font(.subheadline.weight(.semibold))
+          Text("Top · \(store.topWindow.title)").font(.subheadline.weight(.semibold))
+          Image(systemName: "chevron.down").font(.caption.bold())
+        }.foregroundStyle(Palette.accentText).frame(minHeight: 44).contentShape(Rectangle())
+      }.accessibilityLabel("Top posts from").accessibilityValue(store.topWindow.title).accessibilityIdentifier("topWindowMenu")
+      Spacer(minLength: 0)
+    }.padding(.horizontal, 16)
+  }
+  /// The Saved filter searches its saved posts on the device, so no server search goes out (none
+  /// would be shown, and each counts toward the per-minute limit); turning it off searches again.
+  private func refreshSearch() {
+    if savedOnly { store.clearSearch() } else { store.updateSearch(search, community: community, topic: topic) }
   }
   private func chooseSort(_ value: String) {
-    guard value != sort, ["New", "Hot"].contains(value) else { return }
+    let sorts = store.feedSorts
+    guard value != sort, let next = sorts.firstIndex(of: value) else { return }
     // New opens at the top with the waiting posts in it.
     if value == "New" { store.showNewPosts(for: feedKey) }
-    sortMovesForward = value == "Hot"
+    // The page slides the way the segments run (New, Hot, Top).
+    sortMovesForward = next > (sorts.firstIndex(of: sort) ?? 0)
     AppHaptics.shared.play(.selection)
     withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.3)) { sort = value; resetChrome() }
   }
@@ -350,44 +462,8 @@ struct PostCard: View {
       else if let media = post.media { AttachmentPreview(media: media).postMedia(ratio: media.aspectRatio) }
       PostExtrasView(post: post)
       if let quote = post.quote, post.deleted != true { PostQuoteCard(quote: quote) }
-      (dynamicTypeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4)) : AnyLayout(HStackLayout(spacing: 8))) {
-        HStack(spacing: 12) {
-        if navigates {
-          NavigationLink { PostDetailView(id: post.id).appHapticOnOpen().toolbar(.visible, for: .navigationBar) } label: { Label("\(replyCount)", systemImage: "bubble.right").font(.subheadline.weight(.semibold)).frame(minWidth: 44, minHeight: 44) }.accessibilityLabel("\(replyCount) replies")
-        } else { Label("\(replyCount)", systemImage: "bubble.right").font(.subheadline.weight(.semibold)) }
-        Button { AppHaptics.shared.play(.impact); requestMessage = true } label: { Image(systemName: "envelope").font(.subheadline.weight(.semibold)).frame(width: 44, height: 44) }
-          .buttonStyle(ControlPressStyle()).foregroundStyle(Palette.accentText).accessibilityLabel("Message the author")
-          .accessibilityIdentifier("messageAuthor-\(post.id)")
-          .disabled(!post.acceptsDM || store.owns(post) || post.deleted == true)
-          .accessibilityHint(store.owns(post) ? "This is your post" : post.acceptsDM ? "Send an anonymous message request" : "This author is not accepting message requests")
-        Button { AppHaptics.shared.play(.impact); if let onRepost { onRepost(post.id) } else { quoteSheet = true } } label: {
-          Group {
-            if post.repostCount > 0 { Label("\(post.repostCount)", systemImage: "arrow.2.squarepath").labelStyle(.titleAndIcon) }
-            else { Image(systemName: "arrow.2.squarepath") }
-          }.font(.subheadline.weight(.semibold)).frame(minWidth: 44, minHeight: 44)
-        }.buttonStyle(ControlPressStyle()).foregroundStyle(Palette.accentText).disabled(post.deleted == true)
-          .accessibilityLabel(post.repostCount == 0 ? "Repost" : post.repostCount == 1 ? "Repost, 1 repost" : "Repost, \(post.repostCount) reposts").accessibilityIdentifier("repostPost-\(post.id)")
-          .accessibilityHint("Quote this post in a new post")
-        }
-        if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 0) }
-        HStack(spacing: 8) {
-        if dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 0) }
-        Button { AppHaptics.shared.play(.impact); store.toggleSave(post.id) } label: {
-          Image(systemName: post.saved ? "bookmark.fill" : "bookmark").font(.system(size: 18, weight: .semibold))
-            .foregroundStyle(Palette.accentText).frame(width: 44, height: 44)
-            .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
-        }.buttonStyle(ControlPressStyle()).accessibilityLabel(post.saved ? "Unsave post" : "Save post")
-          .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: post.saved)
-        HStack(spacing: 3) {
-          voteButton(1, symbol: "arrow.up", label: "Upvote")
-          Text("\(post.score)").font(.subheadline.bold()).monospacedDigit().foregroundStyle(Palette.ink)
-            .frame(minWidth: 20).contentTransition(reduceMotion ? .identity : .numericText(value: Double(post.score)))
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.25), value: post.score)
-            .accessibilityLabel("Score \(post.score)")
-          voteButton(-1, symbol: "arrow.down", label: "Downvote")
-        }
-        }
-      }.foregroundStyle(Palette.accentText)
+      actionRow
+        .foregroundStyle(Palette.accentText)
     }.padding(.horizontal, 16).padding(.vertical, 12).background(Palette.surface)
       .overlay(alignment: .bottom) { Divider() }
       .sheet(isPresented: $requestMessage) {
@@ -395,6 +471,57 @@ struct PostCard: View {
       }
       .sheet(isPresented: $quoteSheet) { QuotePostComposerSheet(post: post) }
       .modifier(PostReportDialog(post: $reporting))
+  }
+  /// Reply, message, repost and share on the leading side; save and the vote stepper on the trailing
+  /// side (`PostActionRowLayout` tightens the gaps, then wraps the trailing group).
+  private var actionRow: some View {
+    PostActionRowLayout(stacked: dynamicTypeSize.isAccessibilitySize) {
+      leadingActions
+      trailingActions
+    }
+  }
+  /// Each action is its own subview of the row layout, which spaces them.
+  @ViewBuilder private var leadingActions: some View {
+    if navigates {
+      NavigationLink { PostDetailView(id: post.id).appHapticOnOpen().toolbar(.visible, for: .navigationBar) } label: { Label("\(replyCount)", systemImage: "bubble.right").font(.subheadline.weight(.semibold)).frame(minWidth: 44, minHeight: 44) }.accessibilityLabel("\(replyCount) replies")
+    } else { Label("\(replyCount)", systemImage: "bubble.right").font(.subheadline.weight(.semibold)) }
+    Button { AppHaptics.shared.play(.impact); requestMessage = true } label: { Image(systemName: "envelope").font(.subheadline.weight(.semibold)).frame(width: 44, height: 44) }
+      .buttonStyle(ControlPressStyle()).foregroundStyle(Palette.accentText).accessibilityLabel("Message the author")
+      .accessibilityIdentifier("messageAuthor-\(post.id)")
+      .disabled(!post.acceptsDM || store.owns(post) || post.deleted == true)
+      .accessibilityHint(store.owns(post) ? "This is your post" : post.acceptsDM ? "Send an anonymous message request" : "This author is not accepting message requests")
+    Button { AppHaptics.shared.play(.impact); if let onRepost { onRepost(post.id) } else { quoteSheet = true } } label: {
+      Group {
+        if post.repostCount > 0 { Label("\(post.repostCount)", systemImage: "arrow.2.squarepath").labelStyle(.titleAndIcon) }
+        else { Image(systemName: "arrow.2.squarepath") }
+      }.font(.subheadline.weight(.semibold)).frame(minWidth: 44, minHeight: 44)
+    }.buttonStyle(ControlPressStyle()).foregroundStyle(Palette.accentText).disabled(post.deleted == true)
+      .accessibilityLabel(post.repostCount == 0 ? "Repost" : post.repostCount == 1 ? "Repost, 1 repost" : "Repost, \(post.repostCount) reposts").accessibilityIdentifier("repostPost-\(post.id)")
+      .accessibilityHint("Quote this post in a new post")
+    // Only the link and one line: never the post's words, author or alias.
+    ShareLink(item: PostLinks.shareURL(for: post.id), message: Text(PostLinks.shareLine),
+      preview: SharePreview(PostLinks.shareLine, icon: PostLinks.shareIcon)) {
+      Image(systemName: "square.and.arrow.up").font(.subheadline.weight(.semibold)).frame(width: 44, height: 44)
+    }.buttonStyle(ControlPressStyle()).foregroundStyle(Palette.accentText).disabled(post.deleted == true)
+      .accessibilityLabel("Share").accessibilityHint("Shares a link to this post").accessibilityIdentifier("sharePost-\(post.id)")
+  }
+  private var trailingActions: some View {
+    HStack(spacing: 8) {
+      Button { AppHaptics.shared.play(.impact); store.toggleSave(post.id) } label: {
+        Image(systemName: post.saved ? "bookmark.fill" : "bookmark").font(.system(size: 18, weight: .semibold))
+          .foregroundStyle(Palette.accentText).frame(width: 44, height: 44)
+          .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
+      }.buttonStyle(ControlPressStyle()).accessibilityLabel(post.saved ? "Unsave post" : "Save post")
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: post.saved)
+      HStack(spacing: 3) {
+        voteButton(1, symbol: "arrow.up", label: "Upvote")
+        Text("\(post.score)").font(.subheadline.bold()).monospacedDigit().foregroundStyle(Palette.ink)
+          .frame(minWidth: 20).contentTransition(reduceMotion ? .identity : .numericText(value: Double(post.score)))
+          .animation(reduceMotion ? nil : .easeOut(duration: 0.25), value: post.score)
+          .accessibilityLabel("Score \(post.score)")
+        voteButton(-1, symbol: "arrow.down", label: "Downvote")
+      }
+    }
   }
   /// `Avatar · name · 3h  🏈 Sports … ⋯`. The pill adds no height (the options menu already makes the
   /// row 44 pt); when it does not fit, and always at accessibility sizes, it drops to its own row.
@@ -479,6 +606,76 @@ private struct FeedPageSlide: AnimatableModifier {
   var animatableData: CGFloat { get { distance } set { distance = newValue } }
   func body(content: Content) -> some View {
     content.offset(x: distance * (forward ? 1 : -1) * (entering ? 1 : -1))
+  }
+}
+/// A post's action row: the leading actions (every subview but the last) and the trailing group
+/// (the last). On one line the leading gaps shrink from 12 pt toward 0 (each action keeps its 44 pt
+/// target) before the trailing group drops to a second line, aligned to the trailing edge, as it
+/// always does at accessibility sizes. Decided from ideal sizes, so equal cards lay out alike.
+struct PostActionRowLayout: Layout {
+  var stacked = false
+  var maximumGap: CGFloat = 12
+  var spacing: CGFloat = 8
+  var lineSpacing: CGFloat = 4
+  private struct Measure { var items: [CGSize]; var trailing: CGSize; var leadingWidth: CGFloat; var gaps: CGFloat }
+  private func measure(_ subviews: Subviews) -> Measure? {
+    guard subviews.count >= 2 else { return nil }
+    let items = subviews.dropLast().map { $0.sizeThatFits(.unspecified) }
+    return Measure(items: items, trailing: subviews[subviews.count - 1].sizeThatFits(.unspecified),
+      leadingWidth: items.reduce(0) { $0 + $1.width }, gaps: CGFloat(max(0, items.count - 1)))
+  }
+  /// The leading gap that fits one line, or nil when even no gap does not.
+  private func gap(_ m: Measure, width: CGFloat) -> CGFloat? {
+    guard !stacked else { return nil }
+    let room = width - m.trailing.width - spacing - m.leadingWidth
+    guard room >= -0.5 else { return nil }
+    return m.gaps == 0 ? 0 : min(maximumGap, max(0, room) / m.gaps)
+  }
+  private func leadingHeight(_ m: Measure) -> CGFloat { m.items.map(\.height).max() ?? 0 }
+  func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+    guard let m = measure(subviews) else { return .zero }
+    let ideal = m.leadingWidth + m.gaps * maximumGap + spacing + m.trailing.width
+    let width = proposal.width.map { $0.isFinite ? $0 : ideal } ?? ideal
+    if gap(m, width: width) != nil { return CGSize(width: width, height: max(leadingHeight(m), m.trailing.height)) }
+    return CGSize(width: width, height: leadingHeight(m) + lineSpacing + m.trailing.height)
+  }
+  func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+    guard let m = measure(subviews) else { return }
+    let oneLine = gap(m, width: bounds.width)
+    let rowHeight = oneLine == nil ? leadingHeight(m) : max(leadingHeight(m), m.trailing.height)
+    let step = oneLine ?? min(maximumGap, max(0, (bounds.width - m.leadingWidth) / max(1, m.gaps)))
+    var x = bounds.minX
+    for (index, size) in m.items.enumerated() {
+      subviews[index].place(at: CGPoint(x: x, y: bounds.minY + (rowHeight - size.height) / 2), proposal: ProposedViewSize(size))
+      x += size.width + step
+    }
+    let trailing = subviews[subviews.count - 1]
+    if oneLine != nil {
+      trailing.place(at: CGPoint(x: bounds.maxX - m.trailing.width, y: bounds.minY + (rowHeight - m.trailing.height) / 2), proposal: ProposedViewSize(m.trailing))
+    } else {
+      let width = min(m.trailing.width, bounds.width)
+      trailing.place(at: CGPoint(x: bounds.maxX - width, y: bounds.minY + rowHeight + lineSpacing), proposal: ProposedViewSize(width: width, height: m.trailing.height))
+    }
+  }
+}
+/// The end of search results or a Top list: appearing (or a new cursor while it stays visible) asks
+/// for the next page; a failed page offers "Load more posts".
+private struct PagingRow: View {
+  let loading: Bool
+  let failed: Bool
+  /// The cursor of the page it asks for.
+  let page: JSONValue?
+  let identifier: String
+  let load: () async -> Void
+  var body: some View {
+    Group {
+      if failed && !loading {
+        Button("Load more posts") { Task { await load() } }.font(.subheadline.bold()).frame(minHeight: 44)
+      } else {
+        ProgressView().controlSize(.small).accessibilityLabel("Loading more posts")
+      }
+    }.frame(maxWidth: .infinity, minHeight: 56).accessibilityIdentifier(identifier)
+      .task(id: page) { if !failed { await load() } }
   }
 }
 /// Bottom sentinel: appearing (or a new cursor while it stays visible) asks for the next page.

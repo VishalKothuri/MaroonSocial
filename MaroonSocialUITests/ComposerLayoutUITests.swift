@@ -197,6 +197,11 @@ import XCTest
     let tagsField = app.textFields["postTags"]; XCTAssertTrue(tagsField.waitForExistence(timeout: 3)); tagsField.typeText("finals study_group")
     _ = waitForKeyboard(app); settle()
     XCTAssertTrue(tagsField.isHittable, "The focused field stays in view")
+    // Its helper line is revealed with it, never left half under the pinned tool row.
+    let help = app.staticTexts["postTagsHelp"]; XCTAssertTrue(help.exists)
+    let reason = app.descendants(matching: .any)["postTopicReason"]
+    let footerTop = min(app.buttons["publishPost"].frame.minY, reason.exists ? reason.frame.minY : .greatestFiniteMagnitude)
+    XCTAssertLessThanOrEqual(help.frame.maxY, footerTop - 4, "The hashtag helper line sits fully above the tool row")
     XCTAssertFalse(app.scrollViews["postOptions"].exists)
     assertSendInReach(app, app.keyboards.firstMatch)
   }

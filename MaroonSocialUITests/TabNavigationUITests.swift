@@ -36,7 +36,12 @@ import XCTest
     assertTab("Community", in: app); XCTAssertTrue(app.buttons["New"].isSelected)
     swipe(app, left: true)
     assertTab("Community", in: app); XCTAssertTrue(app.buttons["Hot"].isSelected)
+    // Fixture mode answers `feed.top`, so the swipe continues to Top and stops there.
     swipe(app, left: true)
+    assertTab("Community", in: app); XCTAssertTrue(app.buttons["feedSort-top"].isSelected)
+    swipe(app, left: true)
+    assertTab("Community", in: app); XCTAssertTrue(app.buttons["feedSort-top"].isSelected)
+    swipe(app, left: false)
     assertTab("Community", in: app); XCTAssertTrue(app.buttons["Hot"].isSelected)
     swipe(app, left: false)
     assertTab("Community", in: app); XCTAssertTrue(app.buttons["New"].isSelected)

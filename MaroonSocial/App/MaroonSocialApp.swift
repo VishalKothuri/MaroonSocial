@@ -75,6 +75,12 @@ struct RootView: View {
       }
     }.background(Palette.paper.ignoresSafeArea())
       .routePushNotifications()
+      // Post links: the custom scheme, and share links handed over as universal links once the
+      // Associated Domains entitlement exists. Signed out, the post waits until sign-in.
+      .onOpenURL { store.openLink($0) }
+      .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
+        if let url = activity.webpageURL { store.openLink(url) }
+      }
       .sheet(isPresented: Binding(get: { showActiveTag && FeatureAvailability.isCampusTagAvailable() }, set: { showActiveTag = $0 })) { NavigationStack { TagView().toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { showActiveTag = false } } } } }
       .sheet(isPresented: $recoverLogin) { NavigationStack { EmailLoginView(linkExisting: store.social.hasDeviceCredential).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { recoverLogin = false }.disabled(store.auth.busy || store.busy) } } } }
       .task(id: shouldConnect) { if shouldConnect { await store.runUpdates() } }

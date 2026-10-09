@@ -251,7 +251,7 @@ struct InlinePostComposer: View {
     withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { scrollPosition.scrollTo(y: max(0, top + delta)) }
   }
   /// Records where a field sits in the scroll content.
-  private func tracksFrame(of field: Field) -> FrameTracker { FrameTracker(space: Self.contentSpace) { fieldFrames[field] = $0 } }
+  private func tracksFrame(of field: Field?) -> FrameTracker { FrameTracker(space: Self.contentSpace) { if let field { fieldFrames[field] = $0 } } }
 
   // MARK: Card
 
@@ -332,7 +332,8 @@ struct InlinePostComposer: View {
     }.buttonStyle(.plain).accessibilityLabel("Close composer").accessibilityIdentifier("closePostComposer")
   }
   /// A field on the maroon card: darker translucent fill, light text, readable placeholder.
-  private func cardField(_ title: String, text: Binding<String>, field: Field, id: String) -> some View {
+  /// `tracked: false` leaves the frame to the caller (a field with a helper line below it reports both).
+  private func cardField(_ title: String, text: Binding<String>, field: Field, id: String, tracked: Bool = true) -> some View {
     TextField(title, text: text, prompt: Text(title).foregroundStyle(Palette.onAccent.opacity(0.72)))
       .focused($focused, equals: field).accessibilityIdentifier(id)
       .foregroundStyle(Palette.onAccent)
@@ -344,7 +345,7 @@ struct InlinePostComposer: View {
           .contentShape(RoundedRectangle(cornerRadius: 10))
           .onTapGesture { focused = field }
       }
-      .modifier(tracksFrame(of: field))
+      .modifier(tracksFrame(of: tracked ? field : nil))
   }
   private var linkField: some View {
     cardField("Link (example.com)", text: $features.link, field: .link, id: "postLink")
@@ -353,12 +354,15 @@ struct InlinePostComposer: View {
   }
   private var tagsField: some View {
     VStack(alignment: .leading, spacing: 4) {
-      cardField(store.topicsAvailable ? "#hashtags" : "Tags", text: $features.tagsText, field: .tags, id: "postTags")
+      cardField(store.topicsAvailable ? "#hashtags" : "Tags", text: $features.tagsText, field: .tags, id: "postTags", tracked: false)
         .textInputAutocapitalization(.never).autocorrectionDisabled()
         .accessibilityLabel(store.topicsAvailable ? "Post hashtags" : "Post tags")
       Text(store.topicsAvailable ? "Up to 5 hashtags, separated by spaces or commas." : "Up to 5 tags, separated by spaces or commas.")
-        .font(.caption).foregroundStyle(Palette.onAccent.opacity(0.8))
+        .font(.caption).foregroundStyle(Palette.onAccent.opacity(0.8)).accessibilityIdentifier("postTagsHelp")
     }
+    // The field and its helper line are revealed together, so the line is never left half under
+    // the pinned tool row while the keyboard is up.
+    .modifier(tracksFrame(of: .tags))
   }
   private var pollChoices: some View {
     VStack(alignment: .leading, spacing: 6) {

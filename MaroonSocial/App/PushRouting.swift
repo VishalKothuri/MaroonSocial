@@ -31,6 +31,11 @@ private struct PushRouting: ViewModifier {
     let owner: String
     let identityRevision: Int
   }
+  /// A post link waits for a signed-in, connected, active app; then it opens like a post notification.
+  private struct LinkReadiness: Equatable {
+    let link: String?
+    let ready: Bool
+  }
 
   func body(content: Content) -> some View {
     content
@@ -75,6 +80,11 @@ private struct PushRouting: ViewModifier {
           service.destination = nil
           store.notice = error.localizedDescription
         }
+      }
+      .task(id: LinkReadiness(link: store.pendingPostLink, ready: store.connected && store.state.onboarded && scenePhase == .active)) {
+        guard let postID = store.pendingPostLink, store.connected, store.state.onboarded, scenePhase == .active else { return }
+        store.pendingPostLink = nil
+        presentation = PushRoutePresentation(target: .post(postID))
       }
       .sheet(item: $presentation) { route in
         NavigationStack {

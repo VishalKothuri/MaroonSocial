@@ -97,14 +97,14 @@ import XCTest
     let search = app.textFields["postSearch"]
     XCTAssertTrue(search.waitForExistence(timeout: 3))
     search.tap(); search.typeText("ZZZRESTOREDHEADER")
-    XCTAssertTrue(app.staticTexts["No matching posts"].waitForExistence(timeout: 3))
+    XCTAssertTrue(app.descendants(matching: .any)["searchNoMatches"].waitForExistence(timeout: 5))
     XCTAssertEqual(search.value as? String, "ZZZRESTOREDHEADER")
     // Changing a query after scrolling restored results must also release the
     // old lazy row positions, without requiring the search row to reopen.
     app.buttons["Clear search"].tap()
     feed.swipeUp(velocity: .slow)
     search.tap(); search.typeText("ZZZSCROLLEDRESULTS")
-    XCTAssertTrue(app.staticTexts["No matching posts"].waitForExistence(timeout: 3))
+    XCTAssertTrue(app.descendants(matching: .any)["searchNoMatches"].waitForExistence(timeout: 5))
     XCTAssertEqual(search.value as? String, "ZZZSCROLLEDRESULTS")
   }
   func testPullRefreshRetainsFeedComposerAndRootNavigation() {

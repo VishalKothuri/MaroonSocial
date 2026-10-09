@@ -28,9 +28,10 @@ import XCTest
     XCTAssertFalse(sentinel.exists, "No loading row once the feed has ended")
     let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Feed end after the second page"; shot.lifetime = .keepAlways; add(shot)
   }
-  /// Search filters the loaded pages; "Search older posts" (`feedLoadOlder`) reaches the next page on request.
+  /// A server without `posts.search`: search filters the loaded pages; "Search older posts"
+  /// (`feedLoadOlder`) reaches the next page on request.
   func testSearchReachesOlderPagesOnRequest() {
-    let app = XCUIApplication(); app.launchArguments = ["--uitesting", "--uitesting-feed-pages"]; app.launch()
+    let app = XCUIApplication(); app.launchArguments = ["--uitesting", "--uitesting-feed-pages", "--uitesting-no-search-top"]; app.launch()
     let username = app.textFields["username"]; XCTAssertTrue(username.waitForExistence(timeout: 10))
     username.tap(); username.typeText("paging_search"); app.switches["adultToggle"].tap(); app.buttons["enterPreview"].tap()
     XCTAssertTrue(app.buttons["Create post"].waitForExistence(timeout: 5))

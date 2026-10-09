@@ -347,6 +347,8 @@ extension View {
 struct CommunitySortSwipeNavigation: UIViewRepresentable {
   @Binding var selection: String
   let enabled: Bool
+  /// The sorts the swipe moves between, in order.
+  var options = ["New", "Hot"]
   /// Names the feed page on screen. A new page is a new scroll view, so a change re-attaches once
   /// the outgoing page has left (it slides or fades out first).
   var page = ""
@@ -359,6 +361,7 @@ struct CommunitySortSwipeNavigation: UIViewRepresentable {
   }
   func updateUIView(_ probe: Probe, context: Context) {
     context.coordinator.selection = selection
+    context.coordinator.options = options
     context.coordinator.enabled = enabled
     context.coordinator.select = { selection = $0 }
     context.coordinator.attach(from: probe)
@@ -379,6 +382,7 @@ struct CommunitySortSwipeNavigation: UIViewRepresentable {
   }
   @MainActor final class Coordinator: NSObject, UIGestureRecognizerDelegate {
     var selection = "New"
+    var options = ["New", "Hot"]
     var enabled = true
     var page = ""
     var select: ((String) -> Void)?
@@ -450,7 +454,7 @@ struct CommunitySortSwipeNavigation: UIViewRepresentable {
     }
     @objc private func panned(_ gesture: UIPanGestureRecognizer) {
       guard gesture.state == .ended, available, let scroll,
-        let next = CommunitySortSwipeIntent.destination(selection: selection, width: scroll.bounds.width,
+        let next = CommunitySortSwipeIntent.destination(selection: selection, options: options, width: scroll.bounds.width,
           translation: gesture.translation(in: scroll), velocity: gesture.velocity(in: scroll)) else { return }
       select?(next)
     }
@@ -458,9 +462,10 @@ struct CommunitySortSwipeNavigation: UIViewRepresentable {
 }
 
 enum CommunitySortSwipeIntent {
-  static func destination(selection: String, width: CGFloat, translation: CGPoint, velocity: CGPoint) -> String? {
-    guard let current = ["New", "Hot"].firstIndex(of: selection),
-      let destination = TabSwipeIntent.destination(current: current, count: 2, width: width, translation: translation, velocity: velocity) else { return nil }
-    return ["New", "Hot"][destination]
+  /// The sort a sideways swipe moves to: New ↔ Hot, and Hot ↔ Top while the server offers Top.
+  static func destination(selection: String, options: [String] = ["New", "Hot"], width: CGFloat, translation: CGPoint, velocity: CGPoint) -> String? {
+    guard let current = options.firstIndex(of: selection),
+      let destination = TabSwipeIntent.destination(current: current, count: options.count, width: width, translation: translation, velocity: velocity) else { return nil }
+    return options[destination]
   }
 }

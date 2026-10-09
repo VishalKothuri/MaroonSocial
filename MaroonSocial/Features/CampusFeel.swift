@@ -157,6 +157,7 @@ struct TopicSheet: View {
   let topics: [Topic]
   @Binding var selection: String?
   @Binding var sort: String
+  var sortOptions = ["New", "Hot"]
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
   /// The sort rows' icon column grows with the text, so large symbols stay inside the card.
   @ScaledMetric(relativeTo: .body) private var iconColumn: CGFloat = 24
@@ -170,6 +171,10 @@ struct TopicSheet: View {
               sortRow("New", symbol: "clock", detail: "Newest first")
               Divider().padding(.leading, iconColumn + 24)
               sortRow("Hot", symbol: "flame", detail: "Most upvoted lately")
+              if sortOptions.contains("Top") {
+                Divider().padding(.leading, iconColumn + 24)
+                sortRow("Top", symbol: "arrow.up.circle", detail: "Highest score today, this week or all time")
+              }
             }.background(Palette.surface, in: RoundedRectangle(cornerRadius: 14))
           }
           VStack(alignment: .leading, spacing: 10) {

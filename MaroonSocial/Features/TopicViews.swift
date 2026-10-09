@@ -18,8 +18,10 @@ struct TopicTabStrip: View {
   var onReselect: () -> Void
   /// Every active topic (with counts) for the topic sheet; the shown and folded tabs when empty.
   var allTopics: [Topic] = []
-  /// The feed's New/Hot, which the topic sheet also sets.
+  /// The feed's New/Hot (and Top), which the topic sheet also sets.
   var sort: Binding<String> = .constant("New")
+  /// The sorts the sheet lists (Top only while the server offers it).
+  var sortOptions = ["New", "Hot"]
   @State private var sheet = false
   @Namespace private var underline
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -113,7 +115,7 @@ struct TopicTabStrip: View {
     .accessibilityLabel("More topics").accessibilityHint("Shows the sort and every topic")
     .accessibilityIdentifier("topicTab-more")
     .sheet(isPresented: $sheet) {
-      TopicSheet(topics: allTopics.isEmpty ? TopicCatalog.active(topics + more) : allTopics, selection: $selection, sort: sort)
+      TopicSheet(topics: allTopics.isEmpty ? TopicCatalog.active(topics + more) : allTopics, selection: $selection, sort: sort, sortOptions: sortOptions)
     }
   }
 }

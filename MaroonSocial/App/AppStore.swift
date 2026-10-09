@@ -33,6 +33,9 @@ struct LocalState: Codable {
   /// The last catalog `topics.list` returned (active topics, in order). It makes topics available
   /// at launch while the catalog refreshes; a server that answers without topics clears it.
   var topicCatalog: [Topic]? = nil
+  /// The server answered `feed.top` (the Top sort shows at launch while it is probed again);
+  /// false or nil keeps today's New/Hot.
+  var topSupported: Bool? = nil
 }
 
 /// One feed the home screen can show: a community, and a topic or nil for All.
@@ -180,6 +183,25 @@ struct FeedKeyState: Equatable {
   private(set) var feedAtTop = true
   /// `--uitesting-feed-delta`: fixture mode delivers one simulated delta once the feed leaves its top.
   private var fixtureDeltaPending = false
+  /// Server search (`posts.search`): nil until the first answer, false on a server without it
+  /// (the search field then filters the loaded posts, as before).
+  var searchSupported: Bool?
+  /// The Community search field's server results.
+  var search = PostSearchState()
+  var searchTask: Task<Void, Never>?
+  var searchGeneration = 0
+  /// Top sort pages per community, topic and window (in memory only).
+  var topFeeds: [TopFeedKey: TopFeedState] = [:]
+  var topWindow: TopWindow = .week
+  /// When `feed.top` is next probed (once per launch, again after a network failure).
+  var topProbeAt = Date.distantPast
+  var topProbed = false
+  /// Re-reads of the posts only search and Top hold (`refreshDiscoveryPosts`).
+  var discoveryRefreshRunning = false
+  var lastDiscoveryRefresh = Date.distantPast
+  /// A post link (share link or `maroonsocial://post/<id>`) waiting to open; it stays queued until
+  /// the member is signed in.
+  var pendingPostLink: String?
   private let file: URL
   static func storageFileURL(arguments: [String], directory: URL = .documentsDirectory) -> URL {
     let testing = arguments.contains("--uitesting") || arguments.contains("--uitesting-preserve")
@@ -224,6 +246,13 @@ struct FeedKeyState: Equatable {
       let unaccepted = arguments.contains(Self.guidelinesUnacceptedArgument)
       guidelines = GuidelinesStatus(required: GuidelinesVersion, accepted: unaccepted ? nil : GuidelinesVersion, acceptedAt: unaccepted ? nil : .now)
       fixtureDeltaPending = arguments.contains(Self.feedDeltaArgument)
+      // Fixture mode answers search and Top like a current server, unless a journey asks for an old one.
+      let oldServer = arguments.contains(Self.noSearchTopArgument)
+      searchSupported = oldServer ? false : true
+      state.topSupported = oldServer ? nil : true
+      if let index = arguments.firstIndex(of: Self.deepLinkArgument), index + 1 < arguments.count, let url = URL(string: arguments[index + 1]) {
+        openLink(url)
+      }
       if arguments.contains(Self.gameDayArgument) { campus.fixtureEvents = [Self.fixtureGameDayEvent] }
       organizations = [OrganizationAccessFixture.managedOrganization, OrganizationAccessFixture.invitingOrganization]
       conversationMeta = Self.fixtureConversationMeta.filter { id, _ in state.conversations.contains { $0.id == id } }
@@ -339,11 +368,11 @@ struct FeedKeyState: Equatable {
         text: "Unofficial campus rule: getting coffee counts as being productive.", score: 86,
         acceptsDM: true),
       Post(
-        author: "demo-chem",
+        id: Self.fixtureLinkedPostID, author: "demo-chem",
         text: "CHEM 107 people: study room, whiteboard, and a very unreasonable amount of snacks?",
         score: 42, acceptsDM: true),
       Post(
-        author: "demo-night", community: .nsfw,
+        id: Self.fixtureAdultPostID, author: "demo-night", community: .nsfw,
         text: "How do you set boundaries with a roommate without making it weird?", score: 18),
     ]
     state.posts[1].repostCount = 1
@@ -409,6 +438,14 @@ struct FeedKeyState: Equatable {
   static let guidelinesUnacceptedArgument = "--guidelines-unaccepted"
   /// Fixture mode simulates one feed delta (two new posts) once the feed leaves its top.
   static let feedDeltaArgument = "--uitesting-feed-delta"
+  /// Seeded posts with real post ids, so share links and deep links resolve in fixture mode: a
+  /// campus post, and an NSFW post a member who has not joined that community can't open.
+  static let fixtureLinkedPostID = "6b1d3f0e-8c2a-4e57-9a41-2f6c7d8e9a10"
+  static let fixtureAdultPostID = "c4e2a9b7-1f3d-4c68-8e5a-7b9d0f1a2c3e"
+  /// Fixture mode behaves like a server without `posts.search` and `feed.top`.
+  static let noSearchTopArgument = "--uitesting-no-search-top"
+  /// `--uitesting-deep-link <url>`: fixture mode opens this link at launch, as `onOpenURL` would.
+  static let deepLinkArgument = "--uitesting-deep-link"
   /// Fixture mode has a live Sports event, so Sports posts link to its game-day chat.
   static let gameDayArgument = "--uitesting-game-day"
   /// Anonymous replies as the server projects them: OP keeps "OP" and everyone else an alias that is
@@ -704,7 +741,7 @@ extension AppStore {
       await PushService.shared.configure(social: social)
     }
     await courseTerms.refresh()
-    if connected { await refreshTopics() }
+    if connected { await refreshTopics(); await probeTopSort() }
     // Pokes for the inbox and open rooms while the app is active; inert in fixture mode. Until the
     // member channel joins (or after 10 s without a socket) open rooms keep their 3 s polling.
     let pokes = Task { await realtime.run() }
@@ -720,8 +757,11 @@ extension AppStore {
       // A snapshot a poke asked for, which a mutation or another refresh held up, runs now.
       if snapshotRequested || !incrementalSync || feedIDsCommunity != feedCommunity || Date.now.timeIntervalSince(lastSnapshot) >= Self.reconciliationInterval { await refresh() }
       else if tab == 0 { await syncFeedDelta() }
+      // Search results and Top posts outside the feed reconcile as often as the snapshot does.
+      if tab == 0 && Date.now.timeIntervalSince(lastDiscoveryRefresh) >= Self.reconciliationInterval { await refreshDiscoveryPosts() }
       if connected && connectionError == nil { await flushOutbox() }
       if connected && Date.now >= topicsRetryAt { await refreshTopics() }
+      if connected && !topProbed && Date.now >= topProbeAt { await probeTopSort() }
       if fixtureMode { deliverFixtureDeltaIfDue() }
       courseTerms.advanceClock()
       if Date.now.timeIntervalSince(calendarRefresh) >= 300 { await courseTerms.refresh(); calendarRefresh = .now }
@@ -846,8 +886,10 @@ extension AppStore {
         else { result.append(post) }
       }
     }
-    // Topic feeds keep their posts in the canonical list (in memory; only All is persisted).
-    let topicIDs = topicFeeds.values.reduce(into: Set<String>()) { $0.formUnion($1.ids) }
+    // Topic feeds, search results and Top pages keep their posts in the canonical list (in memory;
+    // only All is persisted).
+    var topicIDs = topicFeeds.values.reduce(into: Set<String>()) { $0.formUnion($1.ids) }
+    topicIDs.formUnion(discoveryPostIDs)
     if !topicIDs.isEmpty {
       let present = Set(result.map(\.id))
       result.append(contentsOf: state.posts.filter { topicIDs.contains($0.id) && !present.contains($0.id) })
@@ -999,8 +1041,12 @@ extension AppStore {
   }
   @discardableResult func mutate(_ action: String, _ payload: [String: Any] = [:]) async -> Bool {
     guard await perform(action, payload) != nil else { return false }
-    // The snapshot only carries the first page; a delta brings the changed older post too.
-    if Self.postMutations.contains(action) { await syncFeedDelta() }
+    // A deleted, reported or blocked post leaves search results and Top at once.
+    if ["post.delete", "block"].contains(action), let id = payload["post_id"] as? String { removeFromDiscovery([id]) }
+    if action == "report", payload["target_type"] as? String == "post", let id = payload["target_id"] as? String { removeFromDiscovery([id]) }
+    // The snapshot only carries the first page; a delta brings the changed older post too. Posts
+    // only search or Top holds are read again (no delta covers them).
+    if Self.postMutations.contains(action) { await syncFeedDelta(); await refreshDiscoveryPosts() }
     return true
   }
   static let postMutations: Set<String> = ["post.vote", "post.save", "post.delete", "post.attach", "poll.vote", "comment.create", "comment.delete", "comment.vote", "report", "block"]
@@ -1038,6 +1084,7 @@ extension AppStore {
     }
   }
   /// The held feed posts deltas cover: the 300 newest.
+  func deltaCoveredFeedIDs() -> [String] { heldFeedIDs() }
   private func heldFeedIDs() -> [String] {
     guard let ids = feedPostIDs else { return [] }
     return state.posts.filter { ids.contains($0.id) }.sorted { $0.created > $1.created }.prefix(300).map(\.id)
@@ -1084,6 +1131,7 @@ extension AppStore {
       for key in libraryPages.keys { libraryPages[key]?.posts.removeAll { removed.contains($0.id) } }
       // Gone from All (deleted, hidden, blocked or moved): gone from every topic of the community too.
       for key in topicFeeds.keys where key.community == feedCommunity { topicFeeds[key]?.ids.subtract(removed) }
+      removeFromDiscovery(removed)
     }
     placeInTopicFeeds(delta.changed.filter { !removed.contains($0.id) })
     state.posts = mergeActivePostSources(feed: feed)
@@ -1412,6 +1460,7 @@ extension AppStore {
     guidelines = fixtureMode ? GuidelinesStatus(required: GuidelinesVersion, accepted: GuidelinesVersion, acceptedAt: .now) : nil
     guidelinesAcceptedHere = nil; guidelinesRefusal = nil; gatedSends = 0
     newPostIDs = [:]; feedAtTop = true
+    resetDiscovery()
     save()
   }
   func owns(_ post: Post) -> Bool { fixtureMode ? post.author == state.username : ownPostIDs.contains(post.id) }

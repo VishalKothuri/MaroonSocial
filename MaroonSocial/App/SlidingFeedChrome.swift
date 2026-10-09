@@ -308,8 +308,37 @@ extension View {
     }
   }
 
+  /// UIKit calls the probes' appearance methods and the navigation delegate from inside its own
+  /// transition setup: while the navigation controller lays itself out and adds the incoming screen
+  /// to the window. Committing the bar there forces a layout of the tab controller, and SwiftUI then
+  /// updates a hosting view that is only half moved into its window; its environment read traps
+  /// (EXC_BREAKPOINT in EnvironmentValues' getter). So every entry point only records the moment
+  /// (the navigation and tab controllers, read from parent pointers only, since a popped screen
+  /// leaves its navigation controller before the next turn) and does its work on the next
+  /// main-queue turn, asking the navigation controller for the transition coordinator again then.
+  /// The push or pop is still running, so its coordinator still carries the slide. A coordinator is
+  /// never kept across turns: once its transition ends it points at a freed context.
+  private func onNextTurn(_ work: @escaping @MainActor (NavigationTabBarMotion) -> Void) {
+    DispatchQueue.main.async { [weak self] in
+      guard let self else { return }
+      work(self)
+    }
+  }
+
   /// Delegate-driven entry: `shown` is the controller the stack is moving to.
-  func navigationWillShow(_ navigation: UINavigationController, shown: UIViewController, coordinator: (any UIViewControllerTransitionCoordinator)?) {
+  func navigationWillShow(_ navigation: UINavigationController, shown: UIViewController, coordinator _: (any UIViewControllerTransitionCoordinator)?) {
+    onNextTurn { [weak navigation, weak shown] motion in
+      guard let navigation, let shown else { return }
+      motion.stackWillShow(navigation, shown: shown, coordinator: navigation.transitionCoordinator)
+    }
+  }
+  func navigationDidShow(_ navigation: UINavigationController, shown: UIViewController) {
+    onNextTurn { [weak navigation, weak shown] motion in
+      guard let navigation, let shown else { return }
+      motion.stackDidShow(navigation, shown: shown)
+    }
+  }
+  private func stackWillShow(_ navigation: UINavigationController, shown: UIViewController, coordinator: (any UIViewControllerTransitionCoordinator)?) {
     guard let tabs = Self.tabBarController(above: navigation), tabs.view.window != nil else { return }
     let hidden = wantsHidden(stack: navigation.viewControllers, top: shown)
     let departing = coordinator?.viewController(forKey: .from)
@@ -317,7 +346,7 @@ extension View {
     if tabs.isTabBarHidden == hidden { return }
     apply(hidden: hidden, in: tabs, coordinator: coordinator, arriving: shown, departing: departing)
   }
-  func navigationDidShow(_ navigation: UINavigationController, shown: UIViewController) {
+  private func stackDidShow(_ navigation: UINavigationController, shown: UIViewController) {
     guard let tabs = Self.tabBarController(above: navigation), tabs.view.window != nil else { return }
     let hidden = wantsHidden(stack: navigation.viewControllers, top: shown)
     if !hidden, !tabs.isTabBarHidden, motionView == nil { refreshCachedPicture(in: tabs) }
@@ -333,15 +362,24 @@ extension View {
   func unregister(_ probe: UIViewController) { probes.remove(probe) }
 
   /// A pushed screen is about to appear or disappear: decide the destination
-  /// state now, while the transition coordinator can still carry the slide.
-  func screenWillChange(_ probe: UIViewController) { evaluate(from: probe, settling: false) }
+  /// state on the next turn, while the transition coordinator can still carry the slide.
+  func screenWillChange(_ probe: UIViewController) {
+    let tabs = Self.tabBarController(above: probe), navigation = Self.navigation(above: probe)
+    onNextTurn { [weak tabs, weak navigation] motion in
+      guard let tabs else { return }
+      // A navigation controller answers with its own transition, else its tab controller's.
+      motion.evaluate(in: tabs, coordinator: (navigation ?? tabs).transitionCoordinator, settling: false)
+    }
+  }
   /// The transition has ended. Reconcile without motion in case the slide
   /// could not be queued, so a pushed screen never keeps a visible bar.
-  func screenDidChange(_ probe: UIViewController) { evaluate(from: probe, settling: true) }
+  func screenDidChange(_ probe: UIViewController) {
+    let tabs = Self.tabBarController(above: probe)
+    onNextTurn { [weak tabs] motion in if let tabs { motion.evaluate(in: tabs, coordinator: nil, settling: true) } }
+  }
 
-  private func evaluate(from probe: UIViewController, settling: Bool) {
-    guard !applying, let tabs = Self.tabBarController(above: probe), tabs.view.window != nil else { return }
-    let coordinator = settling ? nil : probe.transitionCoordinator
+  private func evaluate(in tabs: UITabBarController, coordinator: (any UIViewControllerTransitionCoordinator)?, settling: Bool) {
+    guard !applying, tabs.view.window != nil else { return }
     // A cancelled interactive pop re-appears the departing screen while the
     // original completion is still responsible for restoring the bar.
     if let coordinator, coordinator.isCancelled { return }
@@ -643,6 +681,14 @@ extension View {
   }
   private static func travel(of bar: UIView, in tabs: UITabBarController) -> CGFloat {
     max(bar.bounds.height, tabs.view.bounds.maxY - bar.convert(bar.bounds, to: tabs.view).minY) + 8
+  }
+  private static func navigation(above controller: UIViewController) -> UINavigationController? {
+    var node = controller.parent
+    while let current = node {
+      if let navigation = current as? UINavigationController { return navigation }
+      node = current.parent
+    }
+    return nil
   }
   private static func tabBarController(above controller: UIViewController) -> UITabBarController? {
     var node = controller.parent

@@ -144,11 +144,16 @@ struct CompactSelector: View {
   var badges: [String: Int] = [:]
   /// A tap on the option that is already selected.
   var onReselect: ((String) -> Void)? = nil
+  /// Names each option `<prefix>-<option in lower case>` for UI tests (the feed's `feedSort-top`).
+  var identifierPrefix: String? = nil
+  /// More than two options stack vertically at accessibility sizes unless this is false (the feed's
+  /// compact New/Hot/Top keeps its fixed-size row, which fits at every text size).
+  var stacksAtAccessibilitySizes = true
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
   @Namespace private var highlight
   var body: some View {
-    let layout = dynamicTypeSize.isAccessibilitySize && options.count > 2
+    let layout = stacksAtAccessibilitySizes && dynamicTypeSize.isAccessibilitySize && options.count > 2
       ? AnyLayout(VStackLayout(spacing: 2)) : AnyLayout(HStackLayout(spacing: 2))
     layout {
       ForEach(options, id: \.self) { option in
@@ -174,6 +179,7 @@ struct CompactSelector: View {
         }.buttonStyle(.plain).accessibilityAddTraits(selection == option ? .isSelected : [])
           .accessibilityLabel(option)
           .accessibilityValue(badges[option].map { $0 > 0 ? "\($0) new \($0 == 1 ? "post" : "posts")" : "" } ?? "")
+          .accessibilityIdentifier(identifierPrefix.map { "\($0)-\(option.lowercased())" } ?? "")
       }
     }.padding(.horizontal, compact ? 2 : 3).padding(.vertical, compact ? 0 : 3)
       .background {

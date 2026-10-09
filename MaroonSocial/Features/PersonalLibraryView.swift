@@ -100,8 +100,56 @@ struct LibraryPostDestination: View {
           Text(error).multilineTextAlignment(.center)
           Button("Try again") { Task { await load() } }.buttonStyle(.bordered)
         }.padding(24).frame(maxWidth: .infinity, maxHeight: .infinity).appBackground()
+      } else if let reason = unavailable {
+        PostUnavailableView(reason: reason)
       } else { PostDetailView(id: id) }
     }.task { if lease == nil { lease = store.openLibraryScope(query); await load() } }
   }
+  /// Why the post can't be shown (a link or notification to a post that is gone, whose author is
+  /// blocked, or that sits in a community the member can't see), or nil while it can.
+  private var unavailable: PostUnavailableView.Reason? {
+    guard !loading else { return nil }
+    let held = store.state.posts.first { $0.id == id }
+    if store.state.hiddenPosts.contains(id) { return .hidden }
+    if store.fixtureMode {
+      guard let held else { return .unavailable }
+      if held.deleted == true { return .deleted }
+      return held.community == .nsfw && !store.nsfwEnabled ? .unavailable : nil
+    }
+    // The server's answer decides: it lists the post only while this member can read it.
+    guard let page = store.libraryPages[query], page.error == nil else { return nil }
+    guard let post = page.posts.first(where: { $0.id == id }) else { return held?.deleted == true ? .deleted : .unavailable }
+    return post.deleted == true ? .deleted : nil
+  }
   private func load() async { loading = true; await store.loadLibraryPage(query); loading = false }
+}
+
+/// A post a link or notification pointed at that this member can't open.
+struct PostUnavailableView: View {
+  enum Reason: Equatable { case deleted, hidden, unavailable }
+  let reason: Reason
+  var body: some View {
+    VStack(spacing: 12) {
+      Image(systemName: reason == .hidden ? "eye.slash" : "exclamationmark.bubble").font(.system(size: 34, weight: .semibold))
+        .foregroundStyle(Palette.secondary).accessibilityHidden(true)
+      Text(title).font(.headline).foregroundStyle(Palette.ink).multilineTextAlignment(.center)
+      Text(detail).font(.callout).foregroundStyle(Palette.secondary).multilineTextAlignment(.center)
+        .fixedSize(horizontal: false, vertical: true)
+    }.padding(28).frame(maxWidth: 360).frame(maxWidth: .infinity, maxHeight: .infinity).appBackground()
+      .accessibilityElement(children: .combine).accessibilityIdentifier("postUnavailable")
+  }
+  private var title: String {
+    switch reason {
+    case .deleted: return "This post was deleted"
+    case .hidden: return "You hid this post"
+    case .unavailable: return "This post isn’t available"
+    }
+  }
+  private var detail: String {
+    switch reason {
+    case .deleted: return "Its author or a moderator removed it."
+    case .hidden: return "You hid it on this device, so it stays out of your feed."
+    case .unavailable: return "It may have been deleted, you may have blocked its author, or it’s in a community you haven’t joined."
+    }
+  }
 }

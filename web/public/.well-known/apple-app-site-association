@@ -1,0 +1,13 @@
+{
+  "applinks": {
+    "apps": [],
+    "details": [
+      {
+        "appIDs": ["259BRQX9UQ.app.maroonsocial.MaroonSocial"],
+        "components": [{"/": "/p/*", "comment": "Shared posts open the post in the app"}],
+        "appID": "259BRQX9UQ.app.maroonsocial.MaroonSocial",
+        "paths": ["/p/*"]
+      }
+    ]
+  }
+}
